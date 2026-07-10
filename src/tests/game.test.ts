@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { getEndlessStageSettings } from '../game/difficulty';
+import { isConsecutiveHint } from '../game/hint';
 import { selectHiddenCells } from '../game/hidden';
 import { formatLives } from '../game/lives';
 import { findHamiltonianPath, generateProceduralLevel, isValidPath } from '../game/pathfinding';
@@ -27,6 +28,14 @@ describe('hidden number selection', () => {
       longestRun = Math.max(longestRun, currentRun);
     });
     expect(longestRun).toBeLessThanOrEqual(3);
+  });
+});
+
+describe('next-number hint', () => {
+  it('uses the consecutive state only for the number immediately after current progress', () => {
+    expect(isConsecutiveHint(5, 5)).toBe(true);
+    expect(isConsecutiveHint(5, 6)).toBe(false);
+    expect(isConsecutiveHint(0, 0)).toBe(false);
   });
 });
 

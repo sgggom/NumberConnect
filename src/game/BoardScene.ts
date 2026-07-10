@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { isConsecutiveHint } from './hint';
 import { backgroundUrl, cellKey, type BoardSessionInput, type Cell } from './types';
 
 interface CellView {
@@ -32,6 +33,7 @@ const COLORS = {
   text: '#172033',
   selectedText: '#172033',
   hint: 0x6bb6ff,
+  consecutiveHint: 0x57d88b,
   wrong: 0xe94c5d,
   line: 0xfff4c2,
 };
@@ -44,6 +46,8 @@ export class BoardScene extends Phaser.Scene {
   private wrongFeedbackActive = false;
   private locked = true;
   private transitioning = false;
+  private hintTween?: Phaser.Tweens.Tween;
+  private hintCell?: CellView;
 
   public constructor() {
     super('board');
@@ -69,6 +73,7 @@ export class BoardScene extends Phaser.Scene {
   }
 
   public setBoard(session: BoardSessionInput): void {
+    this.stopHintPulse();
     this.view?.root.destroy(true);
     this.session = session;
     this.currentPathLength = 0;
@@ -85,6 +90,9 @@ export class BoardScene extends Phaser.Scene {
     if (paused) {
       this.isDrawing = false;
       this.wrongFeedbackActive = false;
+      this.stopHintPulse();
+    } else {
+      this.refreshView();
     }
   }
 
@@ -96,6 +104,7 @@ export class BoardScene extends Phaser.Scene {
 
     this.locked = true;
     this.transitioning = true;
+    this.stopHintPulse();
     this.disableViewInput(this.view);
     const oldView = this.view;
     const distance = Math.max(this.scale.height, 720) + oldView.panelHeight * 0.5 + 100;
@@ -128,6 +137,7 @@ export class BoardScene extends Phaser.Scene {
     const view = this.view;
     const session = this.session;
     this.locked = true;
+    this.stopHintPulse();
     this.playSound('victory');
 
     const resource = backgroundUrl(session.level.backgroundResourcePath);
@@ -317,6 +327,9 @@ export class BoardScene extends Phaser.Scene {
       }
     }
 
+    const consecutiveHint = isConsecutiveHint(this.currentPathLength, nextVisibleIndex);
+    let activeHintCell: CellView | undefined;
+
     this.view.cells.forEach((cellView, key) => {
       const selected = cellView.index < this.currentPathLength;
       const numberVisible = selected
@@ -328,9 +341,43 @@ export class BoardScene extends Phaser.Scene {
       cellView.label.setVisible(numberVisible);
       cellView.label.setColor(selected ? COLORS.selectedText : COLORS.text);
       const hint = cellView.index === nextVisibleIndex;
-      cellView.glow.setFillStyle(COLORS.hint, hint ? 0.2 : 0);
-      cellView.glow.setStrokeStyle(4, COLORS.hint, hint ? 0.85 : 0);
+      const hintColor = consecutiveHint ? COLORS.consecutiveHint : COLORS.hint;
+      cellView.glow.setFillStyle(hintColor, hint ? 0.2 : 0);
+      cellView.glow.setStrokeStyle(4, hintColor, hint ? 0.9 : 0);
+      if (hint) activeHintCell = cellView;
     });
+
+    this.startHintPulse(activeHintCell);
+  }
+
+  private startHintPulse(cell?: CellView): void {
+    if (this.hintCell === cell && this.hintTween?.isPlaying()) return;
+    this.stopHintPulse();
+    if (!cell) return;
+
+    this.hintCell = cell;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      cell.glow.setScale(1).setAlpha(1);
+      return;
+    }
+
+    cell.glow.setScale(0.94).setAlpha(0.64);
+    this.hintTween = this.tweens.add({
+      targets: cell.glow,
+      scale: 1.13,
+      alpha: 1,
+      duration: 880,
+      ease: 'Sine.easeInOut',
+      yoyo: true,
+      repeat: -1,
+    });
+  }
+
+  private stopHintPulse(): void {
+    this.hintTween?.stop();
+    this.hintTween = undefined;
+    this.hintCell?.glow.setScale(1).setAlpha(1);
+    this.hintCell = undefined;
   }
 
   private handleCellDown(index: number): void {
@@ -411,6 +458,7 @@ export class BoardScene extends Phaser.Scene {
 
   private handleResize(): void {
     if (!this.session || this.transitioning) return;
+    this.stopHintPulse();
     this.view?.root.destroy(true);
     this.view = this.buildView(this.session, 0);
     this.refreshView();
