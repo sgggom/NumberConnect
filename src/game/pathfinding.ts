@@ -51,65 +51,7 @@ export const countCrossings = (path: Cell[], shape: BoardShape = BoardShape.Squa
   return count;
 };
 
-const remainingActiveConnected = (
-  active: ReadonlySet<string>,
-  visited: ReadonlySet<string>,
-  current: Cell,
-  shape: BoardShape,
-): boolean => {
-  const remaining = [...active].filter((key) => !visited.has(key) || key === cellKey(current));
-  if (remaining.length <= 1) return true;
-  const frontier = [remaining[0]];
-  const seen = new Set(frontier);
-  while (frontier.length > 0) {
-    const key = frontier.shift()!;
-    const [x, y] = key.split(',').map(Number);
-    neighborCells({ x, y }, shape).forEach((neighbor) => {
-      const nextKey = cellKey(neighbor);
-      if (active.has(nextKey) && (!visited.has(nextKey) || nextKey === cellKey(current)) && !seen.has(nextKey)) {
-        seen.add(nextKey);
-        frontier.push(nextKey);
-      }
-    });
-  }
-  return seen.size === remaining.length;
-};
-
-const findActivePath = (activeCells: Cell[], shape: BoardShape): Cell[] | null => {
-  const active = new Set(activeCells.map(cellKey));
-  const degree = (cell: Cell, visited?: ReadonlySet<string>): number => neighborCells(cell, shape)
-    .filter((neighbor) => active.has(cellKey(neighbor)) && !visited?.has(cellKey(neighbor))).length;
-  const starts = [...activeCells].sort((left, right) => degree(left) - degree(right));
-  let searched = 0;
-
-  for (const start of starts) {
-    const path = [start];
-    const visited = new Set<string>([cellKey(start)]);
-    const search = (): boolean => {
-      searched += 1;
-      if (searched > 2000000) return false;
-      if (path.length === active.size) return true;
-      const current = path[path.length - 1];
-      const candidates = neighborCells(current, shape)
-        .filter((cell) => active.has(cellKey(cell)) && !visited.has(cellKey(cell)))
-        .sort((left, right) => degree(left, visited) - degree(right, visited));
-      for (const next of candidates) {
-        const key = cellKey(next);
-        visited.add(key);
-        path.push(next);
-        const checkConnectivity = path.length % 4 === 0 || path.length > active.size - 5;
-        if ((!checkConnectivity || remainingActiveConnected(active, visited, next, shape)) && search()) return true;
-        path.pop();
-        visited.delete(key);
-      }
-      return false;
-    };
-    if (search()) return path;
-  }
-  return null;
-};
-
-const fallbackPath = (rows: number, columns: number, seed: number, shape: BoardShape, activeCells: Cell[]): Cell[] => {
+const fallbackPath = (rows: number, columns: number, seed: number): Cell[] => {
   const path: Cell[] = [];
   for (let row = 0; row < rows; row += 1) {
     const rowColumns = columns;
@@ -256,7 +198,7 @@ export const generateProceduralLevel = (
     if (countCrossings(path, shape) >= targetCrossings) break;
   }
 
-  const solutionPath = best ?? fallbackPath(rows, columns, seed, shape, activeCells);
+  const solutionPath = best ?? fallbackPath(rows, columns, seed);
 
   return {
     levelId: seed,
