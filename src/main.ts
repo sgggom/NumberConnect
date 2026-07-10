@@ -1,16 +1,20 @@
 import Phaser from 'phaser';
 import './styles.css';
+import type { GameEventMap } from './app/GameEvents';
+import { ScreenRouter, type ScreenName } from './app/ScreenRouter';
+import { query } from './app/dom';
+import { EventBus } from './core/events/EventBus';
 import { BoardScene } from './game/BoardScene';
 import { getEndlessStageSettings } from './game/difficulty';
 import { selectHiddenCells } from './game/hidden';
 import { formatLives } from './game/lives';
-import { findHamiltonianPath, generateProceduralLevel } from './game/pathfinding';
+import { generateProceduralLevel } from './game/pathfinding';
 import {
-  getNextCustomLevelId,
+  getNextLevelId,
   loadBuiltInLevels,
-  loadCustomLevels,
+  loadLevelCollection,
   loadSettings,
-  saveCustomLevel,
+  saveLevelCollection,
   saveSettings,
 } from './game/storage';
 import {
@@ -18,7 +22,6 @@ import {
   RECTANGLE_SIZES,
   cellKey,
   type BoardSessionInput,
-  type Cell,
   type EndlessStageSettings,
   type GameMode,
   type GameSettings,
@@ -32,26 +35,21 @@ import {
   videoPlacementLabel,
   type VideoViewRecord,
 } from './game/videoStats';
-
-const query = <T extends Element>(selector: string): T => {
-  const element = document.querySelector<T>(selector);
-  if (!element) throw new Error(`Missing required element: ${selector}`);
-  return element;
-};
+import { LevelEditorController } from './gameplay/editor';
 
 const nextFrame = (): Promise<void> => new Promise((resolve) => requestAnimationFrame(() => resolve()));
-const wrap = (value: number, min: number, max: number): number => value < min ? max : value > max ? min : value;
 type ResultContext = 'normal' | 'endless-stage' | 'life-depleted';
 
 class NumberConnectApp {
-  private readonly lobbyScreen = query<HTMLElement>('#lobby-screen');
-  private readonly playScreen = query<HTMLElement>('#play-screen');
-  private readonly editorScreen = query<HTMLElement>('#editor-screen');
+  private readonly screenRouter = new ScreenRouter();
+  private readonly events = new EventBus<GameEventMap>();
   private readonly gameHost = query<HTMLElement>('#game-host');
   private readonly levelLabel = query<HTMLElement>('#play-level-label');
   private readonly modeLabel = query<HTMLElement>('#play-mode-label');
   private readonly statusLabel = query<HTMLElement>('#play-status');
   private readonly livesLabel = query<HTMLElement>('#play-lives');
+  private readonly solutionToggle = query<HTMLButtonElement>('#solution-toggle');
+  private readonly solutionToggleLabel = query<HTMLElement>('#solution-toggle-label');
   private readonly resultOverlay = query<HTMLElement>('#result-overlay');
   private readonly resultKicker = query<HTMLElement>('#result-kicker');
   private readonly resultTitle = query<HTMLElement>('#result-title');
@@ -69,7 +67,6 @@ class NumberConnectApp {
   private readonly videoStatsList = query<HTMLOListElement>('#video-stats-list');
 
   private builtInLevels: LevelData[] = [];
-  private customLevels: LevelData[] = [];
   private levels: LevelData[] = [];
   private settings: GameSettings = loadSettings();
   private mode: GameMode = 'normal';
@@ -83,19 +80,12 @@ class NumberConnectApp {
   private settingsContext: 'lobby' | 'play' = 'lobby';
   private resultContext: ResultContext = 'normal';
   private resultActionBusy = false;
+  private solutionRevealed = false;
   private videoViews: VideoViewRecord[] = loadVideoViews();
 
   private readonly boardScene = new BoardScene();
   private readonly game: Phaser.Game;
-
-  private editorShape = BoardShape.Square;
-  private editorSquareSize = 8;
-  private editorDiamondSize = 6;
-  private editorRectangleIndex = 2;
-  private editorActive = new Set<string>();
-  private editorPath: Cell[] = [];
-  private editorPainting = false;
-  private editorPaintValue = true;
+  private readonly editor: LevelEditorController;
 
   public constructor() {
     this.game = new Phaser.Game({
@@ -109,6 +99,16 @@ class NumberConnectApp {
       scale: { mode: Phaser.Scale.RESIZE, autoCenter: Phaser.Scale.CENTER_BOTH },
       scene: [this.boardScene],
     });
+    this.editor = new LevelEditorController(query<HTMLElement>('#editor-screen'), {
+      getLevels: () => this.levels,
+      getNextLevelId: () => getNextLevelId(this.levels),
+      onLevelsChange: (levels) => {
+        saveLevelCollection(levels);
+        this.refreshLevels();
+        this.refreshLevelOptions();
+      },
+      onBack: () => this.backToLobby(),
+    });
   }
 
   public async initialize(): Promise<void> {
@@ -120,7 +120,7 @@ class NumberConnectApp {
     this.bindLobby();
     this.bindPlayControls();
     this.bindSettings();
-    this.bindEditor();
+    this.editor.bind();
     this.refreshLevelOptions();
     this.renderVideoStats();
   }
@@ -135,6 +135,7 @@ class NumberConnectApp {
   private bindPlayControls(): void {
     query('#back-button').addEventListener('click', () => this.backToLobby());
     query('#play-settings-button').addEventListener('click', () => this.openSettings('play'));
+    this.solutionToggle.addEventListener('click', () => this.setSolutionReveal(!this.solutionRevealed));
     this.restartButton.addEventListener('click', () => this.handleResultPrimary());
     this.nextButton.addEventListener('click', () => this.handleResultSecondary());
     this.resultLobbyButton.addEventListener('click', () => this.backToLobby());
@@ -158,43 +159,19 @@ class NumberConnectApp {
     });
   }
 
-  private bindEditor(): void {
-    query('#editor-back-button').addEventListener('click', () => this.backToLobby());
-    query<HTMLSelectElement>('#editor-shape').addEventListener('change', (event) => {
-      this.editorShape = Number((event.target as HTMLSelectElement).value) as BoardShape;
-      this.trimEditorCells();
-      this.invalidateEditorPath();
-      this.renderEditor();
-    });
-    query('#editor-size-minus').addEventListener('click', () => this.changeEditorSize(-1));
-    query('#editor-size-plus').addEventListener('click', () => this.changeEditorSize(1));
-    query('#editor-clear-button').addEventListener('click', () => {
-      this.editorActive.clear();
-      this.invalidateEditorPath();
-      this.renderEditor();
-      this.setEditorStatus('棋盘已清空。');
-    });
-    query('#editor-validate-button').addEventListener('click', () => this.validateEditorLevel());
-    query('#editor-save-button').addEventListener('click', () => this.saveEditorLevel());
-    window.addEventListener('pointerup', () => { this.editorPainting = false; });
-    window.addEventListener('pointercancel', () => { this.editorPainting = false; });
-  }
-
   private refreshLevels(): void {
-    this.customLevels = loadCustomLevels();
-    this.levels = [...this.builtInLevels, ...this.customLevels].sort((left, right) => left.levelId - right.levelId);
+    this.levels = loadLevelCollection(this.builtInLevels);
     if (!this.levels.some((level) => level.levelId === this.settings.selectedLevelId)) {
       this.settings.selectedLevelId = this.levels[0]?.levelId ?? 1;
     }
   }
 
-  private showScreen(name: 'lobby' | 'play' | 'editor'): void {
-    this.lobbyScreen.hidden = name !== 'lobby';
-    this.playScreen.hidden = name !== 'play';
-    this.editorScreen.hidden = name !== 'editor';
+  private showScreen(name: ScreenName): void {
+    this.screenRouter.show(name);
   }
 
   private async showPlayScreen(): Promise<void> {
+    this.setSolutionReveal(false);
     this.showScreen('play');
     this.resultOverlay.hidden = true;
     this.resultActionBusy = false;
@@ -202,6 +179,14 @@ class NumberConnectApp {
     await nextFrame();
     this.game.scale.resize(Math.max(320, this.gameHost.clientWidth), Math.max(420, this.gameHost.clientHeight));
     await nextFrame();
+  }
+
+  private setSolutionReveal(revealed: boolean): void {
+    this.solutionRevealed = revealed;
+    this.solutionToggle.setAttribute('aria-pressed', String(revealed));
+    this.solutionToggle.setAttribute('aria-label', revealed ? '隐藏完整答案' : '显示隐藏数字和完整连线');
+    this.solutionToggleLabel.textContent = revealed ? '隐藏答案' : '显示答案';
+    this.boardScene.setSolutionReveal(revealed);
   }
 
   private async startNormalMode(): Promise<void> {
@@ -257,6 +242,9 @@ class NumberConnectApp {
       const size = RECTANGLE_SIZES[this.settings.rectangleSizeIndex];
       return { rows: size.y, columns: size.x };
     }
+    if (this.settings.shape === BoardShape.Hex) {
+      return { rows: this.settings.hexSize, columns: this.settings.hexSize };
+    }
     const size = this.settings.shape === BoardShape.Diamond ? this.settings.diamondSize : this.settings.squareSize;
     return { rows: size, columns: size };
   }
@@ -266,9 +254,16 @@ class NumberConnectApp {
     const maxHiddenRun = profile?.maxHiddenRun ?? this.settings.maxHiddenRun;
     const maxVisibleRun = profile?.maxVisibleRun ?? this.settings.maxVisibleRun;
     const seed = (this.mode === 'endless' ? this.endlessSeed + this.stage * 1000003 : this.proceduralSeed + level.levelId) | 0;
+    const eventContext = {
+      mode: this.mode,
+      levelId: level.levelId,
+      stage: this.mode === 'endless' ? this.stage : undefined,
+    };
     return {
       level,
-      hiddenCells: selectHiddenCells(level.solutionPath, hiddenPercent, maxHiddenRun, maxVisibleRun, seed),
+      hiddenCells: level.hiddenCells === undefined
+        ? selectHiddenCells(level.solutionPath, hiddenPercent, maxHiddenRun, maxVisibleRun, seed)
+        : new Set(level.hiddenCells.map(cellKey)),
       showNextNumber: this.settings.showNextNumber,
       soundEnabled: this.settings.soundEnabled,
       mode: this.mode,
@@ -276,9 +271,16 @@ class NumberConnectApp {
         this.currentProgress = current;
         this.currentTotal = total;
         this.setStatus(`${current} / ${total}`);
+        this.events.emit('level.progressed', { ...eventContext, current, total });
       },
-      onWrong: (message) => this.handleWrong(message),
-      onComplete: () => void this.handleComplete(),
+      onWrong: (message) => {
+        this.events.emit('level.wrong-move', { ...eventContext, current: this.currentProgress, message });
+        this.handleWrong(message);
+      },
+      onComplete: () => {
+        this.events.emit('level.completed', { ...eventContext, total: level.solutionPath.length });
+        void this.handleComplete();
+      },
     };
   }
 
@@ -289,6 +291,12 @@ class NumberConnectApp {
     this.updateGameHeading(level);
     this.setStatus(this.mode === 'endless' ? `阶段 ${this.stage} · 请从数字 1 开始` : '请从数字 1 开始，隐藏数字会在连接后显示。');
     this.boardScene.setBoard(this.makeSession(level, profile));
+    this.events.emit('level.started', {
+      mode: this.mode,
+      levelId: level.levelId,
+      stage: this.mode === 'endless' ? this.stage : undefined,
+      total: level.solutionPath.length,
+    });
   }
 
   private updateGameHeading(level: LevelData): void {
@@ -423,6 +431,7 @@ class NumberConnectApp {
       this.lives += 1;
       this.renderLives();
       this.videoViews.push(createVideoView('endless-stage-complete', this.stage));
+      this.events.emit('video.rewarded', { placement: 'endless-stage-complete', stage: this.stage });
       saveVideoViews(this.videoViews);
       this.renderVideoStats();
       this.setStatus(`阶段 ${this.stage} · 视频奖励生命 +1`);
@@ -456,6 +465,7 @@ class NumberConnectApp {
     this.renderLives();
     const placement = this.mode === 'endless' ? 'endless-life-depleted' : 'normal-life-depleted';
     this.videoViews.push(createVideoView(placement, this.mode === 'endless' ? this.stage : undefined));
+    this.events.emit('video.rewarded', { placement, stage: this.mode === 'endless' ? this.stage : undefined });
     saveVideoViews(this.videoViews);
     this.renderVideoStats();
     this.resultOverlay.hidden = true;
@@ -571,6 +581,8 @@ class NumberConnectApp {
       sizeInput.min = '0'; sizeInput.max = String(RECTANGLE_SIZES.length - 1); sizeInput.step = '1'; sizeInput.value = String(this.settings.rectangleSizeIndex);
     } else if (shape === BoardShape.Diamond) {
       sizeInput.min = '3'; sizeInput.max = '8'; sizeInput.step = '1'; sizeInput.value = String(this.settings.diamondSize);
+    } else if (shape === BoardShape.Hex) {
+      sizeInput.min = '3'; sizeInput.max = '10'; sizeInput.step = '1'; sizeInput.value = String(this.settings.hexSize);
     } else {
       sizeInput.min = '3'; sizeInput.max = '10'; sizeInput.step = '1'; sizeInput.value = String(this.settings.squareSize);
     }
@@ -597,6 +609,7 @@ class NumberConnectApp {
     this.settings.selectedLevelId = Number(query<HTMLSelectElement>('#settings-level').value) || this.settings.selectedLevelId;
     if (shape === BoardShape.Rectangle) this.settings.rectangleSizeIndex = sizeValue;
     else if (shape === BoardShape.Diamond) this.settings.diamondSize = sizeValue;
+    else if (shape === BoardShape.Hex) this.settings.hexSize = sizeValue;
     else if (shape === BoardShape.Square) this.settings.squareSize = sizeValue;
     this.settings.hiddenPercent = Number(query<HTMLInputElement>('#settings-hidden').value);
     this.settings.maxHiddenRun = Number(query<HTMLInputElement>('#settings-hidden-run').value);
@@ -621,155 +634,13 @@ class NumberConnectApp {
 
   private openEditor(): void {
     this.showScreen('editor');
-    this.editorActive.clear();
-    this.editorPath = [];
-    this.renderEditor();
-    this.setEditorStatus('在网格上拖动，绘制需要一笔覆盖的形状。');
-  }
-
-  private editorSize(): { rows: number; columns: number } {
-    if (this.editorShape === BoardShape.Rectangle) {
-      const size = RECTANGLE_SIZES[this.editorRectangleIndex];
-      return { rows: size.y, columns: size.x };
-    }
-    const size = this.editorShape === BoardShape.Diamond ? this.editorDiamondSize : this.editorSquareSize;
-    return { rows: size, columns: size };
-  }
-
-  private changeEditorSize(direction: number): void {
-    if (this.editorShape === BoardShape.Rectangle) {
-      this.editorRectangleIndex = wrap(this.editorRectangleIndex + direction, 0, RECTANGLE_SIZES.length - 1);
-    } else if (this.editorShape === BoardShape.Diamond) {
-      this.editorDiamondSize = wrap(this.editorDiamondSize + direction, 3, 8);
-    } else {
-      this.editorSquareSize = wrap(this.editorSquareSize + direction, 3, 10);
-    }
-    this.trimEditorCells();
-    this.invalidateEditorPath();
-    this.renderEditor();
-  }
-
-  private trimEditorCells(): void {
-    const { rows, columns } = this.editorSize();
-    this.editorActive.forEach((key) => {
-      const [x, y] = key.split(',').map(Number);
-      if (x >= columns || y >= rows) this.editorActive.delete(key);
-    });
-  }
-
-  private invalidateEditorPath(): void {
-    this.editorPath = [];
-    query<HTMLButtonElement>('#editor-save-button').disabled = true;
-  }
-
-  private renderEditor(): void {
-    const { rows, columns } = this.editorSize();
-    const grid = query<HTMLElement>('#editor-grid');
-    grid.style.setProperty('--cols', String(columns));
-    grid.style.setProperty('--rows', String(rows));
-    grid.dataset.shape = this.editorShape === BoardShape.Diamond ? 'diamond' : 'normal';
-    const order = new Map(this.editorPath.map((cell, index) => [cellKey(cell), index + 1]));
-    const cells: HTMLButtonElement[] = [];
-
-    for (let row = 0; row < rows; row += 1) {
-      for (let column = 0; column < columns; column += 1) {
-        const key = `${column},${row}`;
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'editor-cell';
-        button.setAttribute('aria-label', `第 ${row + 1} 行，第 ${column + 1} 列`);
-        const value = order.get(key);
-        if (this.editorActive.has(key)) button.classList.add('is-active');
-        if (value) {
-          button.classList.add('is-path');
-          if (value === 1) button.classList.add('is-start');
-          if (value === this.editorPath.length) button.classList.add('is-end');
-          const span = document.createElement('span');
-          span.textContent = String(value);
-          button.append(span);
-        }
-        button.addEventListener('pointerdown', (event) => {
-          event.preventDefault();
-          this.editorPainting = true;
-          this.editorPaintValue = !this.editorActive.has(key);
-          this.paintEditorCell(key);
-        });
-        button.addEventListener('pointerenter', (event) => {
-          if (this.editorPainting && (event.buttons > 0 || event.pointerType === 'touch')) this.paintEditorCell(key);
-        });
-        cells.push(button);
-      }
-    }
-    grid.replaceChildren(...cells);
-
-    query<HTMLSelectElement>('#editor-shape').value = String(this.editorShape);
-    query('#editor-size-value').textContent = `${columns} × ${rows}`;
-    const nextId = getNextCustomLevelId(this.builtInLevels, this.customLevels);
-    query('#editor-save-id').textContent = `下次保存：${nextId}`;
-    const previewName = ['apple', 'banana', 'orange', 'grapes', 'basket', 'pineapple'][(nextId - 1) % 6];
-    query<HTMLElement>('#editor-preview').style.backgroundImage = `url('./level-backgrounds/${previewName}.png')`;
-  }
-
-  private paintEditorCell(key: string): void {
-    if (this.editorPaintValue) this.editorActive.add(key);
-    else this.editorActive.delete(key);
-    this.invalidateEditorPath();
-    this.renderEditor();
-  }
-
-  private validateEditorLevel(): void {
-    const { rows, columns } = this.editorSize();
-    const path = findHamiltonianPath(rows, columns, this.editorActive);
-    if (!path) {
-      this.invalidateEditorPath();
-      this.renderEditor();
-      this.setEditorStatus('当前形状无法被一笔覆盖，请调整已涂色格子。', true);
-      return;
-    }
-    this.editorPath = path;
-    query<HTMLButtonElement>('#editor-save-button').disabled = false;
-    this.renderEditor();
-    this.setEditorStatus(`验证成功：${path.length} 个格子可一笔连接。`);
-  }
-
-  private saveEditorLevel(): void {
-    if (this.editorPath.length === 0) {
-      this.setEditorStatus('请先验证关卡。', true);
-      return;
-    }
-    const { rows, columns } = this.editorSize();
-    const levelId = getNextCustomLevelId(this.builtInLevels, this.customLevels);
-    const backgroundNames = ['apple', 'banana', 'orange', 'grapes', 'basket', 'pineapple'];
-    const activeCells = [...this.editorActive].map((key) => {
-      const [x, y] = key.split(',').map(Number);
-      return { x, y };
-    }).sort((left, right) => left.y - right.y || left.x - right.x);
-    saveCustomLevel({
-      levelId,
-      boardShape: this.editorShape,
-      rows,
-      columns,
-      activeCells,
-      solutionPath: this.editorPath,
-      backgroundResourcePath: `LevelBackgrounds/${backgroundNames[(levelId - 1) % backgroundNames.length]}`,
-      createdAtUtc: new Date().toISOString(),
-      custom: true,
-    });
-    this.refreshLevels();
-    this.refreshLevelOptions();
-    this.renderEditor();
-    this.setEditorStatus(`关卡 ${levelId} 已保存到浏览器。`);
-  }
-
-  private setEditorStatus(message: string, error = false): void {
-    const status = query<HTMLElement>('#editor-status');
-    status.textContent = message;
-    status.classList.toggle('is-error', error);
+    this.editor.open();
   }
 
   private shapeLabel(shape: BoardShape): string {
     if (shape === BoardShape.Diamond) return '菱形';
     if (shape === BoardShape.Rectangle) return '长方形';
+    if (shape === BoardShape.Hex) return '六边形蜂窝';
     return '正方形';
   }
 }

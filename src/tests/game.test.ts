@@ -3,7 +3,7 @@ import { getEndlessStageSettings } from '../game/difficulty';
 import { isConsecutiveHint } from '../game/hint';
 import { selectHiddenCells } from '../game/hidden';
 import { formatLives } from '../game/lives';
-import { findHamiltonianPath, generateProceduralLevel, isValidPath } from '../game/pathfinding';
+import { generateProceduralLevel, isValidPath } from '../game/pathfinding';
 import { BoardShape, cellKey, type Cell } from '../game/types';
 import { createVideoView, groupVideoViews, parseVideoViews, videoPlacementLabel } from '../game/videoStats';
 
@@ -12,6 +12,12 @@ describe('procedural level generation', () => {
     const level = generateProceduralLevel(rows, columns, 12345 + rows, 4, BoardShape.Square);
     expect(isValidPath(rows, columns, level.solutionPath)).toBe(true);
   });
+
+  it('creates a valid six-neighbor honeycomb path', () => {
+    const level = generateProceduralLevel(6, 6, 24680, 2, BoardShape.Hex);
+    expect(isValidPath(6, 6, level.solutionPath, undefined, BoardShape.Hex)).toBe(true);
+  });
+
 });
 
 describe('hidden number selection', () => {
@@ -85,14 +91,5 @@ describe('video statistics', () => {
       { placement: 'endless-stage-complete', count: 1 },
       { placement: 'normal-life-depleted', count: 2 },
     ]);
-  });
-});
-
-describe('level editor validation', () => {
-  it('finds a one-stroke path for a connected painted shape', () => {
-    const active = new Set(['0,0', '1,0', '2,0', '2,1', '1,1', '0,1']);
-    const path = findHamiltonianPath(2, 3, active);
-    expect(path).not.toBeNull();
-    expect(isValidPath(2, 3, path ?? [], active)).toBe(true);
   });
 });

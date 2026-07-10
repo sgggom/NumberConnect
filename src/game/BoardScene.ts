@@ -1,20 +1,24 @@
 import Phaser from 'phaser';
 import { isConsecutiveHint } from './hint';
-import { backgroundUrl, cellKey, type BoardSessionInput, type Cell } from './types';
+import { projectCell } from './topology';
+import { BoardShape, backgroundUrl, cellKey, type BoardSessionInput, type Cell } from './types';
+
+type CellShape = Phaser.GameObjects.Arc | Phaser.GameObjects.Polygon;
 
 interface CellView {
   cell: Cell;
   index: number;
   x: number;
   y: number;
-  circle: Phaser.GameObjects.Arc;
-  glow: Phaser.GameObjects.Arc;
+  circle: CellShape;
+  glow: CellShape;
   label: Phaser.GameObjects.Text;
 }
 
 interface BoardView {
   root: Phaser.GameObjects.Container;
   panel: Phaser.GameObjects.Rectangle;
+  solutionLines: Phaser.GameObjects.Graphics;
   lines: Phaser.GameObjects.Graphics;
   cells: Map<string, CellView>;
   radius: number;
@@ -31,12 +35,19 @@ const COLORS = {
   selected: 0xf2c241,
   selectedBorder: 0xffdf70,
   text: '#172033',
+  revealedHiddenText: '#8f99a8',
   selectedText: '#172033',
   hint: 0x6bb6ff,
   consecutiveHint: 0x57d88b,
   wrong: 0xe94c5d,
   line: 0xfff4c2,
+  solutionLine: 0x7fc8ff,
 };
+
+const hexagonPoints = (radius: number): Phaser.Geom.Point[] => Array.from({ length: 6 }, (_, index) => {
+  const angle = Phaser.Math.DegToRad(index * 60);
+  return new Phaser.Geom.Point(radius + Math.cos(angle) * radius, radius + Math.sin(angle) * radius);
+});
 
 export class BoardScene extends Phaser.Scene {
   private session?: BoardSessionInput;
@@ -46,6 +57,7 @@ export class BoardScene extends Phaser.Scene {
   private wrongFeedbackActive = false;
   private locked = true;
   private transitioning = false;
+  private solutionRevealed = false;
   private hintTween?: Phaser.Tweens.Tween;
   private hintCell?: CellView;
 
@@ -94,6 +106,11 @@ export class BoardScene extends Phaser.Scene {
     } else {
       this.refreshView();
     }
+  }
+
+  public setSolutionReveal(revealed: boolean): void {
+    this.solutionRevealed = revealed;
+    this.refreshView();
   }
 
   public async transitionTo(session: BoardSessionInput): Promise<void> {
@@ -180,7 +197,7 @@ export class BoardScene extends Phaser.Scene {
     const pieces: Phaser.GameObjects.Image[] = [];
 
     this.tweens.add({
-      targets: view.lines,
+      targets: [view.solutionLines, view.lines],
       alpha: 0,
       duration: stagger * Math.max(0, session.level.solutionPath.length - 1) + 220,
       ease: 'Sine.easeInOut',
@@ -243,11 +260,10 @@ export class BoardScene extends Phaser.Scene {
     const centerX = 0;
     const centerY = height * 0.5;
     const positions = new Map<string, { x: number; y: number }>();
-    const isDiamond = session.level.boardShape === 1;
+    const isHex = session.level.boardShape === BoardShape.Hex;
     const raw = session.level.activeCells.map((cell) => ({
       cell,
-      x: isDiamond ? (cell.x - cell.y) * 0.70710678 : cell.x,
-      y: isDiamond ? (cell.x + cell.y) * 0.70710678 : cell.y,
+      ...projectCell(cell, session.level.boardShape),
     }));
     const xs = raw.map((entry) => entry.x);
     const ys = raw.map((entry) => entry.y);
@@ -258,7 +274,9 @@ export class BoardScene extends Phaser.Scene {
     const rangeX = Math.max(1, maxX - minX);
     const rangeY = Math.max(1, maxY - minY);
     const step = Math.max(30, Math.min(86, (width - 86) / (rangeX + 1.4), (height - 70) / (rangeY + 1.4)));
-    const radius = Math.max(13, Math.min(32, step * 0.34));
+    const radius = isHex
+      ? Math.max(16, Math.min(44, step * 0.56))
+      : Math.max(13, Math.min(32, step * 0.34));
 
     raw.forEach((entry) => {
       positions.set(cellKey(entry.cell), {
@@ -272,38 +290,66 @@ export class BoardScene extends Phaser.Scene {
     const root = this.add.container(viewportCenterX, offsetY);
     const panel = this.add.rectangle(centerX, centerY, panelWidth, panelHeight, COLORS.panel, 1);
     panel.setStrokeStyle(2, 0x48506b, 0.8);
+    const solutionLines = this.add.graphics();
     const lines = this.add.graphics();
-    root.add([panel, lines]);
+    root.add([panel, solutionLines, lines]);
     const cells = new Map<string, CellView>();
 
     session.level.solutionPath.forEach((cell, index) => {
       const position = positions.get(cellKey(cell));
       if (!position) return;
-      const glow = this.add.circle(position.x, position.y, radius + 6, COLORS.hint, 0);
+      const glowRadius = radius + 6;
+      const glow: CellShape = isHex
+        ? this.add.polygon(position.x, position.y, hexagonPoints(glowRadius), COLORS.hint, 0)
+        : this.add.circle(position.x, position.y, glowRadius, COLORS.hint, 0);
       glow.setStrokeStyle(4, COLORS.hint, 0);
-      const circle = this.add.circle(position.x, position.y, radius, COLORS.tile, 1);
+      const circle: CellShape = isHex
+        ? this.add.polygon(position.x, position.y, hexagonPoints(radius), COLORS.tile, 1)
+        : this.add.circle(position.x, position.y, radius, COLORS.tile, 1);
       circle.setStrokeStyle(2, COLORS.tileBorder, 1);
-      circle.setInteractive(
-        new Phaser.Geom.Circle(radius, radius, radius * 1.25),
-        Phaser.Geom.Circle.Contains,
-      );
+      if (isHex) {
+        circle.setInteractive((circle as Phaser.GameObjects.Polygon).geom, Phaser.Geom.Polygon.Contains);
+      } else {
+        circle.setInteractive(
+          new Phaser.Geom.Circle(radius, radius, radius * 1.25),
+          Phaser.Geom.Circle.Contains,
+        );
+      }
       const label = this.add.text(position.x, position.y, String(index + 1), {
         fontFamily: 'Nunito Sans, sans-serif',
         fontStyle: '700',
         fontSize: `${Math.max(12, Math.round(radius * 0.72))}px`,
         color: COLORS.text,
+        align: 'center',
       }).setOrigin(0.5);
+      const labelTextHeight = label.height;
+      const labelSize = radius * 2;
+      label.setFixedSize(labelSize, labelSize);
+      label.setPadding(0, Math.max(0, (labelSize - labelTextHeight) * 0.5), 0, 0);
       circle.on('pointerdown', () => this.handleCellDown(index));
       root.add([glow, circle, label]);
       cells.set(cellKey(cell), { cell, index, x: position.x, y: position.y, circle, glow, label });
     });
 
-    return { root, panel, lines, cells, radius, centerX, centerY, panelWidth, panelHeight };
+    return { root, panel, solutionLines, lines, cells, radius, centerX, centerY, panelWidth, panelHeight };
   }
 
   private refreshView(): void {
     if (!this.view || !this.session) return;
     const path = this.session.level.solutionPath;
+    this.view.solutionLines.clear();
+    if (this.solutionRevealed) {
+      this.view.solutionLines.lineStyle(Math.max(3, this.view.radius * 0.18), COLORS.solutionLine, 0.58);
+      this.view.solutionLines.beginPath();
+      path.forEach((cell, index) => {
+        const cellView = this.view!.cells.get(cellKey(cell));
+        if (!cellView) return;
+        if (index === 0) this.view!.solutionLines.moveTo(cellView.x, cellView.y);
+        else this.view!.solutionLines.lineTo(cellView.x, cellView.y);
+      });
+      this.view.solutionLines.strokePath();
+    }
+
     this.view.lines.clear();
     this.view.lines.lineStyle(Math.max(5, this.view.radius * 0.28), COLORS.line, 0.9);
     this.view.lines.beginPath();
@@ -332,14 +378,19 @@ export class BoardScene extends Phaser.Scene {
 
     this.view.cells.forEach((cellView, key) => {
       const selected = cellView.index < this.currentPathLength;
-      const numberVisible = selected
+      const numberVisible = this.solutionRevealed
+        || selected
         || !this.session!.hiddenCells.has(key)
         || cellView.index === 0
         || cellView.index === path.length - 1;
+      const revealedHidden = this.solutionRevealed
+        && !selected
+        && this.session!.hiddenCells.has(key);
       cellView.circle.setFillStyle(selected ? COLORS.selected : COLORS.tile, 1);
       cellView.circle.setStrokeStyle(2, selected ? COLORS.selectedBorder : COLORS.tileBorder, 1);
       cellView.label.setVisible(numberVisible);
-      cellView.label.setColor(selected ? COLORS.selectedText : COLORS.text);
+      cellView.label.setColor(selected ? COLORS.selectedText : revealedHidden ? COLORS.revealedHiddenText : COLORS.text);
+      cellView.label.setFontStyle(revealedHidden ? 'italic 700' : '700');
       const hint = cellView.index === nextVisibleIndex;
       const hintColor = consecutiveHint ? COLORS.consecutiveHint : COLORS.hint;
       cellView.glow.setFillStyle(hintColor, hint ? 0.2 : 0);

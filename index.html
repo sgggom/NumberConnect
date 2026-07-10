@@ -49,6 +49,9 @@
           <span id="play-lives" class="life-counter" role="status" aria-live="polite" aria-label="生命值 3" hidden>♥♥♥</span>
           <span class="status-dot" aria-hidden="true"></span>
           <p id="play-status" aria-live="polite">请从数字 1 开始</p>
+          <button id="solution-toggle" class="solution-toggle" type="button" aria-pressed="false" aria-label="显示隐藏数字和完整连线">
+            <span aria-hidden="true">◎</span><b id="solution-toggle-label">显示答案</b>
+          </button>
         </div>
         <div id="game-host" class="game-host" aria-label="数字连接棋盘"></div>
         <p class="gesture-hint">按住并拖动，依次连接相邻或斜对角数字</p>
@@ -68,38 +71,7 @@
         </div>
       </section>
 
-      <section id="editor-screen" class="screen editor-screen" hidden aria-labelledby="editor-title">
-        <header class="editor-header">
-          <button id="editor-back-button" class="icon-button" aria-label="返回大厅">←</button>
-          <div>
-            <p class="eyebrow">LEVEL WORKSHOP</p>
-            <h2 id="editor-title">关卡编辑器</h2>
-          </div>
-          <div id="editor-save-id" class="save-chip">下次保存：6</div>
-        </header>
-
-        <div class="editor-toolbar">
-          <label>形状
-            <select id="editor-shape">
-              <option value="0">正方形</option>
-              <option value="1">菱形</option>
-              <option value="2">长方形</option>
-            </select>
-          </label>
-          <div class="stepper"><span>尺寸</span><button id="editor-size-minus">−</button><b id="editor-size-value">8 × 8</b><button id="editor-size-plus">＋</button></div>
-          <button id="editor-clear-button" class="button button--secondary button--small">清空</button>
-        </div>
-
-        <div class="editor-workspace">
-          <div id="editor-preview" class="editor-preview" aria-hidden="true"></div>
-          <div id="editor-grid" class="editor-grid" aria-label="关卡绘制网格"></div>
-        </div>
-        <p id="editor-status" class="editor-status" aria-live="polite">在网格上拖动，绘制需要一笔覆盖的形状。</p>
-        <div class="editor-actions">
-          <button id="editor-validate-button" class="button button--secondary">验证路径</button>
-          <button id="editor-save-button" class="button button--primary" disabled>保存关卡</button>
-        </div>
-      </section>
+      <section id="editor-screen" class="screen editor-screen" hidden></section>
     </main>
 
     <dialog id="settings-dialog" class="settings-dialog">
@@ -107,7 +79,7 @@
         <header><div><p class="eyebrow">GAME OPTIONS</p><h2>游戏设置</h2></div><button id="settings-close-button" class="icon-button" value="cancel" aria-label="关闭">×</button></header>
         <div id="endless-settings-note" class="settings-note" hidden>无尽模式的棋盘尺寸和隐藏强度由当前阶段自动决定。</div>
         <div class="settings-list">
-          <label class="setting-row"><span><b>棋盘类型</b><small>图案关卡或程序棋盘</small></span><select id="settings-shape"><option value="3">图案关卡</option><option value="0">正方形</option><option value="1">菱形</option><option value="2">长方形</option></select></label>
+          <label class="setting-row"><span><b>棋盘类型</b><small>图案关卡或程序棋盘</small></span><select id="settings-shape"><option value="3">图案关卡</option><option value="0">正方形</option><option value="1">菱形</option><option value="2">长方形</option><option value="4">六边形蜂窝</option></select></label>
           <label id="settings-level-row" class="setting-row"><span><b>选择关卡</b><small>包含本地编辑器关卡</small></span><select id="settings-level"></select></label>
           <label id="settings-size-row" class="setting-row setting-row--range"><span><b>棋盘尺寸</b><small id="settings-size-output">6 × 6</small></span><input id="settings-size" type="range" min="3" max="10" value="6" /></label>
           <label class="setting-row setting-row--range"><span><b>隐藏数字比例</b><small id="settings-hidden-output">35%</small></span><input id="settings-hidden" type="range" min="0" max="90" step="5" value="35" /></label>

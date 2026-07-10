@@ -3,11 +3,17 @@ export enum BoardShape {
   Diamond = 1,
   Rectangle = 2,
   Level = 3,
+  Hex = 4,
 }
 
 export interface Cell {
   x: number;
   y: number;
+}
+
+export interface LevelAlgorithmData {
+  id: string;
+  parameters: Record<string, unknown>;
 }
 
 export interface LevelData {
@@ -17,6 +23,9 @@ export interface LevelData {
   columns: number;
   activeCells: Cell[];
   solutionPath: Cell[];
+  pathSource?: 'generated' | 'manual';
+  hiddenCells?: Cell[];
+  algorithm?: LevelAlgorithmData;
   backgroundResourcePath?: string;
   createdAtUtc?: string;
   custom?: boolean;
@@ -26,6 +35,7 @@ export interface GameSettings {
   shape: BoardShape;
   squareSize: number;
   diamondSize: number;
+  hexSize: number;
   rectangleSizeIndex: number;
   selectedLevelId: number;
   hiddenPercent: number;
@@ -70,6 +80,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   shape: BoardShape.Level,
   squareSize: 6,
   diamondSize: 6,
+  hexSize: 6,
   rectangleSizeIndex: 1,
   selectedLevelId: 1,
   hiddenPercent: 35,
