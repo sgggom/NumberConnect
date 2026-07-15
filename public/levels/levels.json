@@ -112,8 +112,7 @@
       }
     },
     "backgroundResourcePath": "LevelBackgrounds/apple",
-    "createdAtUtc": "2026-07-15T09:49:43.489Z",
-    "custom": true
+    "createdAtUtc": "2026-07-15T09:49:43.489Z"
   },
   {
     "levelId": 2,
@@ -300,8 +299,7 @@
       }
     },
     "backgroundResourcePath": "LevelBackgrounds/banana",
-    "createdAtUtc": "2026-07-15T09:58:56.398Z",
-    "custom": true
+    "createdAtUtc": "2026-07-15T09:58:56.398Z"
   },
   {
     "levelId": 3,
@@ -580,8 +578,7 @@
       }
     },
     "backgroundResourcePath": "LevelBackgrounds/orange",
-    "createdAtUtc": "2026-07-15T09:59:12.565Z",
-    "custom": true
+    "createdAtUtc": "2026-07-15T09:59:12.565Z"
   },
   {
     "levelId": 4,
@@ -968,8 +965,7 @@
       }
     },
     "backgroundResourcePath": "LevelBackgrounds/grapes",
-    "createdAtUtc": "2026-07-15T09:59:21.951Z",
-    "custom": true
+    "createdAtUtc": "2026-07-15T09:59:21.951Z"
   },
   {
     "levelId": 5,
@@ -1340,8 +1336,7 @@
       }
     },
     "backgroundResourcePath": "LevelBackgrounds/basket",
-    "createdAtUtc": "2026-07-15T10:02:00.393Z",
-    "custom": true
+    "createdAtUtc": "2026-07-15T10:02:00.393Z"
   },
   {
     "levelId": 6,
@@ -1840,7 +1835,6 @@
       }
     },
     "backgroundResourcePath": "LevelBackgrounds/pineapple",
-    "createdAtUtc": "2026-07-15T10:02:12.905Z",
-    "custom": true
+    "createdAtUtc": "2026-07-15T10:02:12.905Z"
   }
 ]
