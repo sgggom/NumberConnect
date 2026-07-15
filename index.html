@@ -19,7 +19,7 @@
         <div class="lobby-ambient-field" aria-hidden="true">
           <svg viewBox="0 0 430 760" preserveAspectRatio="xMidYMid slice" role="presentation">
             <defs>
-              <linearGradient id="lobby-ambient-gradient" x1="210" y1="650" x2="210" y2="150" gradientUnits="userSpaceOnUse">
+              <linearGradient id="lobby-ambient-gradient" x1="0%" y1="100%" x2="100%" y2="0%">
                 <stop offset="0" stop-color="#c775e8" />
                 <stop offset=".48" stop-color="#58d0aa" />
                 <stop offset="1" stop-color="#659ee4" />
@@ -34,23 +34,20 @@
                 <stop offset="0" stop-color="#58d0aa" stop-opacity=".13" />
                 <stop offset="1" stop-color="#111823" stop-opacity="0" />
               </radialGradient>
-              <pattern id="lobby-ambient-grid-pattern" width="60" height="60" patternUnits="userSpaceOnUse">
-                <circle cx="30" cy="30" r="2.4" fill="#a4bfd0" fill-opacity=".2" />
-              </pattern>
               <mask id="lobby-ambient-middle-mask" maskUnits="userSpaceOnUse" x="0" y="150" width="430" height="460">
                 <rect x="0" y="150" width="430" height="460" fill="url(#lobby-ambient-line-mask-gradient)" />
               </mask>
-              <path id="lobby-ambient-route" pathLength="1" d="M210 930 L270 870 L210 810 L150 750 L210 690 L270 630 L210 570 L150 510 L210 450 L270 390 L210 330 L150 270 L210 210 L270 150 L210 90 L150 30 L210 -30 L270 -90 L210 -150" />
             </defs>
 
             <ellipse class="lobby-ambient-halo lobby-ambient-halo--top" cx="115" cy="280" rx="230" ry="210" fill="url(#lobby-ambient-halo)" />
             <ellipse class="lobby-ambient-halo lobby-ambient-halo--bottom" cx="350" cy="520" rx="250" ry="220" fill="url(#lobby-ambient-halo)" />
-            <rect class="lobby-ambient-grid" x="-60" y="-300" width="550" height="1300" fill="url(#lobby-ambient-grid-pattern)" />
+            <g id="lobby-ambient-grid" class="lobby-ambient-grid"></g>
 
             <g mask="url(#lobby-ambient-middle-mask)">
-              <g class="lobby-ambient-route-layer">
-                <use class="lobby-ambient-route lobby-ambient-route--base" href="#lobby-ambient-route" />
-                <use class="lobby-ambient-route lobby-ambient-route--flow" href="#lobby-ambient-route" />
+              <g id="lobby-ambient-route-layer" class="lobby-ambient-route-layer">
+                <path id="lobby-ambient-route-base" class="lobby-ambient-route lobby-ambient-route--base" />
+                <path id="lobby-ambient-route-flow" class="lobby-ambient-route lobby-ambient-route--flow" />
+                <circle id="lobby-ambient-route-head" class="lobby-ambient-route-head" cx="210" cy="390" r="9.2" />
               </g>
             </g>
 
@@ -134,7 +131,9 @@
             <p>PIXEL BEADS</p>
             <h2 id="bead-screen-title">拼豆模式</h2>
           </div>
-          <span aria-hidden="true"></span>
+          <button id="bead-gallery-button" class="icon-button bead-gallery-entry" type="button" aria-label="打开拼豆图鉴">
+            <span aria-hidden="true">▦</span><b id="bead-gallery-count">0</b>
+          </button>
         </header>
         <div class="bead-screen-stage">
           <div class="bead-pattern-heading">
@@ -148,6 +147,33 @@
         </div>
       </section>
     </main>
+
+    <dialog id="bead-gallery-dialog" class="bead-gallery-dialog" aria-labelledby="bead-gallery-title">
+      <section class="bead-gallery-card">
+        <header class="bead-gallery-header">
+          <div><p class="eyebrow">BEAD COLLECTION</p><h2 id="bead-gallery-title">拼豆图鉴</h2></div>
+          <button id="bead-gallery-close" class="icon-button" type="button" aria-label="关闭图鉴">×</button>
+        </header>
+        <div id="bead-gallery-list-view" class="bead-gallery-list-view">
+          <p class="bead-gallery-summary">已收藏 <strong id="bead-gallery-total">0 / 0</strong></p>
+          <div id="bead-gallery-empty" class="bead-gallery-empty">
+            <span aria-hidden="true">◇</span>
+            <strong>图鉴还是空的</strong>
+            <p>完成第一个拼豆图案后，作品会收藏在这里。</p>
+          </div>
+          <div id="bead-gallery-grid" class="bead-gallery-grid" role="list"></div>
+        </div>
+        <div id="bead-gallery-detail" class="bead-gallery-detail" hidden>
+          <button id="bead-gallery-detail-back" class="bead-gallery-detail-back" type="button">← 返回图鉴</button>
+          <div class="bead-gallery-detail-heading">
+            <p class="eyebrow">COMPLETED PATTERN</p>
+            <h3 id="bead-gallery-detail-name"></h3>
+            <span id="bead-gallery-detail-size"></span>
+          </div>
+          <div class="bead-gallery-detail-art"><img id="bead-gallery-detail-image" alt="" /></div>
+        </div>
+      </section>
+    </dialog>
 
     <dialog id="settings-dialog" class="settings-dialog">
       <form method="dialog" class="settings-card">

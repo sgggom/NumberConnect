@@ -6,6 +6,11 @@ export type ConnectionAction =
   | { type: 'wrong'; index: number; reason: ConnectionFailure }
   | { type: 'ignored' };
 
+export interface ConnectionHint {
+  index: number;
+  consecutive: boolean;
+}
+
 type Direction = -1 | 1;
 
 export class ConnectionProgress {
@@ -46,25 +51,29 @@ export class ConnectionProgress {
     }
     if (index === this.previous) return { type: 'ignored' };
 
+    const targetAlreadyConnected = this.isNodeConnected(index);
     const difference = index - this.active;
     if (Math.abs(difference) !== 1) {
+      if (targetAlreadyConnected) return { type: 'ignored' };
       return { type: 'wrong', index, reason: 'non-consecutive' };
     }
+    const edgeIndex = Math.min(this.active, index);
+    if (this.connectedEdges.has(edgeIndex)) return { type: 'ignored' };
+
     const nextDirection = Math.sign(difference) as Direction;
     if (this.direction !== undefined && nextDirection !== this.direction) {
+      if (targetAlreadyConnected) return { type: 'ignored' };
       return { type: 'wrong', index, reason: 'direction-change' };
     }
 
     this.direction = nextDirection;
     const from = this.active;
-    const edgeIndex = Math.min(from, index);
-    const added = !this.connectedEdges.has(edgeIndex);
     this.connectedEdges.add(edgeIndex);
     this.visibleIndices.add(from);
     this.visibleIndices.add(index);
     this.previous = from;
     this.active = index;
-    return { type: 'advanced', index, added, progress: this.progress, complete: this.complete };
+    return { type: 'advanced', index, added: true, progress: this.progress, complete: this.complete };
   }
 
   public endStroke(): void {
@@ -79,17 +88,23 @@ export class ConnectionProgress {
     return this.connectedEdges.has(index - 1) || this.connectedEdges.has(index);
   }
 
-  public suggestedNextIndex(): number | undefined {
+  public suggestedNextHint(): ConnectionHint | undefined {
     if (this.active === undefined) return undefined;
     const directions: Direction[] = this.direction === undefined ? [1, -1] : [this.direction];
     for (const direction of directions) {
       let index = this.active + direction;
       while (this.inBounds(index)) {
-        if (this.visibleIndices.has(index)) return index;
+        if (this.visibleIndices.has(index)) {
+          return { index, consecutive: Math.abs(index - this.active) === 1 };
+        }
         index += direction;
       }
     }
     return undefined;
+  }
+
+  public suggestedNextIndex(): number | undefined {
+    return this.suggestedNextHint()?.index;
   }
 
   private inBounds(index: number): boolean {

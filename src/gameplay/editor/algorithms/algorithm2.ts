@@ -55,7 +55,7 @@ export const runAlgorithm2 = (
         context.shape,
         selection.parameters.targetCrossings,
         context.generationIndex,
-        { crossingMode: 'maximum', ...(realtime ? { maxNodes: 6000 } : {}) },
+        { crossingMode: 'maximum', startMode: 'any', ...(realtime ? { maxNodes: 6000 } : {}) },
       );
   const candidates: EditorCell[][] = [];
   const zeroCrossingLimit = selection.parameters.targetCrossings <= 0;
@@ -76,6 +76,7 @@ export const runAlgorithm2 = (
       {
         style: 'varied',
         crossingMode: 'maximum',
+        startMode: 'any',
         turnProbability: selection.parameters.turnProbability,
         maxNodes: candidateNodeBudget,
       },

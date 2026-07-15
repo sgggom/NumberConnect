@@ -116,21 +116,24 @@ describe('level editor path generation', () => {
       .toBe(scoreEditorPathVariety(noCrossingPath, 'square', 3, 'maximum'));
   });
 
-  it('varies the starting cell instead of always preferring board corners', () => {
+  it('allows random starting cells across both the board edge and interior', () => {
     const active = new Set<string>();
     for (let y = 0; y < 5; y += 1) {
       for (let x = 0; x < 5; x += 1) active.add(`${x},${y}`);
     }
-    const starts = Array.from({ length: 6 }, (_, generationIndex) =>
+    const starts = Array.from({ length: 12 }, (_, generationIndex) =>
       findEditorPath(5, 5, active, 'square', 4, generationIndex, {
         style: 'varied',
         crossingMode: 'maximum',
+        startMode: 'any',
         turnProbability: 65,
         maxNodes: 60000,
       })?.[0]);
 
     expect(new Set(starts.map((cell) => cell && `${cell.x},${cell.y}`)).size).toBeGreaterThan(1);
-    expect(starts.every((cell) => cell && cell.x > 0 && cell.x < 4 && cell.y > 0 && cell.y < 4))
+    expect(starts.some((cell) => cell && (cell.x === 0 || cell.x === 4 || cell.y === 0 || cell.y === 4)))
+      .toBe(true);
+    expect(starts.some((cell) => cell && cell.x > 0 && cell.x < 4 && cell.y > 0 && cell.y < 4))
       .toBe(true);
   });
 

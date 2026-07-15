@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { beadClusterPose, beadRewardTiming } from '../gameplay/beads/beadRewardAnimation';
 import { ConnectionProgress, type ConnectionAction, type ConnectionFailure } from './connectionProgress';
 import { projectCell } from './topology';
 import { BoardShape, backgroundUrl, cellKey, type BoardSessionInput, type Cell } from './types';
@@ -20,6 +21,7 @@ interface BoardView {
   panel: Phaser.GameObjects.Rectangle;
   solutionLines: Phaser.GameObjects.Graphics;
   lines: Phaser.GameObjects.Graphics;
+  pointerLine: Phaser.GameObjects.Graphics;
   cells: Map<string, CellView>;
   radius: number;
   centerX: number;
@@ -39,7 +41,8 @@ const COLORS = {
   selectedText: '#172033',
   hint: 0x6bb6ff,
   consecutiveHint: 0x57d88b,
-  wrong: 0xe94c5d,
+  wrong: 0xf5b4bb,
+  wrongBorder: 0xe6808d,
   line: 0xfff4c2,
   solutionLine: 0x7fc8ff,
 };
@@ -48,17 +51,6 @@ const hexagonPoints = (radius: number): Phaser.Geom.Point[] => Array.from({ leng
   const angle = Phaser.Math.DegToRad(index * 60);
   return new Phaser.Geom.Point(radius + Math.cos(angle) * radius, radius + Math.sin(angle) * radius);
 });
-
-const gemPoints = (radius: number): Phaser.Geom.Point[] => [
-  new Phaser.Geom.Point(radius, 0),
-  new Phaser.Geom.Point(radius * 1.7, radius * 0.28),
-  new Phaser.Geom.Point(radius * 2, radius),
-  new Phaser.Geom.Point(radius * 1.62, radius * 1.72),
-  new Phaser.Geom.Point(radius, radius * 2),
-  new Phaser.Geom.Point(radius * 0.38, radius * 1.72),
-  new Phaser.Geom.Point(0, radius),
-  new Phaser.Geom.Point(radius * 0.3, radius * 0.28),
-];
 
 const colorNumber = (hexColor: string): number => Number.parseInt(hexColor.slice(1), 16);
 
@@ -116,6 +108,7 @@ export class BoardScene extends Phaser.Scene {
       this.isDrawing = false;
       this.connection?.endStroke();
       this.wrongFeedbackActive = false;
+      this.view?.pointerLine.clear();
       this.stopHintPulse();
     } else {
       this.refreshView();
@@ -274,8 +267,9 @@ export class BoardScene extends Phaser.Scene {
 
   private async showGemCompletion(view: BoardView, gemColors: readonly string[]): Promise<void> {
     if (!this.session) return;
-    const path = this.session.level.solutionPath;
-    const stagger = Math.min(44, Math.max(22, 1200 / Math.max(1, path.length)));
+    const path = this.session.level.solutionPath.slice(0, gemColors.length);
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const stagger = reducedMotion ? 0 : Math.min(44, Math.max(22, 1200 / Math.max(1, path.length)));
     const fallbackColor = gemColors[gemColors.length - 1];
     const gems: Phaser.GameObjects.Container[] = [];
 
@@ -286,21 +280,44 @@ export class BoardScene extends Phaser.Scene {
       ease: 'Sine.easeInOut',
     });
 
+    const rewardCells = new Set(path.map(cellKey));
+    const unusedCellObjects: Phaser.GameObjects.GameObject[] = [];
+    view.cells.forEach((cellView, key) => {
+      if (!rewardCells.has(key)) unusedCellObjects.push(cellView.circle, cellView.glow, cellView.label);
+    });
+    if (unusedCellObjects.length > 0) {
+      this.tweens.add({
+        targets: unusedCellObjects,
+        alpha: 0.12,
+        duration: reducedMotion ? 1 : 260,
+        ease: 'Sine.easeOut',
+      });
+    }
+
     const flips = path.map((cell, index) => {
       const cellView = view.cells.get(cellKey(cell));
       if (!cellView) return Promise.resolve();
       const gemColor = gemColors[index] ?? fallbackColor;
       const gem = this.add.container(cellView.x, cellView.y);
-      const body = this.add.polygon(0, 0, gemPoints(view.radius), colorNumber(gemColor), 1);
-      body.setStrokeStyle(2, 0xffffff, 0.56);
+      const beadRadius = view.radius * 0.82;
+      const shadow = this.add.circle(0, view.radius * 0.1, beadRadius * 1.04, 0x07101a, 0.3);
+      const body = this.add.circle(0, 0, beadRadius, colorNumber(gemColor), 1);
+      body.setStrokeStyle(Math.max(1, view.radius * 0.07), 0xffffff, 0.24);
+      const softHighlight = this.add.circle(
+        -view.radius * 0.18,
+        -view.radius * 0.2,
+        Math.max(3, view.radius * 0.27),
+        0xffffff,
+        0.16,
+      );
       const shine = this.add.circle(
         -view.radius * 0.27,
         -view.radius * 0.3,
         Math.max(2, view.radius * 0.14),
         0xffffff,
-        0.56,
+        0.76,
       );
-      gem.add([body, shine]);
+      gem.add([shadow, body, softHighlight, shine]);
       gem.setScale(0, 1);
       view.root.add(gem);
       gems.push(gem);
@@ -310,7 +327,7 @@ export class BoardScene extends Phaser.Scene {
           targets: [cellView.circle, cellView.glow, cellView.label],
           scaleX: 0,
           delay: index * stagger,
-          duration: 90,
+          duration: reducedMotion ? 1 : 90,
           ease: 'Sine.easeIn',
           onComplete: () => {
             cellView.circle.setAlpha(0);
@@ -319,7 +336,7 @@ export class BoardScene extends Phaser.Scene {
             this.tweens.add({
               targets: gem,
               scaleX: 1,
-              duration: 150,
+              duration: reducedMotion ? 1 : 150,
               ease: 'Back.easeOut',
               easeParams: [1.15],
               onComplete: () => resolve(),
@@ -330,17 +347,44 @@ export class BoardScene extends Phaser.Scene {
     });
 
     await Promise.all(flips);
+    const timing = beadRewardTiming(gems.length, reducedMotion);
+    this.tweens.add({
+      targets: view.panel,
+      alpha: 0.38,
+      duration: reducedMotion ? 1 : 300,
+      ease: 'Sine.easeOut',
+    });
+
+    const gathers = gems.map((gem, index) => {
+      const pose = beadClusterPose(index, gems.length);
+      return new Promise<void>((resolve) => {
+        this.tweens.add({
+          targets: gem,
+          x: view.centerX + pose.x,
+          y: view.centerY + pose.y,
+          angle: pose.rotation,
+          scale: pose.scale,
+          delay: reducedMotion ? 0 : index * 8,
+          duration: reducedMotion ? 1 : 560,
+          ease: 'Cubic.easeInOut',
+          onComplete: () => resolve(),
+        });
+      });
+    });
+    await Promise.all(gathers);
+
     await new Promise<void>((resolve) => {
       this.tweens.add({
         targets: gems,
-        scale: 1.06,
+        scaleX: `+=0.05`,
+        scaleY: `-=0.04`,
         yoyo: true,
-        duration: 180,
+        duration: timing.settleDuration * 0.5,
         ease: 'Sine.easeOut',
         onComplete: () => resolve(),
       });
     });
-    await new Promise<void>((resolve) => { this.time.delayedCall(360, resolve); });
+    if (!reducedMotion) await new Promise<void>((resolve) => { this.time.delayedCall(220, resolve); });
   }
 
   private createConnectionProgress(session: BoardSessionInput): ConnectionProgress {
@@ -391,7 +435,8 @@ export class BoardScene extends Phaser.Scene {
     panel.setStrokeStyle(2, 0x48506b, 0.8);
     const solutionLines = this.add.graphics();
     const lines = this.add.graphics();
-    root.add([panel, solutionLines, lines]);
+    const pointerLine = this.add.graphics();
+    root.add([panel, solutionLines, lines, pointerLine]);
     const cells = new Map<string, CellView>();
 
     session.level.solutionPath.forEach((cell, index) => {
@@ -410,7 +455,7 @@ export class BoardScene extends Phaser.Scene {
         circle.setInteractive((circle as Phaser.GameObjects.Polygon).geom, Phaser.Geom.Polygon.Contains);
       } else {
         circle.setInteractive(
-          new Phaser.Geom.Circle(radius, radius, radius * 1.25),
+          new Phaser.Geom.Circle(radius, radius, radius),
           Phaser.Geom.Circle.Contains,
         );
       }
@@ -425,12 +470,24 @@ export class BoardScene extends Phaser.Scene {
       const labelSize = radius * 2;
       label.setFixedSize(labelSize, labelSize);
       label.setPadding(0, Math.max(0, (labelSize - labelTextHeight) * 0.5), 0, 0);
-      circle.on('pointerdown', () => this.handleCellDown(index));
+      circle.on('pointerdown', (pointer: Phaser.Input.Pointer) => this.handleCellDown(index, pointer));
       root.add([glow, circle, label]);
       cells.set(cellKey(cell), { cell, index, x: position.x, y: position.y, circle, glow, label });
     });
 
-    return { root, panel, solutionLines, lines, cells, radius, centerX, centerY, panelWidth, panelHeight };
+    return {
+      root,
+      panel,
+      solutionLines,
+      lines,
+      pointerLine,
+      cells,
+      radius,
+      centerX,
+      centerY,
+      panelWidth,
+      panelHeight,
+    };
   }
 
   private refreshView(): void {
@@ -462,9 +519,10 @@ export class BoardScene extends Phaser.Scene {
       this.view.lines.lineTo(to.x, to.y);
     }
     this.view.lines.strokePath();
+    if (!this.isDrawing) this.view.pointerLine.clear();
 
-    const nextHintIndex = this.session.showNextNumber
-      ? this.connection?.suggestedNextIndex()
+    const nextHint = this.session.showNextNumber
+      ? this.connection?.suggestedNextHint()
       : undefined;
     let activeHintCell: CellView | undefined;
 
@@ -480,8 +538,8 @@ export class BoardScene extends Phaser.Scene {
       cellView.label.setVisible(numberVisible);
       cellView.label.setColor(selected ? COLORS.selectedText : revealedHidden ? COLORS.revealedHiddenText : COLORS.text);
       cellView.label.setFontStyle(revealedHidden ? 'italic 700' : '700');
-      const hint = cellView.index === nextHintIndex;
-      const hintColor = COLORS.consecutiveHint;
+      const hint = cellView.index === nextHint?.index;
+      const hintColor = nextHint?.consecutive ? COLORS.consecutiveHint : COLORS.hint;
       cellView.glow.setFillStyle(hintColor, hint ? 0.2 : 0);
       cellView.glow.setStrokeStyle(4, hintColor, hint ? 0.9 : 0);
       if (hint) activeHintCell = cellView;
@@ -520,11 +578,14 @@ export class BoardScene extends Phaser.Scene {
     this.hintCell = undefined;
   }
 
-  private handleCellDown(index: number): void {
+  private handleCellDown(index: number, pointer: Phaser.Input.Pointer): void {
     if (this.locked || this.transitioning || !this.connection) return;
     this.isDrawing = true;
     this.wrongFeedbackActive = false;
     this.handleConnectionAction(this.connection.begin(index, this.solutionRevealed));
+    if (this.view) {
+      this.drawPointerLine(pointer.x - this.view.root.x, pointer.y - this.view.root.y);
+    }
   }
 
   private handlePointerMove(pointer: Phaser.Input.Pointer): void {
@@ -532,15 +593,16 @@ export class BoardScene extends Phaser.Scene {
     const localX = pointer.x - this.view.root.x;
     const localY = pointer.y - this.view.root.y;
     let closest: CellView | undefined;
-    let bestDistance = (this.view.radius * 1.55) ** 2;
+    let bestDistance = this.view.radius ** 2;
     this.view.cells.forEach((candidate) => {
       const distance = (candidate.x - localX) ** 2 + (candidate.y - localY) ** 2;
-      if (distance < bestDistance) {
+      if (distance <= bestDistance) {
         bestDistance = distance;
         closest = candidate;
       }
     });
     if (closest && this.connection) this.handleConnectionAction(this.connection.extend(closest.index));
+    this.drawPointerLine(localX, localY);
   }
 
   private handlePointerUp(): void {
@@ -548,7 +610,30 @@ export class BoardScene extends Phaser.Scene {
     this.isDrawing = false;
     this.wrongFeedbackActive = false;
     this.connection?.endStroke();
+    this.view?.pointerLine.clear();
     if (wasDrawing) this.refreshView();
+  }
+
+  private drawPointerLine(localX: number, localY: number): void {
+    if (!this.view) return;
+    const pointerLine = this.view.pointerLine;
+    pointerLine.clear();
+    if (!this.isDrawing || this.locked || !this.connection || !this.session) return;
+
+    const activeIndex = this.connection.activeIndex;
+    if (activeIndex === undefined) return;
+    const activeCell = this.session.level.solutionPath[activeIndex];
+    const from = activeCell ? this.view.cells.get(cellKey(activeCell)) : undefined;
+    if (!from) return;
+
+    const lineWidth = Math.max(5, this.view.radius * 0.28);
+    pointerLine.lineStyle(lineWidth, COLORS.line, 0.76);
+    pointerLine.beginPath();
+    pointerLine.moveTo(from.x, from.y);
+    pointerLine.lineTo(localX, localY);
+    pointerLine.strokePath();
+    pointerLine.fillStyle(COLORS.line, 0.88);
+    pointerLine.fillCircle(localX, localY, lineWidth * 0.5);
   }
 
   private handleConnectionAction(action: ConnectionAction): void {
@@ -588,7 +673,8 @@ export class BoardScene extends Phaser.Scene {
     const cell = this.view.cells.get(cellKey(this.session.level.solutionPath[index]));
     if (!cell) return;
     cell.circle.setFillStyle(COLORS.wrong, 1);
-    this.time.delayedCall(220, () => this.refreshView());
+    cell.circle.setStrokeStyle(2, COLORS.wrongBorder, 1);
+    this.time.delayedCall(360, () => this.refreshView());
   }
 
   private playSound(key: string): void {
