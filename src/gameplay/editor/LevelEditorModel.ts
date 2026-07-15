@@ -23,6 +23,14 @@ const RECTANGLE_SIZES: ReadonlyArray<Readonly<EditorCell>> = [
 const BACKGROUNDS = ['apple', 'banana', 'orange', 'grapes', 'basket', 'pineapple'] as const;
 const wrap = (value: number, min: number, max: number): number => value < min ? max : value > max ? min : value;
 const keyOf = (cell: EditorCell): string => `${cell.x},${cell.y}`;
+const createGenerationSeed = (): number => {
+  if (globalThis.crypto?.getRandomValues) {
+    const value = new Uint32Array(1);
+    globalThis.crypto.getRandomValues(value);
+    return value[0];
+  }
+  return Math.floor(Math.random() * 0x100000000) >>> 0;
+};
 
 interface DeletionUndoSnapshot {
   paintedCells: string[];
@@ -32,6 +40,7 @@ interface DeletionUndoSnapshot {
   manualMode: ManualEditMode;
   pathSource: 'generated' | 'manual';
   generationCount: number;
+  targetHiddenCount?: number;
 }
 
 export class LevelEditorModel {
@@ -48,6 +57,7 @@ export class LevelEditorModel {
   private readonly manualHiddenCells = new Set<string>();
   private manualHiddenConfigured = false;
   private pathSource: 'generated' | 'manual' = 'generated';
+  private generatedTargetHiddenCount?: number;
   private deletionUndo?: DeletionUndoSnapshot;
 
   public get shape(): EditorShape { return this.currentShape; }
@@ -58,6 +68,7 @@ export class LevelEditorModel {
   public get pathGenerationCount(): number { return this.generationCount; }
   public get manualEditMode(): ManualEditMode { return this.manualMode; }
   public get hiddenCellKeys(): ReadonlySet<string> { return this.manualHiddenCells; }
+  public get targetHiddenCount(): number | undefined { return this.generatedTargetHiddenCount; }
   public get canUndoDeletion(): boolean { return this.deletionUndo !== undefined; }
 
   public reset(): void {
@@ -69,6 +80,7 @@ export class LevelEditorModel {
     this.manualHiddenCells.clear();
     this.manualHiddenConfigured = false;
     this.pathSource = 'generated';
+    this.generatedTargetHiddenCount = undefined;
   }
 
   public clear(): void {
@@ -78,6 +90,7 @@ export class LevelEditorModel {
     this.generationCount = 0;
     this.manualHiddenCells.clear();
     this.manualHiddenConfigured = this.manualMode === 'hidden';
+    this.generatedTargetHiddenCount = undefined;
   }
 
   public fill(): void {
@@ -116,6 +129,7 @@ export class LevelEditorModel {
     this.manualHiddenConfigured = Array.isArray(level.hiddenCells);
     this.manualMode = 'off';
     this.pathSource = level.pathSource === 'manual' ? 'manual' : 'generated';
+    this.generatedTargetHiddenCount = level.hiddenCells?.length;
     this.algorithm = normalizeEditorAlgorithm(level.algorithm);
     this.generationCount = 0;
     this.trimCells();
@@ -141,6 +155,7 @@ export class LevelEditorModel {
       this.manualHiddenCells.clear();
       this.manualHiddenConfigured = false;
       this.pathSource = 'manual';
+      this.generatedTargetHiddenCount = undefined;
     } else if (mode === 'hidden') {
       this.manualHiddenConfigured = true;
     }
@@ -218,6 +233,7 @@ export class LevelEditorModel {
     if (index === 0 || index === this.path.length - 1) return '路径起点和终点必须保持显示。';
     this.deletionUndo = undefined;
     this.manualHiddenConfigured = true;
+    this.generatedTargetHiddenCount = undefined;
     if (this.manualHiddenCells.has(key)) this.manualHiddenCells.delete(key);
     else this.manualHiddenCells.add(key);
     return null;
@@ -228,6 +244,7 @@ export class LevelEditorModel {
     this.deletionUndo = undefined;
     this.manualHiddenCells.delete(key);
     this.manualHiddenConfigured = true;
+    this.generatedTargetHiddenCount = undefined;
     return true;
   }
 
@@ -244,6 +261,7 @@ export class LevelEditorModel {
       manualMode: this.manualMode,
       pathSource: this.pathSource,
       generationCount: this.generationCount,
+      targetHiddenCount: this.generatedTargetHiddenCount,
     };
     const removedCells = this.path.slice(index + 1);
     removedCells.forEach((cell) => this.paintedCells.delete(keyOf(cell)));
@@ -253,6 +271,7 @@ export class LevelEditorModel {
     this.generationCount = 0;
     this.manualHiddenCells.clear();
     this.manualHiddenConfigured = false;
+    this.generatedTargetHiddenCount = undefined;
     return removedCount;
   }
 
@@ -269,27 +288,37 @@ export class LevelEditorModel {
     this.manualMode = snapshot.manualMode;
     this.pathSource = snapshot.pathSource;
     this.generationCount = snapshot.generationCount;
+    this.generatedTargetHiddenCount = snapshot.targetHiddenCount;
     this.deletionUndo = undefined;
     return restoredCount;
   }
 
   public generatePath(): boolean {
     const { rows, columns } = this.size();
-    const generationIndex = this.generationCount;
+    const generationIndex = (
+      createGenerationSeed()
+      ^ Math.imul(this.generationCount + 1, 2654435761)
+    ) >>> 0;
     this.deletionUndo = undefined;
     this.generationCount += 1;
     this.pathSource = 'generated';
     this.manualHiddenCells.clear();
     this.manualHiddenConfigured = false;
-    const path = runEditorAlgorithm(this.algorithm, {
+    this.generatedTargetHiddenCount = undefined;
+    const result = runEditorAlgorithm(this.algorithm, {
       rows,
       columns,
       activeCells: this.paintedCells,
       shape: this.currentShape,
       generationIndex,
     });
-    this.path = path ?? [];
-    return path !== null;
+    this.path = result?.path ?? [];
+    if (result?.hiddenCells) {
+      result.hiddenCells.forEach((cell) => this.manualHiddenCells.add(keyOf(cell)));
+      this.manualHiddenConfigured = true;
+      this.generatedTargetHiddenCount = result.targetHiddenCount;
+    }
+    return result !== null;
   }
 
   public previewName(levelId: number): string {
@@ -349,5 +378,6 @@ export class LevelEditorModel {
     this.generationCount = 0;
     this.manualHiddenCells.clear();
     this.manualHiddenConfigured = false;
+    this.generatedTargetHiddenCount = undefined;
   }
 }

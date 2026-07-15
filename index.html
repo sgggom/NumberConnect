@@ -13,14 +13,69 @@
       <section id="lobby-screen" class="screen lobby-screen" aria-labelledby="lobby-title">
         <div class="brand-lockup">
           <span class="brand-mark" aria-hidden="true"><i>1</i><i>2</i><i>3</i></span>
-          <p class="eyebrow">ONE STROKE PUZZLE</p>
           <h1 id="lobby-title">Number Connect</h1>
-          <p>按顺序一笔连接所有数字</p>
         </div>
+
+        <div class="lobby-ambient-field" aria-hidden="true">
+          <svg viewBox="0 0 430 760" preserveAspectRatio="xMidYMid slice" role="presentation">
+            <defs>
+              <linearGradient id="lobby-ambient-gradient" x1="210" y1="650" x2="210" y2="150" gradientUnits="userSpaceOnUse">
+                <stop offset="0" stop-color="#c775e8" />
+                <stop offset=".48" stop-color="#58d0aa" />
+                <stop offset="1" stop-color="#659ee4" />
+              </linearGradient>
+              <linearGradient id="lobby-ambient-line-mask-gradient" x1="0" y1="150" x2="0" y2="610" gradientUnits="userSpaceOnUse">
+                <stop offset="0" stop-color="white" stop-opacity="0" />
+                <stop offset=".18" stop-color="white" />
+                <stop offset=".78" stop-color="white" />
+                <stop offset="1" stop-color="white" stop-opacity="0" />
+              </linearGradient>
+              <radialGradient id="lobby-ambient-halo">
+                <stop offset="0" stop-color="#58d0aa" stop-opacity=".13" />
+                <stop offset="1" stop-color="#111823" stop-opacity="0" />
+              </radialGradient>
+              <pattern id="lobby-ambient-grid-pattern" width="60" height="60" patternUnits="userSpaceOnUse">
+                <circle cx="30" cy="30" r="2.4" fill="#a4bfd0" fill-opacity=".2" />
+              </pattern>
+              <mask id="lobby-ambient-middle-mask" maskUnits="userSpaceOnUse" x="0" y="150" width="430" height="460">
+                <rect x="0" y="150" width="430" height="460" fill="url(#lobby-ambient-line-mask-gradient)" />
+              </mask>
+              <path id="lobby-ambient-route" pathLength="1" d="M210 930 L270 870 L210 810 L150 750 L210 690 L270 630 L210 570 L150 510 L210 450 L270 390 L210 330 L150 270 L210 210 L270 150 L210 90 L150 30 L210 -30 L270 -90 L210 -150" />
+            </defs>
+
+            <ellipse class="lobby-ambient-halo lobby-ambient-halo--top" cx="115" cy="280" rx="230" ry="210" fill="url(#lobby-ambient-halo)" />
+            <ellipse class="lobby-ambient-halo lobby-ambient-halo--bottom" cx="350" cy="520" rx="250" ry="220" fill="url(#lobby-ambient-halo)" />
+            <rect class="lobby-ambient-grid" x="-60" y="-300" width="550" height="1300" fill="url(#lobby-ambient-grid-pattern)" />
+
+            <g mask="url(#lobby-ambient-middle-mask)">
+              <g class="lobby-ambient-route-layer">
+                <use class="lobby-ambient-route lobby-ambient-route--base" href="#lobby-ambient-route" />
+                <use class="lobby-ambient-route lobby-ambient-route--flow" href="#lobby-ambient-route" />
+              </g>
+            </g>
+
+          </svg>
+        </div>
+
+        <button id="bead-mode-button" class="bead-mode-entry" type="button" aria-label="进入拼豆模式">
+          <span class="bead-mode-preview" aria-hidden="true">
+            <i></i><i class="is-pink"></i><i></i><i class="is-violet"></i><i></i>
+            <i class="is-pink"></i><i class="is-pink"></i><i class="is-violet"></i><i class="is-violet"></i><i class="is-violet"></i>
+            <i class="is-pink"></i><i class="is-gold"></i><i class="is-pink"></i><i class="is-violet"></i><i class="is-violet"></i>
+            <i></i><i class="is-pink"></i><i class="is-pink"></i><i class="is-violet"></i><i></i>
+            <i></i><i></i><i class="is-pink"></i><i></i><i></i>
+          </span>
+          <span class="bead-mode-copy">
+            <small>PIXEL BEADS</small>
+            <strong>拼豆模式</strong>
+            <span>选颜色 · 拼出像素图案</span>
+          </span>
+          <span class="bead-mode-arrow" aria-hidden="true">›</span>
+        </button>
 
         <nav class="lobby-actions" aria-label="主菜单">
           <button id="start-button" class="menu-button menu-button--primary">
-            <span class="menu-icon">▶</span><span><strong>开始游戏</strong><small>挑战图案关卡</small></span>
+            <span class="menu-icon">▶</span><span><strong>开始游戏</strong><small>从关卡列表继续</small></span>
           </button>
           <button id="endless-button" class="menu-button menu-button--endless">
             <span class="menu-icon">∞</span><span><strong>无尽模式</strong><small>难度随阶段提升</small></span>
@@ -33,7 +88,6 @@
           </button>
         </nav>
 
-        <footer class="lobby-footer"><span>拖动连接</span><span>支持触屏</span><span>自动保存</span></footer>
       </section>
 
       <section id="play-screen" class="screen play-screen" hidden aria-label="游戏界面">
@@ -48,7 +102,7 @@
         <div class="status-strip">
           <span id="play-lives" class="life-counter" role="status" aria-live="polite" aria-label="生命值 3" hidden>♥♥♥</span>
           <span class="status-dot" aria-hidden="true"></span>
-          <p id="play-status" aria-live="polite">请从数字 1 开始</p>
+          <p id="play-status" aria-live="polite">可从任意显示数字开始</p>
           <button id="solution-toggle" class="solution-toggle" type="button" aria-pressed="false" aria-label="显示隐藏数字和完整连线">
             <span aria-hidden="true">◎</span><b id="solution-toggle-label">显示答案</b>
           </button>
@@ -72,20 +126,35 @@
       </section>
 
       <section id="editor-screen" class="screen editor-screen" hidden></section>
+
+      <section id="bead-screen" class="screen bead-screen" hidden aria-labelledby="bead-screen-title">
+        <header class="bead-screen-header">
+          <button id="bead-back-button" class="icon-button" type="button" aria-label="返回大厅">←</button>
+          <div>
+            <p>PIXEL BEADS</p>
+            <h2 id="bead-screen-title">拼豆模式</h2>
+          </div>
+          <span aria-hidden="true"></span>
+        </header>
+        <div class="bead-screen-stage">
+          <div class="bead-pattern-heading">
+            <div><p class="eyebrow">CURRENT PATTERN</p><h3 id="bead-pattern-name">橙色小猫</h3></div>
+            <strong id="bead-progress-text">0 / 0</strong>
+          </div>
+          <div id="bead-pattern-board" class="bead-pattern-board" role="img" aria-label="20乘20拼豆图纸"></div>
+          <div class="bead-progress-track" role="progressbar" aria-label="拼豆完成进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="bead-progress-fill"></i></div>
+          <p id="bead-screen-status" class="bead-screen-status" aria-live="polite">正在读取拼豆图纸…</p>
+          <button id="bead-start-button" class="button bead-start-button" type="button">进入普通关卡</button>
+        </div>
+      </section>
     </main>
 
     <dialog id="settings-dialog" class="settings-dialog">
       <form method="dialog" class="settings-card">
         <header><div><p class="eyebrow">GAME OPTIONS</p><h2>游戏设置</h2></div><button id="settings-close-button" class="icon-button" value="cancel" aria-label="关闭">×</button></header>
-        <div id="endless-settings-note" class="settings-note" hidden>无尽模式的棋盘尺寸和隐藏强度由当前阶段自动决定。</div>
+        <div id="endless-settings-note" class="settings-note" hidden>无尽模式关卡由当前阶段自动生成，关卡列表不可切换。</div>
         <div class="settings-list">
-          <label class="setting-row"><span><b>棋盘类型</b><small>图案关卡或程序棋盘</small></span><select id="settings-shape"><option value="3">图案关卡</option><option value="0">正方形</option><option value="1">菱形</option><option value="2">长方形</option><option value="4">六边形蜂窝</option></select></label>
-          <label id="settings-level-row" class="setting-row"><span><b>选择关卡</b><small>包含本地编辑器关卡</small></span><select id="settings-level"></select></label>
-          <label id="settings-size-row" class="setting-row setting-row--range"><span><b>棋盘尺寸</b><small id="settings-size-output">6 × 6</small></span><input id="settings-size" type="range" min="3" max="10" value="6" /></label>
-          <label class="setting-row setting-row--range"><span><b>隐藏数字比例</b><small id="settings-hidden-output">35%</small></span><input id="settings-hidden" type="range" min="0" max="90" step="5" value="35" /></label>
-          <label class="setting-row setting-row--range"><span><b>最长连续隐藏</b><small id="settings-hidden-run-output">3</small></span><input id="settings-hidden-run" type="range" min="0" max="12" value="3" /></label>
-          <label class="setting-row setting-row--range"><span><b>最长连续显示</b><small id="settings-visible-run-output">4</small></span><input id="settings-visible-run" type="range" min="1" max="12" value="4" /></label>
-          <label id="settings-crossings-row" class="setting-row setting-row--range"><span><b>目标交叉数</b><small id="settings-crossings-output">5</small></span><input id="settings-crossings" type="range" min="0" max="20" value="5" /></label>
+          <label class="setting-row"><span><b>关卡列表</b><small>读取内置与本地编辑器关卡</small></span><select id="settings-level"></select></label>
           <label class="setting-row"><span><b>下一个数字提示</b><small>高亮下一处可见数字</small></span><input id="settings-next" class="switch" type="checkbox" checked /></label>
           <label class="setting-row"><span><b>游戏声音</b><small>连击、错误和胜利反馈</small></span><input id="settings-sound" class="switch" type="checkbox" checked /></label>
           <button id="video-stats-button" class="setting-row setting-row--button" type="button"><span><b>视频统计</b><small>查看奖励视频的触发点位</small></span><strong id="video-stats-count">0 次 ›</strong></button>

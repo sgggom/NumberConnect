@@ -15,6 +15,7 @@ interface LevelEditorControllerOptions {
   getLevels: () => LevelData[];
   getNextLevelId: () => number;
   onLevelsChange: (levels: LevelData[]) => void;
+  onPlaytest: (level: LevelData) => void;
   onBack: () => void;
 }
 
@@ -27,6 +28,10 @@ export class LevelEditorController {
   private selectedLevelId?: number;
   private readonly splitPane: EditorSplitPaneController;
   private readonly pathResizeObserver: ResizeObserver;
+  private pathRevealCount?: number;
+  private pathAnimationTimer?: number;
+  private pathAnimationRun = 0;
+  private isPathAnimating = false;
 
   public constructor(
     private readonly host: HTMLElement,
@@ -45,7 +50,10 @@ export class LevelEditorController {
     this.bound = true;
     this.splitPane.bind();
     this.pathResizeObserver.observe(this.query<HTMLElement>('.editor-workspace'));
-    this.query('#editor-back-button').addEventListener('click', this.options.onBack);
+    this.query('#editor-back-button').addEventListener('click', () => {
+      this.cancelPathAnimation();
+      this.options.onBack();
+    });
     this.query<HTMLSelectElement>('#editor-shape').addEventListener('change', (event) => {
       this.model.setShape((event.target as HTMLSelectElement).value as EditorShape);
       this.render();
@@ -87,6 +95,7 @@ export class LevelEditorController {
     });
     this.query('#editor-undo-delete-button').addEventListener('click', () => this.undoLastDeletion());
     this.query('#editor-generate-path-button').addEventListener('click', () => this.generatePath());
+    this.query('#editor-playtest-button').addEventListener('click', () => this.playtest());
     this.query('#editor-save-button').addEventListener('click', () => this.save());
     this.query('#editor-level-add').addEventListener('click', () => this.save());
     this.query('#editor-level-import').addEventListener('click', () => this.query<HTMLInputElement>('#editor-level-file').click());
@@ -111,10 +120,17 @@ export class LevelEditorController {
   }
 
   public open(): void {
+    this.cancelPathAnimation();
     this.selectedLevelId = undefined;
     this.model.reset();
     this.render();
     this.setStatus('在左侧棋盘拖动绘制形状，然后选择算法生成路径。');
+  }
+
+  public resumeFromPlaytest(): void {
+    this.cancelPathAnimation();
+    this.render();
+    this.setStatus('已返回编辑器，可继续调整当前关卡。');
   }
 
   private render(): void {
@@ -131,7 +147,10 @@ export class LevelEditorController {
       : '';
     grid.dataset.shape = this.model.shape;
     grid.dataset.manualMode = this.model.manualEditMode;
+    grid.setAttribute('aria-busy', String(this.isPathAnimating));
+    this.host.classList.toggle('is-path-animating', this.isPathAnimating);
     const order = this.model.pathOrder();
+    const visiblePathLength = this.pathRevealCount ?? this.model.solutionPath.length;
     const cells: HTMLButtonElement[] = [];
 
     for (let row = 0; row < rows; row += 1) {
@@ -150,15 +169,16 @@ export class LevelEditorController {
         if (column % 2 === 1) button.classList.add('is-column-odd');
         button.setAttribute('aria-label', `第 ${row + 1} 行，第 ${column + 1} 列`);
         const value = order.get(key);
+        const pathVisible = value !== undefined && value <= visiblePathLength;
         if (this.model.activeCells.has(key)) button.classList.add('is-active');
-        if (this.model.hiddenCellKeys.has(key)) button.classList.add('is-manual-hidden');
-        if (value) {
+        if (pathVisible && this.model.hiddenCellKeys.has(key)) button.classList.add('is-manual-hidden');
+        if (pathVisible) {
           button.classList.add('is-path');
           button.title = this.model.manualEditMode === 'hidden'
             ? '右键取消该格子的隐藏状态'
             : '右键删除此格子之后的路径和格子';
           if (value === 1) button.classList.add('is-start');
-          if (value === this.model.solutionPath.length) button.classList.add('is-end');
+          if (value === this.model.solutionPath.length && !this.isPathAnimating) button.classList.add('is-end');
           button.addEventListener('contextmenu', (event) => {
             event.preventDefault();
             this.painting = false;
@@ -199,20 +219,28 @@ export class LevelEditorController {
     grid.replaceChildren(...cells);
     this.renderPathLines();
 
-    this.query<HTMLSelectElement>('#editor-shape').value = this.model.shape;
-    this.query<HTMLSelectElement>('#editor-manual-mode').value = this.model.manualEditMode;
+    const shapeSelect = this.query<HTMLSelectElement>('#editor-shape');
+    shapeSelect.value = this.model.shape;
+    shapeSelect.disabled = this.isPathAnimating;
+    const manualModeSelect = this.query<HTMLSelectElement>('#editor-manual-mode');
+    manualModeSelect.value = this.model.manualEditMode;
+    manualModeSelect.disabled = this.isPathAnimating;
     this.renderAlgorithmControls();
-    this.query<HTMLButtonElement>('#editor-fill-button').hidden = this.model.algorithmSelection.id !== 'algorithm-1';
-    this.query<HTMLButtonElement>('#editor-generate-path-button').disabled = this.model.manualEditMode !== 'off';
-    this.query<HTMLButtonElement>('#editor-undo-delete-button').disabled = !this.model.canUndoDeletion;
-    this.query<HTMLButtonElement>('#editor-size-minus').disabled = false;
-    this.query<HTMLButtonElement>('#editor-size-plus').disabled = false;
+    const fillButton = this.query<HTMLButtonElement>('#editor-fill-button');
+    fillButton.hidden = false;
+    fillButton.disabled = this.isPathAnimating;
+    this.query<HTMLButtonElement>('#editor-clear-button').disabled = this.isPathAnimating;
+    this.query<HTMLButtonElement>('#editor-generate-path-button').disabled = this.model.manualEditMode !== 'off' || this.isPathAnimating;
+    this.query<HTMLButtonElement>('#editor-undo-delete-button').disabled = !this.model.canUndoDeletion || this.isPathAnimating;
+    this.query<HTMLButtonElement>('#editor-size-minus').disabled = this.isPathAnimating;
+    this.query<HTMLButtonElement>('#editor-size-plus').disabled = this.isPathAnimating;
     this.query('#editor-size-value').textContent = `${columns} × ${rows}`;
     const nextId = this.options.getNextLevelId();
     this.query('#editor-save-id').textContent = `下次保存：${nextId}`;
     this.query<HTMLElement>('#editor-preview').style.backgroundImage = `url('./level-backgrounds/${this.model.previewName(nextId)}.png')`;
-    this.query<HTMLButtonElement>('#editor-save-button').disabled = !this.model.hasGeneratedPath;
-    this.query<HTMLButtonElement>('#editor-level-add').disabled = !this.model.hasGeneratedPath;
+    this.query<HTMLButtonElement>('#editor-save-button').disabled = !this.model.hasGeneratedPath || this.isPathAnimating;
+    this.query<HTMLButtonElement>('#editor-playtest-button').disabled = !this.model.hasGeneratedPath || this.isPathAnimating;
+    this.query<HTMLButtonElement>('#editor-level-add').disabled = !this.model.hasGeneratedPath || this.isPathAnimating;
     this.renderLevelList();
   }
 
@@ -275,13 +303,82 @@ export class LevelEditorController {
   }
 
   private generatePath(): void {
+    this.cancelPathAnimation();
     if (!this.model.generatePath()) {
       this.render();
       this.setStatus('当前算法无法生成覆盖全部格子的路径，请调整棋盘或更换算法。', true);
       return;
     }
+    const hiddenSummary = this.model.algorithmSelection.id === 'algorithm-2'
+      ? `，隐藏 ${this.model.hiddenCellKeys.size}/${this.model.targetHiddenCount ?? this.model.hiddenCellKeys.size} 格，纯运气分叉 0`
+      : '';
+    this.animateGeneratedPath(`第 ${this.model.pathGenerationCount} 次路径生成成功：共 ${this.model.solutionPath.length} 个格子${hiddenSummary}。`);
+  }
+
+  private animateGeneratedPath(completionMessage: string): void {
+    const total = this.model.solutionPath.length;
+    if (total === 0) {
+      this.render();
+      return;
+    }
+
+    const run = ++this.pathAnimationRun;
+    this.isPathAnimating = true;
+    this.pathRevealCount = 0;
     this.render();
-    this.setStatus(`第 ${this.model.pathGenerationCount} 次路径生成成功：共 ${this.model.solutionPath.length} 个格子。`);
+    this.setStatus(`路径已计算完成，开始逐格展示，共 ${total} 格。`);
+
+    const revealNext = (): void => {
+      if (run !== this.pathAnimationRun) return;
+      const nextCount = Math.min(total, (this.pathRevealCount ?? 0) + 1);
+      this.pathRevealCount = nextCount;
+      const cell = this.model.solutionPath[nextCount - 1];
+      const button = this.host.querySelector<HTMLButtonElement>(`.editor-cell[data-cell-key="${cell.x},${cell.y}"]`);
+      this.host.querySelector('.editor-cell.is-generating-head')?.classList.remove('is-generating-head');
+      if (button) {
+        button.classList.add('is-path', 'is-generating-head');
+        if (nextCount === 1) button.classList.add('is-start');
+        if (this.model.hiddenCellKeys.has(`${cell.x},${cell.y}`)) button.classList.add('is-manual-hidden');
+      }
+      this.renderPathLines();
+      this.setStatus(nextCount === 1
+        ? `起点：第 ${cell.y + 1} 行，第 ${cell.x + 1} 列；正在生成 ${nextCount}/${total}`
+        : `正在生成 ${nextCount}/${total}：第 ${cell.y + 1} 行，第 ${cell.x + 1} 列`);
+
+      if (nextCount < total) {
+        this.pathAnimationTimer = window.setTimeout(revealNext, 80);
+        return;
+      }
+      this.pathAnimationTimer = window.setTimeout(() => {
+        if (run !== this.pathAnimationRun) return;
+        this.isPathAnimating = false;
+        this.pathRevealCount = undefined;
+        this.pathAnimationTimer = undefined;
+        this.render();
+        this.setStatus(completionMessage);
+      }, 180);
+    };
+
+    this.pathAnimationTimer = window.setTimeout(revealNext, 120);
+  }
+
+  private cancelPathAnimation(): void {
+    this.pathAnimationRun += 1;
+    if (this.pathAnimationTimer !== undefined) window.clearTimeout(this.pathAnimationTimer);
+    this.pathAnimationTimer = undefined;
+    this.pathRevealCount = undefined;
+    this.isPathAnimating = false;
+    this.host.classList.remove('is-path-animating');
+  }
+
+  private playtest(): void {
+    const level = this.model.createLevel(this.options.getNextLevelId());
+    if (!level) {
+      this.setStatus('请先生成覆盖全部格子的路径。', true);
+      return;
+    }
+    this.setStatus('正在进入试玩，退出后将返回当前编辑状态。');
+    this.options.onPlaytest(level);
   }
 
   private save(): void {
@@ -471,7 +568,11 @@ export class LevelEditorController {
   private renderPathLines(): void {
     const svg = this.query<SVGSVGElement>('#editor-path-lines');
     svg.replaceChildren();
-    if (this.model.solutionPath.length < 1) return;
+    const visiblePath = this.model.solutionPath.slice(
+      0,
+      this.pathRevealCount ?? this.model.solutionPath.length,
+    );
+    if (visiblePath.length < 1) return;
 
     const workspace = this.query<HTMLElement>('.editor-workspace');
     const workspaceBounds = workspace.getBoundingClientRect();
@@ -479,7 +580,7 @@ export class LevelEditorController {
       [...this.host.querySelectorAll<HTMLButtonElement>('.editor-cell[data-cell-key]')]
         .map((button) => [button.dataset.cellKey!, button] as const),
     );
-    const points = this.model.solutionPath.map((cell) => {
+    const points = visiblePath.map((cell) => {
       const button = buttons.get(`${cell.x},${cell.y}`);
       if (!button) return null;
       const bounds = button.getBoundingClientRect();
@@ -514,12 +615,14 @@ export class LevelEditorController {
       node.setAttribute('cx', String(point!.x));
       node.setAttribute('cy', String(point!.y));
       node.setAttribute('r', String(nodeRadius));
-      node.setAttribute('class', `editor-path-node${index === 0 ? ' is-start' : ''}${index === points.length - 1 ? ' is-end' : ''}${this.model.hiddenCellKeys.has(point!.key) ? ' is-hidden' : ''}`);
+      const isCurrent = this.isPathAnimating && index === points.length - 1;
+      const isFinalEnd = !this.isPathAnimating && index === this.model.solutionPath.length - 1;
+      node.setAttribute('class', `editor-path-node${index === 0 ? ' is-start' : ''}${isFinalEnd ? ' is-end' : ''}${isCurrent ? ' is-current' : ''}${this.model.hiddenCellKeys.has(point!.key) ? ' is-hidden' : ''}`);
 
       const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
       label.setAttribute('x', String(point!.x));
       label.setAttribute('y', String(point!.y));
-      label.setAttribute('class', `editor-path-number${index === 0 ? ' is-start' : ''}${index === points.length - 1 ? ' is-end' : ''}${this.model.hiddenCellKeys.has(point!.key) ? ' is-hidden' : ''}`);
+      label.setAttribute('class', `editor-path-number${index === 0 ? ' is-start' : ''}${isFinalEnd ? ' is-end' : ''}${isCurrent ? ' is-current' : ''}${this.model.hiddenCellKeys.has(point!.key) ? ' is-hidden' : ''}`);
       label.style.fontSize = `${fontSize}px`;
       label.textContent = String(value);
       svg.append(node, label);
@@ -536,11 +639,15 @@ export class LevelEditorController {
     });
     select.replaceChildren(...options);
     select.value = this.model.algorithmSelection.id;
+    select.disabled = this.isPathAnimating;
     const parameterHost = this.query<HTMLElement>('#editor-algorithm-parameters');
     parameterHost.dataset.algorithm = this.model.algorithmSelection.id;
     renderEditorAlgorithmParameters(parameterHost, this.model.algorithmSelection, this.model.shape, (selection) => {
       this.model.setAlgorithmSelection(selection);
       this.render();
+    });
+    parameterHost.querySelectorAll<HTMLInputElement>('input').forEach((input) => {
+      input.disabled = input.disabled || this.isPathAnimating;
     });
   }
 

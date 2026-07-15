@@ -1,5 +1,5 @@
 import { findEditorPath } from '../findEditorPath';
-import type { Algorithm1Selection, EditorAlgorithmContext } from './types';
+import type { Algorithm1Selection, EditorAlgorithmContext, EditorAlgorithmResult } from './types';
 
 export const createAlgorithm1Selection = (): Algorithm1Selection => ({
   id: 'algorithm-1',
@@ -13,11 +13,15 @@ export const createAlgorithm1Selection = (): Algorithm1Selection => ({
 export const runAlgorithm1 = (
   context: EditorAlgorithmContext,
   selection: Algorithm1Selection,
-) => findEditorPath(
-  context.rows,
-  context.columns,
-  context.activeCells,
-  context.shape,
-  selection.parameters.targetCrossings,
-  context.generationIndex,
-);
+): EditorAlgorithmResult | null => {
+  const path = findEditorPath(
+    context.rows,
+    context.columns,
+    context.activeCells,
+    context.shape,
+    selection.parameters.targetCrossings,
+    context.generationIndex,
+    { crossingMode: 'maximum' },
+  );
+  return path ? { path } : null;
+};

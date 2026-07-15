@@ -60,6 +60,7 @@ export type GameMode = 'normal' | 'endless';
 export interface BoardSessionInput {
   level: LevelData;
   hiddenCells: Set<string>;
+  completionGemColors?: readonly string[];
   showNextNumber: boolean;
   soundEnabled: boolean;
   mode: GameMode;
