@@ -8,7 +8,6 @@ import { BoardScene } from './game/BoardScene';
 import { getEndlessStageSettings } from './game/difficulty';
 import { selectHiddenCells } from './game/hidden';
 import { formatLives } from './game/lives';
-import { generateProceduralLevel } from './game/pathfinding';
 import {
   getNextLevelId,
   loadBuiltInLevels,
@@ -19,7 +18,6 @@ import {
 } from './game/storage';
 import {
   BoardShape,
-  RECTANGLE_SIZES,
   cellKey,
   type BoardSessionInput,
   type EndlessStageSettings,
@@ -36,14 +34,28 @@ import {
   type VideoViewRecord,
 } from './game/videoStats';
 import { LevelEditorController } from './gameplay/editor';
+import {
+  advanceBeadProgress,
+  loadBeadPattern,
+  loadBeadProgress,
+  nextBeads,
+  orderedBeads,
+  saveBeadProgress,
+  type BeadPatternData,
+  type BeadPixel,
+  type BeadProgress,
+} from './gameplay/beads';
+import { generateEndlessLevel } from './gameplay/endless/generateEndlessLevel';
 
 const nextFrame = (): Promise<void> => new Promise((resolve) => requestAnimationFrame(() => resolve()));
-type ResultContext = 'normal' | 'endless-stage' | 'life-depleted';
+type ResultContext = 'normal' | 'endless-stage' | 'life-depleted' | 'editor-playtest' | 'editor-playtest-failed';
+type PlayContext = 'normal' | 'editor-playtest' | 'bead';
 
 class NumberConnectApp {
   private readonly screenRouter = new ScreenRouter();
   private readonly events = new EventBus<GameEventMap>();
   private readonly gameHost = query<HTMLElement>('#game-host');
+  private readonly playBackButton = query<HTMLButtonElement>('#back-button');
   private readonly levelLabel = query<HTMLElement>('#play-level-label');
   private readonly modeLabel = query<HTMLElement>('#play-mode-label');
   private readonly statusLabel = query<HTMLElement>('#play-status');
@@ -65,6 +77,12 @@ class NumberConnectApp {
   private readonly videoStatsTotal = query<HTMLElement>('#video-stats-total');
   private readonly videoStatsEmpty = query<HTMLElement>('#video-stats-empty');
   private readonly videoStatsList = query<HTMLOListElement>('#video-stats-list');
+  private readonly beadBoard = query<HTMLElement>('#bead-pattern-board');
+  private readonly beadPatternName = query<HTMLElement>('#bead-pattern-name');
+  private readonly beadProgressText = query<HTMLElement>('#bead-progress-text');
+  private readonly beadProgressFill = query<HTMLElement>('#bead-progress-fill');
+  private readonly beadStatus = query<HTMLElement>('#bead-screen-status');
+  private readonly beadStartButton = query<HTMLButtonElement>('#bead-start-button');
 
   private builtInLevels: LevelData[] = [];
   private levels: LevelData[] = [];
@@ -73,7 +91,6 @@ class NumberConnectApp {
   private stage = 1;
   private lives = 3;
   private endlessSeed = 1;
-  private proceduralSeed = 1;
   private currentLevel?: LevelData;
   private currentProgress = 0;
   private currentTotal = 0;
@@ -82,6 +99,10 @@ class NumberConnectApp {
   private resultActionBusy = false;
   private solutionRevealed = false;
   private videoViews: VideoViewRecord[] = loadVideoViews();
+  private playContext: PlayContext = 'normal';
+  private beadPattern?: BeadPatternData;
+  private beadProgress?: BeadProgress;
+  private currentBeadReward: BeadPixel[] = [];
 
   private readonly boardScene = new BoardScene();
   private readonly game: Phaser.Game;
@@ -107,6 +128,7 @@ class NumberConnectApp {
         this.refreshLevels();
         this.refreshLevelOptions();
       },
+      onPlaytest: (level) => void this.startEditorPlaytest(level),
       onBack: () => this.backToLobby(),
     });
   }
@@ -115,7 +137,10 @@ class NumberConnectApp {
     const boardReady = new Promise<void>((resolve) => {
       this.game.events.once('board-ready', () => resolve());
     });
-    [this.builtInLevels] = await Promise.all([loadBuiltInLevels(), boardReady]);
+    const [builtInLevels, beadPattern] = await Promise.all([loadBuiltInLevels(), loadBeadPattern(), boardReady]);
+    this.builtInLevels = builtInLevels;
+    this.beadPattern = beadPattern;
+    this.beadProgress = loadBeadProgress(beadPattern);
     this.refreshLevels();
     this.bindLobby();
     this.bindPlayControls();
@@ -123,36 +148,36 @@ class NumberConnectApp {
     this.editor.bind();
     this.refreshLevelOptions();
     this.renderVideoStats();
+    this.renderBeadScreen();
   }
 
   private bindLobby(): void {
     query('#start-button').addEventListener('click', () => void this.startNormalMode());
     query('#endless-button').addEventListener('click', () => void this.startEndlessMode());
+    query('#bead-mode-button').addEventListener('click', () => this.openBeadMode());
+    query('#bead-back-button').addEventListener('click', () => this.closeBeadMode());
+    this.beadStartButton.addEventListener('click', () => void this.startBeadLevel());
     query('#editor-button').addEventListener('click', () => this.openEditor());
     query('#lobby-settings-button').addEventListener('click', () => this.openSettings('lobby'));
   }
 
   private bindPlayControls(): void {
-    query('#back-button').addEventListener('click', () => this.backToLobby());
+    this.playBackButton.addEventListener('click', () => this.leavePlayScreen());
     query('#play-settings-button').addEventListener('click', () => this.openSettings('play'));
     this.solutionToggle.addEventListener('click', () => this.setSolutionReveal(!this.solutionRevealed));
     this.restartButton.addEventListener('click', () => this.handleResultPrimary());
     this.nextButton.addEventListener('click', () => this.handleResultSecondary());
-    this.resultLobbyButton.addEventListener('click', () => this.backToLobby());
+    this.resultLobbyButton.addEventListener('click', () => this.leavePlayScreen());
   }
 
   private bindSettings(): void {
-    const shapeSelect = query<HTMLSelectElement>('#settings-shape');
-    shapeSelect.addEventListener('change', () => this.refreshSettingsControls());
-    for (const selector of ['#settings-size', '#settings-hidden', '#settings-hidden-run', '#settings-visible-run', '#settings-crossings']) {
-      query<HTMLInputElement>(selector).addEventListener('input', () => this.refreshSettingsOutputs());
-    }
     query('#settings-apply-button').addEventListener('click', () => void this.applySettings());
     query('#video-stats-button').addEventListener('click', () => this.openVideoStats());
     query('#video-stats-reset').addEventListener('click', () => this.resetVideoStats());
     query('#settings-lobby-button').addEventListener('click', () => {
       this.settingsDialog.close();
-      this.backToLobby();
+      if (this.settingsContext === 'play') this.leavePlayScreen();
+      else this.backToLobby();
     });
     this.settingsDialog.addEventListener('close', () => {
       if (this.settingsContext === 'play') this.boardScene.setPaused(false);
@@ -176,9 +201,17 @@ class NumberConnectApp {
     this.resultOverlay.hidden = true;
     this.resultActionBusy = false;
     this.setResultActionsDisabled(false);
+    const backLabel = this.playContext === 'editor-playtest'
+      ? '返回关卡编辑器'
+      : this.playContext === 'bead'
+        ? '返回拼豆图纸'
+        : '返回大厅';
+    this.playBackButton.setAttribute('aria-label', backLabel);
+    this.playBackButton.title = backLabel;
     await nextFrame();
     this.game.scale.resize(Math.max(320, this.gameHost.clientWidth), Math.max(420, this.gameHost.clientHeight));
     await nextFrame();
+    this.game.scale.resize(Math.max(320, this.gameHost.clientWidth), Math.max(420, this.gameHost.clientHeight));
   }
 
   private setSolutionReveal(revealed: boolean): void {
@@ -190,15 +223,16 @@ class NumberConnectApp {
   }
 
   private async startNormalMode(): Promise<void> {
+    this.playContext = 'normal';
     this.mode = 'normal';
     this.lives = 3;
     this.renderLives();
-    this.proceduralSeed = Date.now() & 0x7fffffff;
     await this.showPlayScreen();
     this.setCurrentBoard(this.createNormalLevel());
   }
 
   private async startEndlessMode(): Promise<void> {
+    this.playContext = 'normal';
     this.mode = 'endless';
     this.stage = 1;
     this.lives = 3;
@@ -210,50 +244,48 @@ class NumberConnectApp {
     this.setCurrentBoard(level, profile);
   }
 
-  private createNormalLevel(): LevelData {
-    if (this.settings.shape === BoardShape.Level) {
-      const selected = this.levels.find((level) => level.levelId === this.settings.selectedLevelId) ?? this.levels[0];
-      if (!selected) throw new Error('没有可用的图案关卡。');
-      return selected;
+  private async startBeadLevel(): Promise<void> {
+    if (!this.beadPattern || !this.beadProgress) return;
+    const level = this.createNormalLevel();
+    const reward = nextBeads(this.beadPattern, this.beadProgress, level.solutionPath.length);
+    if (reward.length === 0) {
+      this.renderBeadScreen(undefined, '图案已经全部完成。');
+      return;
     }
 
-    const { rows, columns } = this.getProceduralSize();
-    return generateProceduralLevel(
-      rows,
-      columns,
-      this.proceduralSeed,
-      this.settings.targetCrossings,
-      this.settings.shape,
-    );
+    this.playContext = 'bead';
+    this.mode = 'normal';
+    this.currentBeadReward = reward;
+    this.lives = 3;
+    this.renderLives();
+    await this.showPlayScreen();
+    this.setCurrentBoard(level);
+  }
+
+  private async startEditorPlaytest(level: LevelData): Promise<void> {
+    this.playContext = 'editor-playtest';
+    this.mode = 'normal';
+    this.lives = 3;
+    this.renderLives();
+    await this.showPlayScreen();
+    this.setCurrentBoard(level);
+  }
+
+  private createNormalLevel(): LevelData {
+    const selected = this.levels.find((level) => level.levelId === this.settings.selectedLevelId) ?? this.levels[0];
+    if (!selected) throw new Error('没有可用的关卡。');
+    return selected;
   }
 
   private createEndlessLevel(stage: number, profile: EndlessStageSettings): LevelData {
-    return generateProceduralLevel(
-      profile.rows,
-      profile.columns,
-      this.endlessSeed + stage * 1000003,
-      profile.targetCrossings,
-      BoardShape.Square,
-    );
-  }
-
-  private getProceduralSize(): { rows: number; columns: number } {
-    if (this.settings.shape === BoardShape.Rectangle) {
-      const size = RECTANGLE_SIZES[this.settings.rectangleSizeIndex];
-      return { rows: size.y, columns: size.x };
-    }
-    if (this.settings.shape === BoardShape.Hex) {
-      return { rows: this.settings.hexSize, columns: this.settings.hexSize };
-    }
-    const size = this.settings.shape === BoardShape.Diamond ? this.settings.diamondSize : this.settings.squareSize;
-    return { rows: size, columns: size };
+    return generateEndlessLevel(profile, this.endlessSeed + stage * 1000003);
   }
 
   private makeSession(level: LevelData, profile?: EndlessStageSettings): BoardSessionInput {
     const hiddenPercent = profile?.hiddenPercent ?? this.settings.hiddenPercent;
     const maxHiddenRun = profile?.maxHiddenRun ?? this.settings.maxHiddenRun;
     const maxVisibleRun = profile?.maxVisibleRun ?? this.settings.maxVisibleRun;
-    const seed = (this.mode === 'endless' ? this.endlessSeed + this.stage * 1000003 : this.proceduralSeed + level.levelId) | 0;
+    const seed = (this.mode === 'endless' ? this.endlessSeed + this.stage * 1000003 : level.levelId) | 0;
     const eventContext = {
       mode: this.mode,
       levelId: level.levelId,
@@ -264,6 +296,9 @@ class NumberConnectApp {
       hiddenCells: level.hiddenCells === undefined
         ? selectHiddenCells(level.solutionPath, hiddenPercent, maxHiddenRun, maxVisibleRun, seed)
         : new Set(level.hiddenCells.map(cellKey)),
+      completionGemColors: this.playContext === 'bead'
+        ? this.currentBeadReward.map((bead) => bead.color)
+        : undefined,
       showNextNumber: this.settings.showNextNumber,
       soundEnabled: this.settings.soundEnabled,
       mode: this.mode,
@@ -271,14 +306,20 @@ class NumberConnectApp {
         this.currentProgress = current;
         this.currentTotal = total;
         this.setStatus(`${current} / ${total}`);
-        this.events.emit('level.progressed', { ...eventContext, current, total });
+        if (this.playContext !== 'editor-playtest') {
+          this.events.emit('level.progressed', { ...eventContext, current, total });
+        }
       },
       onWrong: (message) => {
-        this.events.emit('level.wrong-move', { ...eventContext, current: this.currentProgress, message });
+        if (this.playContext !== 'editor-playtest') {
+          this.events.emit('level.wrong-move', { ...eventContext, current: this.currentProgress, message });
+        }
         this.handleWrong(message);
       },
       onComplete: () => {
-        this.events.emit('level.completed', { ...eventContext, total: level.solutionPath.length });
+        if (this.playContext !== 'editor-playtest') {
+          this.events.emit('level.completed', { ...eventContext, total: level.solutionPath.length });
+        }
         void this.handleComplete();
       },
     };
@@ -289,26 +330,42 @@ class NumberConnectApp {
     this.currentProgress = 0;
     this.currentTotal = level.solutionPath.length;
     this.updateGameHeading(level);
-    this.setStatus(this.mode === 'endless' ? `阶段 ${this.stage} · 请从数字 1 开始` : '请从数字 1 开始，隐藏数字会在连接后显示。');
+    this.setStatus(this.playContext === 'editor-playtest'
+      ? '编辑器试玩 · 可从任意显示数字开始'
+      : this.playContext === 'bead'
+        ? `完成连线后翻开 ${this.currentBeadReward.length} 颗拼豆`
+      : this.mode === 'endless'
+        ? `阶段 ${this.stage} · 可从任意显示数字开始`
+        : '可从任意显示数字开始，按连续顺序连接。');
     this.boardScene.setBoard(this.makeSession(level, profile));
-    this.events.emit('level.started', {
-      mode: this.mode,
-      levelId: level.levelId,
-      stage: this.mode === 'endless' ? this.stage : undefined,
-      total: level.solutionPath.length,
-    });
+    if (this.playContext !== 'editor-playtest') {
+      this.events.emit('level.started', {
+        mode: this.mode,
+        levelId: level.levelId,
+        stage: this.mode === 'endless' ? this.stage : undefined,
+        total: level.solutionPath.length,
+      });
+    }
   }
 
   private updateGameHeading(level: LevelData): void {
+    if (this.playContext === 'bead') {
+      this.modeLabel.textContent = 'PIXEL BEADS';
+      this.levelLabel.textContent = `拼豆关卡 · 关卡 ${level.levelId}`;
+      return;
+    }
+    if (this.playContext === 'editor-playtest') {
+      this.modeLabel.textContent = 'EDITOR PLAYTEST';
+      this.levelLabel.textContent = `试玩关卡 · ${level.columns} × ${level.rows}`;
+      return;
+    }
     if (this.mode === 'endless') {
       this.modeLabel.textContent = 'ENDLESS MODE';
       this.levelLabel.textContent = `无尽 · 阶段 ${this.stage}`;
       return;
     }
-    this.modeLabel.textContent = level.custom ? 'CUSTOM LEVEL' : this.settings.shape === BoardShape.Level ? 'PICTURE LEVEL' : 'PROCEDURAL LEVEL';
-    this.levelLabel.textContent = this.settings.shape === BoardShape.Level
-      ? `${level.custom ? '自制关卡' : '图案关卡'} ${level.levelId}`
-      : `${this.shapeLabel(this.settings.shape)} ${level.columns} × ${level.rows}`;
+    this.modeLabel.textContent = level.custom ? 'CUSTOM LEVEL' : 'LEVEL MODE';
+    this.levelLabel.textContent = `${level.custom ? '自制关卡' : '关卡'} ${level.levelId}`;
   }
 
   private setStatus(message: string, error = false): void {
@@ -332,6 +389,22 @@ class NumberConnectApp {
 
   private handleLifeDepleted(): void {
     this.boardScene.setPaused(true);
+    if (this.playContext === 'editor-playtest') {
+      this.setStatus('编辑器试玩 · 生命值耗尽', true);
+      this.resultContext = 'editor-playtest-failed';
+      this.resultKicker.textContent = 'PLAYTEST PAUSED';
+      this.resultTitle.textContent = '试玩结束';
+      this.resultMessage.textContent = `当前数字进度 ${this.currentProgress} / ${this.currentTotal}`;
+      this.resultReward.hidden = true;
+      this.restartButton.textContent = '重新试玩';
+      this.nextButton.hidden = true;
+      this.resultLobbyButton.textContent = '返回编辑器';
+      this.resultActions.classList.add('is-single');
+      this.setResultActionsDisabled(false);
+      this.resultOverlay.hidden = false;
+      return;
+    }
+
     this.setStatus(this.mode === 'endless' ? `阶段 ${this.stage} · 生命值耗尽` : '生命值耗尽', true);
     this.resultContext = 'life-depleted';
     this.resultKicker.textContent = 'OUT OF HEARTS';
@@ -342,8 +415,22 @@ class NumberConnectApp {
     this.restartButton.textContent = '重新开始';
     this.nextButton.textContent = '观看视频获取 1♥';
     this.nextButton.hidden = false;
-    this.resultLobbyButton.textContent = '放弃';
+    this.resultLobbyButton.textContent = this.playContext === 'bead' ? '返回拼豆图纸' : '放弃';
     this.resultActions.classList.remove('is-single');
+    this.setResultActionsDisabled(false);
+    this.resultOverlay.hidden = false;
+  }
+
+  private showEditorPlaytestResult(): void {
+    this.resultContext = 'editor-playtest';
+    this.resultKicker.textContent = 'PLAYTEST COMPLETE';
+    this.resultTitle.textContent = '试玩完成';
+    this.resultMessage.textContent = '当前编辑器关卡可以完整通关。';
+    this.resultReward.hidden = true;
+    this.restartButton.textContent = '再试一次';
+    this.nextButton.hidden = true;
+    this.resultLobbyButton.textContent = '返回编辑器';
+    this.resultActions.classList.add('is-single');
     this.setResultActionsDisabled(false);
     this.resultOverlay.hidden = false;
   }
@@ -388,8 +475,12 @@ class NumberConnectApp {
     if (this.resultActionBusy) return;
     if (this.resultContext === 'endless-stage') {
       void this.advanceEndlessStage(false);
-    } else if (this.resultContext === 'life-depleted') {
+    } else if (this.resultContext === 'life-depleted' || this.resultContext === 'editor-playtest-failed') {
       this.restartAfterFailure();
+    } else if (this.resultContext === 'editor-playtest') {
+      this.lives = 3;
+      this.renderLives();
+      this.restartCurrent();
     } else {
       this.lives = 3;
       this.renderLives();
@@ -409,6 +500,27 @@ class NumberConnectApp {
   }
 
   private async handleComplete(): Promise<void> {
+    if (this.playContext === 'bead') {
+      this.setStatus(`关卡完成 · 获得 ${this.currentBeadReward.length} 颗拼豆`);
+      await this.boardScene.showCompletion();
+      if (this.playContext !== 'bead' || !this.beadPattern || !this.beadProgress) return;
+
+      const previousCollected = this.beadProgress.collected;
+      const rewardCount = this.currentBeadReward.length;
+      this.beadProgress = advanceBeadProgress(this.beadPattern, this.beadProgress, rewardCount);
+      saveBeadProgress(this.beadProgress);
+      this.currentBeadReward = [];
+      this.selectNextNormalLevel();
+      this.showScreen('bead');
+      this.renderBeadScreen(previousCollected, `本关获得 ${rewardCount} 颗拼豆，已放入图纸。`);
+      return;
+    }
+    if (this.playContext === 'editor-playtest') {
+      this.setStatus('编辑器试玩完成');
+      await this.boardScene.showCompletion();
+      if (this.playContext === 'editor-playtest') this.showEditorPlaytestResult();
+      return;
+    }
     if (this.mode === 'endless') {
       this.lives += 1;
       this.renderLives();
@@ -447,7 +559,7 @@ class NumberConnectApp {
 
     try {
       await this.boardScene.transitionTo(this.makeSession(next, profile));
-      this.setStatus(`阶段 ${this.stage} · 请从数字 1 开始`);
+      this.setStatus(`阶段 ${this.stage} · 可从任意显示数字开始`);
     } finally {
       this.resultActionBusy = false;
       this.setResultActionsDisabled(false);
@@ -470,7 +582,7 @@ class NumberConnectApp {
     this.renderVideoStats();
     this.resultOverlay.hidden = true;
     this.boardScene.setPaused(false);
-    this.setStatus(`生命 +1 · 继续寻找数字 ${Math.min(this.currentTotal, this.currentProgress + 1)}`);
+    this.setStatus('生命 +1 · 继续连接相邻的连续数字');
   }
 
   private restartCurrent(): void {
@@ -487,21 +599,41 @@ class NumberConnectApp {
     this.resultOverlay.hidden = true;
     this.lives = 3;
     this.renderLives();
-    if (this.settings.shape === BoardShape.Level) {
-      const index = this.levels.findIndex((level) => level.levelId === this.settings.selectedLevelId);
-      const nextIndex = (Math.max(0, index) + 1) % this.levels.length;
-      this.settings.selectedLevelId = this.levels[nextIndex].levelId;
-      saveSettings(this.settings);
-    } else {
-      this.proceduralSeed += 104729;
-    }
+    this.selectNextNormalLevel();
     this.setCurrentBoard(this.createNormalLevel());
   }
 
+  private selectNextNormalLevel(): void {
+    if (this.levels.length === 0) return;
+    const currentId = this.currentLevel?.levelId ?? this.settings.selectedLevelId;
+    const index = this.levels.findIndex((level) => level.levelId === currentId);
+    const nextIndex = (Math.max(0, index) + 1) % this.levels.length;
+    this.settings.selectedLevelId = this.levels[nextIndex].levelId;
+    saveSettings(this.settings);
+  }
+
   private backToLobby(): void {
+    this.playContext = 'normal';
     this.resultOverlay.hidden = true;
     this.boardScene.setPaused(true);
     this.showScreen('lobby');
+  }
+
+  private leavePlayScreen(): void {
+    this.resultOverlay.hidden = true;
+    this.boardScene.setPaused(true);
+    if (this.playContext === 'bead') {
+      this.currentBeadReward = [];
+      this.renderBeadScreen(undefined, '本关未完成，没有消耗拼豆进度。');
+      this.showScreen('bead');
+      return;
+    }
+    if (this.playContext === 'editor-playtest') {
+      this.showScreen('editor');
+      this.editor.resumeFromPlaytest();
+      return;
+    }
+    this.backToLobby();
   }
 
   private openSettings(context: 'lobby' | 'play'): void {
@@ -509,7 +641,13 @@ class NumberConnectApp {
     if (context === 'play') this.boardScene.setPaused(true);
     this.populateSettingsForm();
     this.renderVideoStats();
-    query<HTMLElement>('#settings-lobby-button').hidden = context === 'lobby';
+    const leaveButton = query<HTMLButtonElement>('#settings-lobby-button');
+    leaveButton.hidden = context === 'lobby';
+    leaveButton.textContent = this.playContext === 'editor-playtest'
+      ? '返回编辑器'
+      : this.playContext === 'bead'
+        ? '返回拼豆图纸'
+        : '返回大厅';
     query<HTMLElement>('#endless-settings-note').hidden = !(context === 'play' && this.mode === 'endless');
     this.settingsDialog.showModal();
   }
@@ -545,12 +683,7 @@ class NumberConnectApp {
   }
 
   private populateSettingsForm(): void {
-    query<HTMLSelectElement>('#settings-shape').value = String(this.settings.shape);
     query<HTMLSelectElement>('#settings-level').value = String(this.settings.selectedLevelId);
-    query<HTMLInputElement>('#settings-hidden').value = String(this.settings.hiddenPercent);
-    query<HTMLInputElement>('#settings-hidden-run').value = String(this.settings.maxHiddenRun);
-    query<HTMLInputElement>('#settings-visible-run').value = String(this.settings.maxVisibleRun);
-    query<HTMLInputElement>('#settings-crossings').value = String(this.settings.targetCrossings);
     query<HTMLInputElement>('#settings-next').checked = this.settings.showNextNumber;
     query<HTMLInputElement>('#settings-sound').checked = this.settings.soundEnabled;
     this.refreshSettingsControls();
@@ -561,60 +694,21 @@ class NumberConnectApp {
     select.replaceChildren(...this.levels.map((level) => {
       const option = document.createElement('option');
       option.value = String(level.levelId);
-      option.textContent = `${level.custom ? '自制' : '图案'}关卡 ${level.levelId}`;
+      option.textContent = `${level.custom ? '自制关卡' : '关卡'} ${level.levelId}`;
       return option;
     }));
     select.value = String(this.settings.selectedLevelId);
   }
 
   private refreshSettingsControls(): void {
-    const shape = Number(query<HTMLSelectElement>('#settings-shape').value) as BoardShape;
-    const endlessLocked = this.settingsContext === 'play' && this.mode === 'endless';
-    query<HTMLElement>('#settings-level-row').hidden = shape !== BoardShape.Level;
-    query<HTMLElement>('#settings-size-row').hidden = shape === BoardShape.Level;
-    query<HTMLElement>('#settings-crossings-row').hidden = shape === BoardShape.Level;
-    const controlledSelectors = ['#settings-shape', '#settings-level', '#settings-size', '#settings-hidden', '#settings-hidden-run', '#settings-visible-run', '#settings-crossings'];
-    controlledSelectors.forEach((selector) => { (query(selector) as HTMLInputElement | HTMLSelectElement).disabled = endlessLocked; });
-
-    const sizeInput = query<HTMLInputElement>('#settings-size');
-    if (shape === BoardShape.Rectangle) {
-      sizeInput.min = '0'; sizeInput.max = String(RECTANGLE_SIZES.length - 1); sizeInput.step = '1'; sizeInput.value = String(this.settings.rectangleSizeIndex);
-    } else if (shape === BoardShape.Diamond) {
-      sizeInput.min = '3'; sizeInput.max = '8'; sizeInput.step = '1'; sizeInput.value = String(this.settings.diamondSize);
-    } else if (shape === BoardShape.Hex) {
-      sizeInput.min = '3'; sizeInput.max = '10'; sizeInput.step = '1'; sizeInput.value = String(this.settings.hexSize);
-    } else {
-      sizeInput.min = '3'; sizeInput.max = '10'; sizeInput.step = '1'; sizeInput.value = String(this.settings.squareSize);
-    }
-    this.refreshSettingsOutputs();
-  }
-
-  private refreshSettingsOutputs(): void {
-    const shape = Number(query<HTMLSelectElement>('#settings-shape').value) as BoardShape;
-    const sizeValue = Number(query<HTMLInputElement>('#settings-size').value);
-    const sizeText = shape === BoardShape.Rectangle
-      ? `${RECTANGLE_SIZES[sizeValue]?.x ?? 4} × ${RECTANGLE_SIZES[sizeValue]?.y ?? 6}`
-      : `${sizeValue} × ${sizeValue}`;
-    query('#settings-size-output').textContent = sizeText;
-    query('#settings-hidden-output').textContent = `${query<HTMLInputElement>('#settings-hidden').value}%`;
-    query('#settings-hidden-run-output').textContent = query<HTMLInputElement>('#settings-hidden-run').value;
-    query('#settings-visible-run-output').textContent = query<HTMLInputElement>('#settings-visible-run').value;
-    query('#settings-crossings-output').textContent = query<HTMLInputElement>('#settings-crossings').value;
+    const levelLocked = this.settingsContext === 'play'
+      && (this.mode === 'endless' || this.playContext === 'editor-playtest' || this.playContext === 'bead');
+    query<HTMLSelectElement>('#settings-level').disabled = levelLocked;
   }
 
   private async applySettings(): Promise<void> {
-    const shape = Number(query<HTMLSelectElement>('#settings-shape').value) as BoardShape;
-    const sizeValue = Number(query<HTMLInputElement>('#settings-size').value);
-    this.settings.shape = shape;
+    this.settings.shape = BoardShape.Level;
     this.settings.selectedLevelId = Number(query<HTMLSelectElement>('#settings-level').value) || this.settings.selectedLevelId;
-    if (shape === BoardShape.Rectangle) this.settings.rectangleSizeIndex = sizeValue;
-    else if (shape === BoardShape.Diamond) this.settings.diamondSize = sizeValue;
-    else if (shape === BoardShape.Hex) this.settings.hexSize = sizeValue;
-    else if (shape === BoardShape.Square) this.settings.squareSize = sizeValue;
-    this.settings.hiddenPercent = Number(query<HTMLInputElement>('#settings-hidden').value);
-    this.settings.maxHiddenRun = Number(query<HTMLInputElement>('#settings-hidden-run').value);
-    this.settings.maxVisibleRun = Number(query<HTMLInputElement>('#settings-visible-run').value);
-    this.settings.targetCrossings = Number(query<HTMLInputElement>('#settings-crossings').value);
     this.settings.showNextNumber = query<HTMLInputElement>('#settings-next').checked;
     this.settings.soundEnabled = query<HTMLInputElement>('#settings-sound').checked;
     saveSettings(this.settings);
@@ -624,8 +718,9 @@ class NumberConnectApp {
       if (this.mode === 'endless') {
         const profile = getEndlessStageSettings(this.stage);
         this.setCurrentBoard(this.createEndlessLevel(this.stage, profile), profile);
+      } else if ((this.playContext === 'editor-playtest' || this.playContext === 'bead') && this.currentLevel) {
+        this.setCurrentBoard(this.currentLevel);
       } else {
-        this.proceduralSeed += 1;
         this.setCurrentBoard(this.createNormalLevel());
       }
       await nextFrame();
@@ -633,22 +728,82 @@ class NumberConnectApp {
   }
 
   private openEditor(): void {
+    this.playContext = 'normal';
     this.showScreen('editor');
     this.editor.open();
   }
 
-  private shapeLabel(shape: BoardShape): string {
-    if (shape === BoardShape.Diamond) return '菱形';
-    if (shape === BoardShape.Rectangle) return '长方形';
-    if (shape === BoardShape.Hex) return '六边形蜂窝';
-    return '正方形';
+  private openBeadMode(): void {
+    this.playContext = 'bead';
+    this.renderBeadScreen();
+    this.showScreen('bead');
   }
+
+  private closeBeadMode(): void {
+    this.playContext = 'normal';
+    this.showScreen('lobby');
+  }
+
+  private renderBeadScreen(animateFrom?: number, message?: string): void {
+    if (!this.beadPattern || !this.beadProgress) {
+      this.beadStartButton.disabled = true;
+      this.beadStatus.textContent = '拼豆图纸读取失败。';
+      return;
+    }
+
+    const pattern = this.beadPattern;
+    const beads = orderedBeads(pattern);
+    const collected = Math.min(beads.length, this.beadProgress.collected);
+    const beadOrder = new Map(beads.map((bead, index) => [`${bead.x},${bead.y}`, index]));
+    const cells: HTMLElement[] = [];
+
+    for (let y = 0; y < pattern.height; y += 1) {
+      for (let x = 0; x < pattern.width; x += 1) {
+        const key = `${x},${y}`;
+        const color = pattern.pixels[key];
+        const cell = document.createElement('span');
+        cell.className = 'bead-pattern-cell';
+        if (color) {
+          const order = beadOrder.get(key) ?? -1;
+          cell.classList.add('is-target');
+          cell.style.setProperty('--bead-color', color);
+          cell.title = `(${x}, ${y}) ${color}`;
+          if (order < collected) cell.classList.add('is-filled');
+          if (animateFrom !== undefined && order >= animateFrom && order < collected) {
+            cell.classList.add('is-new');
+            cell.style.setProperty('--bead-delay', `${Math.min(620, (order - animateFrom) * 18)}ms`);
+          }
+        }
+        cells.push(cell);
+      }
+    }
+
+    const percent = beads.length === 0 ? 100 : Math.round(collected / beads.length * 100);
+    const remaining = beads.length - collected;
+    const levelSize = this.levels.length > 0 ? this.createNormalLevel().solutionPath.length : 0;
+    const nextReward = Math.min(remaining, levelSize);
+    this.beadBoard.style.gridTemplateColumns = `repeat(${pattern.width}, 1fr)`;
+    this.beadBoard.style.gridTemplateRows = `repeat(${pattern.height}, 1fr)`;
+    this.beadBoard.replaceChildren(...cells);
+    this.beadBoard.setAttribute('aria-label', `${pattern.width}乘${pattern.height}${pattern.name}拼豆图纸，已完成${percent}%`);
+    this.beadPatternName.textContent = pattern.name;
+    this.beadProgressText.textContent = `${collected} / ${beads.length}`;
+    this.beadProgressFill.style.width = `${percent}%`;
+    const progressbar = this.beadProgressFill.parentElement;
+    progressbar?.setAttribute('aria-valuenow', String(percent));
+    this.beadStatus.textContent = message ?? (remaining > 0 ? `还差 ${remaining} 颗拼豆完成图案` : '图案完成！所有拼豆都已归位。');
+    this.beadStartButton.disabled = remaining === 0;
+    this.beadStartButton.textContent = remaining === 0
+      ? '图案已完成'
+      : `进入关卡 · 可获得 ${nextReward} 颗`;
+  }
+
 }
 
 const app = new NumberConnectApp();
 void app.initialize().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
   query<HTMLElement>('#lobby-title').textContent = '加载失败';
-  query<HTMLElement>('.brand-lockup > p:last-child').textContent = message;
+  query<HTMLElement>('#lobby-title').title = message;
   console.error(error);
 });

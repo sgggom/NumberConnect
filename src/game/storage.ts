@@ -38,7 +38,19 @@ export const loadSettings = (): GameSettings => {
   if (!hasStorage()) return { ...DEFAULT_SETTINGS };
   try {
     const stored = JSON.parse(window.localStorage.getItem(SETTINGS_KEY) ?? '{}') as Partial<GameSettings>;
-    return { ...DEFAULT_SETTINGS, ...stored };
+    return {
+      ...DEFAULT_SETTINGS,
+      ...stored,
+      shape: BoardShape.Level,
+      squareSize: DEFAULT_SETTINGS.squareSize,
+      diamondSize: DEFAULT_SETTINGS.diamondSize,
+      hexSize: DEFAULT_SETTINGS.hexSize,
+      rectangleSizeIndex: DEFAULT_SETTINGS.rectangleSizeIndex,
+      hiddenPercent: DEFAULT_SETTINGS.hiddenPercent,
+      maxHiddenRun: DEFAULT_SETTINGS.maxHiddenRun,
+      maxVisibleRun: DEFAULT_SETTINGS.maxVisibleRun,
+      targetCrossings: DEFAULT_SETTINGS.targetCrossings,
+    };
   } catch {
     return { ...DEFAULT_SETTINGS };
   }

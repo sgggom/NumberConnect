@@ -31,7 +31,8 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
           </div>
           <label class="editor-algorithm-select">算法
             <select id="editor-algorithm">
-              <option value="algorithm-1" selected>算法1</option>
+              <option value="algorithm-1">算法1</option>
+              <option value="algorithm-2" selected>算法2</option>
             </select>
           </label>
         </div>
@@ -60,6 +61,7 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
           </div>
         </div>
         <div class="editor-actions">
+          <button id="editor-playtest-button" class="button button--secondary" disabled>试玩关卡</button>
           <button id="editor-generate-path-button" class="button button--secondary">生成路径</button>
           <button id="editor-save-button" class="button button--primary" disabled>添加到列表</button>
         </div>

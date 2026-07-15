@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { getEndlessStageSettings } from '../game/difficulty';
-import { isConsecutiveHint } from '../game/hint';
 import { selectHiddenCells } from '../game/hidden';
 import { formatLives } from '../game/lives';
 import { generateProceduralLevel, isValidPath } from '../game/pathfinding';
 import { BoardShape, cellKey, type Cell } from '../game/types';
 import { createVideoView, groupVideoViews, parseVideoViews, videoPlacementLabel } from '../game/videoStats';
+import { generateEndlessLevel } from '../gameplay/endless/generateEndlessLevel';
 
 describe('procedural level generation', () => {
   it.each([[4, 4], [5, 5], [6, 6], [8, 8]])('creates a valid %sx%s path', (rows, columns) => {
@@ -37,14 +37,6 @@ describe('hidden number selection', () => {
   });
 });
 
-describe('next-number hint', () => {
-  it('uses the consecutive state only for the number immediately after current progress', () => {
-    expect(isConsecutiveHint(5, 5)).toBe(true);
-    expect(isConsecutiveHint(5, 6)).toBe(false);
-    expect(isConsecutiveHint(0, 0)).toBe(false);
-  });
-});
-
 describe('endless difficulty', () => {
   it('scales the requested dimensions and hiding pressure', () => {
     const first = getEndlessStageSettings(1);
@@ -56,6 +48,23 @@ describe('endless difficulty', () => {
     expect(middle.hiddenPercent).toBeLessThan(late.hiddenPercent);
     expect(first.maxVisibleRun).toBeGreaterThanOrEqual(late.maxVisibleRun);
     expect(first.maxHiddenRun).toBeLessThan(late.maxHiddenRun);
+  });
+
+  it.each([1, 7, 20])('generates endless stage %i with algorithm 2 and its difficulty parameters', (stage) => {
+    const profile = getEndlessStageSettings(stage);
+    const level = generateEndlessLevel(profile, 24680 + stage);
+
+    expect(level.algorithm).toMatchObject({
+      id: 'algorithm-2',
+      parameters: {
+        targetCrossings: profile.targetCrossings,
+        hiddenPercent: profile.hiddenPercent,
+        maxHiddenRun: Math.min(profile.maxHiddenRun, 3),
+        maxVisibleRun: profile.maxVisibleRun,
+      },
+    });
+    expect(level.hiddenCells).toBeDefined();
+    expect(isValidPath(profile.rows, profile.columns, level.solutionPath)).toBe(true);
   });
 });
 

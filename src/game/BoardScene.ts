@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { isConsecutiveHint } from './hint';
+import { ConnectionProgress, type ConnectionAction, type ConnectionFailure } from './connectionProgress';
 import { projectCell } from './topology';
 import { BoardShape, backgroundUrl, cellKey, type BoardSessionInput, type Cell } from './types';
 
@@ -49,10 +49,23 @@ const hexagonPoints = (radius: number): Phaser.Geom.Point[] => Array.from({ leng
   return new Phaser.Geom.Point(radius + Math.cos(angle) * radius, radius + Math.sin(angle) * radius);
 });
 
+const gemPoints = (radius: number): Phaser.Geom.Point[] => [
+  new Phaser.Geom.Point(radius, 0),
+  new Phaser.Geom.Point(radius * 1.7, radius * 0.28),
+  new Phaser.Geom.Point(radius * 2, radius),
+  new Phaser.Geom.Point(radius * 1.62, radius * 1.72),
+  new Phaser.Geom.Point(radius, radius * 2),
+  new Phaser.Geom.Point(radius * 0.38, radius * 1.72),
+  new Phaser.Geom.Point(0, radius),
+  new Phaser.Geom.Point(radius * 0.3, radius * 0.28),
+];
+
+const colorNumber = (hexColor: string): number => Number.parseInt(hexColor.slice(1), 16);
+
 export class BoardScene extends Phaser.Scene {
   private session?: BoardSessionInput;
   private view?: BoardView;
-  private currentPathLength = 0;
+  private connection?: ConnectionProgress;
   private isDrawing = false;
   private wrongFeedbackActive = false;
   private locked = true;
@@ -88,7 +101,7 @@ export class BoardScene extends Phaser.Scene {
     this.stopHintPulse();
     this.view?.root.destroy(true);
     this.session = session;
-    this.currentPathLength = 0;
+    this.connection = this.createConnectionProgress(session);
     this.isDrawing = false;
     this.wrongFeedbackActive = false;
     this.locked = false;
@@ -98,9 +111,10 @@ export class BoardScene extends Phaser.Scene {
   }
 
   public setPaused(paused: boolean): void {
-    this.locked = paused || this.transitioning || this.currentPathLength === this.session?.level.solutionPath.length;
+    this.locked = paused || this.transitioning || this.connection?.complete === true;
     if (paused) {
       this.isDrawing = false;
+      this.connection?.endStroke();
       this.wrongFeedbackActive = false;
       this.stopHintPulse();
     } else {
@@ -127,7 +141,7 @@ export class BoardScene extends Phaser.Scene {
     const distance = Math.max(this.scale.height, 720) + oldView.panelHeight * 0.5 + 100;
 
     this.session = session;
-    this.currentPathLength = 0;
+    this.connection = this.createConnectionProgress(session);
     this.wrongFeedbackActive = false;
     const newView = this.buildView(session, distance);
     this.view = newView;
@@ -156,6 +170,11 @@ export class BoardScene extends Phaser.Scene {
     this.locked = true;
     this.stopHintPulse();
     this.playSound('victory');
+
+    if (session.completionGemColors?.length) {
+      await this.showGemCompletion(view, session.completionGemColors);
+      return;
+    }
 
     const resource = backgroundUrl(session.level.backgroundResourcePath);
     const imageName = resource?.split('/').pop()?.replace('.png', '');
@@ -251,6 +270,86 @@ export class BoardScene extends Phaser.Scene {
       });
     });
     pieces.forEach((piece) => piece.destroy());
+  }
+
+  private async showGemCompletion(view: BoardView, gemColors: readonly string[]): Promise<void> {
+    if (!this.session) return;
+    const path = this.session.level.solutionPath;
+    const stagger = Math.min(44, Math.max(22, 1200 / Math.max(1, path.length)));
+    const fallbackColor = gemColors[gemColors.length - 1];
+    const gems: Phaser.GameObjects.Container[] = [];
+
+    this.tweens.add({
+      targets: [view.solutionLines, view.lines],
+      alpha: 0,
+      duration: stagger * Math.max(0, path.length - 1) + 180,
+      ease: 'Sine.easeInOut',
+    });
+
+    const flips = path.map((cell, index) => {
+      const cellView = view.cells.get(cellKey(cell));
+      if (!cellView) return Promise.resolve();
+      const gemColor = gemColors[index] ?? fallbackColor;
+      const gem = this.add.container(cellView.x, cellView.y);
+      const body = this.add.polygon(0, 0, gemPoints(view.radius), colorNumber(gemColor), 1);
+      body.setStrokeStyle(2, 0xffffff, 0.56);
+      const shine = this.add.circle(
+        -view.radius * 0.27,
+        -view.radius * 0.3,
+        Math.max(2, view.radius * 0.14),
+        0xffffff,
+        0.56,
+      );
+      gem.add([body, shine]);
+      gem.setScale(0, 1);
+      view.root.add(gem);
+      gems.push(gem);
+
+      return new Promise<void>((resolve) => {
+        this.tweens.add({
+          targets: [cellView.circle, cellView.glow, cellView.label],
+          scaleX: 0,
+          delay: index * stagger,
+          duration: 90,
+          ease: 'Sine.easeIn',
+          onComplete: () => {
+            cellView.circle.setAlpha(0);
+            cellView.glow.setAlpha(0);
+            cellView.label.setAlpha(0);
+            this.tweens.add({
+              targets: gem,
+              scaleX: 1,
+              duration: 150,
+              ease: 'Back.easeOut',
+              easeParams: [1.15],
+              onComplete: () => resolve(),
+            });
+          },
+        });
+      });
+    });
+
+    await Promise.all(flips);
+    await new Promise<void>((resolve) => {
+      this.tweens.add({
+        targets: gems,
+        scale: 1.06,
+        yoyo: true,
+        duration: 180,
+        ease: 'Sine.easeOut',
+        onComplete: () => resolve(),
+      });
+    });
+    await new Promise<void>((resolve) => { this.time.delayedCall(360, resolve); });
+  }
+
+  private createConnectionProgress(session: BoardSessionInput): ConnectionProgress {
+    const lastIndex = session.level.solutionPath.length - 1;
+    const visibleIndices = session.level.solutionPath
+      .map((cell, index) => ({ index, hidden: session.hiddenCells.has(cellKey(cell)) }))
+      .filter(({ index, hidden }) => !hidden || index === 0 || index === lastIndex)
+      .map(({ index }) => index);
+    return new ConnectionProgress(session.level.solutionPath.length, visibleIndices);
   }
 
   private buildView(session: BoardSessionInput, offsetY: number): BoardView {
@@ -354,45 +453,35 @@ export class BoardScene extends Phaser.Scene {
     this.view.lines.lineStyle(Math.max(5, this.view.radius * 0.28), COLORS.line, 0.9);
     this.view.lines.beginPath();
 
-    for (let index = 0; index < this.currentPathLength; index += 1) {
-      const current = this.view.cells.get(cellKey(path[index]));
-      if (!current) continue;
-      if (index === 0) this.view.lines.moveTo(current.x, current.y);
-      else this.view.lines.lineTo(current.x, current.y);
+    for (let index = 0; index < path.length - 1; index += 1) {
+      if (!this.connection?.isEdgeConnected(index)) continue;
+      const from = this.view.cells.get(cellKey(path[index]));
+      const to = this.view.cells.get(cellKey(path[index + 1]));
+      if (!from || !to) continue;
+      this.view.lines.moveTo(from.x, from.y);
+      this.view.lines.lineTo(to.x, to.y);
     }
     this.view.lines.strokePath();
 
-    let nextVisibleIndex = -1;
-    if (this.session.showNextNumber) {
-      for (let index = this.currentPathLength; index < path.length; index += 1) {
-        const key = cellKey(path[index]);
-        if (!this.session.hiddenCells.has(key) || index === path.length - 1) {
-          nextVisibleIndex = index;
-          break;
-        }
-      }
-    }
-
-    const consecutiveHint = isConsecutiveHint(this.currentPathLength, nextVisibleIndex);
+    const nextHintIndex = this.session.showNextNumber
+      ? this.connection?.suggestedNextIndex()
+      : undefined;
     let activeHintCell: CellView | undefined;
 
     this.view.cells.forEach((cellView, key) => {
-      const selected = cellView.index < this.currentPathLength;
-      const numberVisible = this.solutionRevealed
-        || selected
-        || !this.session!.hiddenCells.has(key)
-        || cellView.index === 0
-        || cellView.index === path.length - 1;
+      const selected = this.connection?.isNodeConnected(cellView.index) === true
+        || this.connection?.activeIndex === cellView.index;
+      const numberVisible = this.solutionRevealed || this.connection?.isVisible(cellView.index) === true;
       const revealedHidden = this.solutionRevealed
-        && !selected
+        && this.connection?.isVisible(cellView.index) !== true
         && this.session!.hiddenCells.has(key);
       cellView.circle.setFillStyle(selected ? COLORS.selected : COLORS.tile, 1);
       cellView.circle.setStrokeStyle(2, selected ? COLORS.selectedBorder : COLORS.tileBorder, 1);
       cellView.label.setVisible(numberVisible);
       cellView.label.setColor(selected ? COLORS.selectedText : revealedHidden ? COLORS.revealedHiddenText : COLORS.text);
       cellView.label.setFontStyle(revealedHidden ? 'italic 700' : '700');
-      const hint = cellView.index === nextVisibleIndex;
-      const hintColor = consecutiveHint ? COLORS.consecutiveHint : COLORS.hint;
+      const hint = cellView.index === nextHintIndex;
+      const hintColor = COLORS.consecutiveHint;
       cellView.glow.setFillStyle(hintColor, hint ? 0.2 : 0);
       cellView.glow.setStrokeStyle(4, hintColor, hint ? 0.9 : 0);
       if (hint) activeHintCell = cellView;
@@ -432,10 +521,10 @@ export class BoardScene extends Phaser.Scene {
   }
 
   private handleCellDown(index: number): void {
-    if (this.locked || this.transitioning) return;
+    if (this.locked || this.transitioning || !this.connection) return;
     this.isDrawing = true;
     this.wrongFeedbackActive = false;
-    this.trySelect(index);
+    this.handleConnectionAction(this.connection.begin(index, this.solutionRevealed));
   }
 
   private handlePointerMove(pointer: Phaser.Input.Pointer): void {
@@ -451,39 +540,47 @@ export class BoardScene extends Phaser.Scene {
         closest = candidate;
       }
     });
-    if (closest) this.trySelect(closest.index);
+    if (closest && this.connection) this.handleConnectionAction(this.connection.extend(closest.index));
   }
 
   private handlePointerUp(): void {
+    const wasDrawing = this.isDrawing;
     this.isDrawing = false;
     this.wrongFeedbackActive = false;
+    this.connection?.endStroke();
+    if (wasDrawing) this.refreshView();
   }
 
-  private trySelect(index: number): void {
-    if (!this.session || !this.view || index < this.currentPathLength) return;
-    if (index !== this.currentPathLength) {
+  private handleConnectionAction(action: ConnectionAction): void {
+    if (!this.session || !this.view || action.type === 'ignored') return;
+    if (action.type === 'wrong') {
       if (this.wrongFeedbackActive) return;
       this.wrongFeedbackActive = true;
-      const message = this.currentPathLength === 0
-        ? '请从数字 1 开始。'
-        : `走错了，请寻找数字 ${this.currentPathLength + 1}。`;
-      this.flashWrong(index);
+      this.flashWrong(action.index);
       this.playSound('wrong');
-      this.session.onWrong(message);
+      this.session.onWrong(this.connectionFailureMessage(action.reason));
       return;
     }
 
     this.wrongFeedbackActive = false;
-    this.currentPathLength += 1;
-    if (this.currentPathLength > 1) this.playSound(`combo-${Math.min(8, this.currentPathLength - 1)}`);
     this.refreshView();
-    this.session.onProgress(this.currentPathLength, this.session.level.solutionPath.length);
+    if (action.type === 'started' || !action.added) return;
 
-    if (this.currentPathLength === this.session.level.solutionPath.length) {
+    this.playSound(`combo-${Math.min(8, action.progress - 1)}`);
+    this.session.onProgress(action.progress, this.session.level.solutionPath.length);
+
+    if (action.complete) {
       this.locked = true;
       this.isDrawing = false;
+      this.connection?.endStroke();
       this.session.onComplete();
     }
+  }
+
+  private connectionFailureMessage(reason: ConnectionFailure): string {
+    if (reason === 'hidden-start') return '请从任意一个显示数字开始。';
+    if (reason === 'direction-change') return '一次连线请保持同一数字方向。';
+    return '请连接相邻的连续数字。';
   }
 
   private flashWrong(index: number): void {
