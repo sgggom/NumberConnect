@@ -6,6 +6,7 @@ export type EditorCrossingMode = 'target' | 'maximum';
 export interface EditorPathGenerationOptions {
   style?: EditorPathStyle;
   crossingMode?: EditorCrossingMode;
+  startMode?: 'guided' | 'any';
   turnProbability?: number;
   maxNodes?: number;
 }
@@ -401,15 +402,22 @@ export const findEditorPath = (
   if (cells.filter((cell) => degree(cell) === 1).length > 2) return null;
   const style = options.style ?? 'classic';
   const crossingMode = options.crossingMode ?? 'target';
+  const startMode = options.startMode ?? 'guided';
   const maximumCellDegree = Math.max(...cells.map((cell) => degree(cell)));
   const hasTwoForcedEndpoints = cells.filter((cell) => degree(cell) === 1).length === 2;
-  cells.sort((left, right) => crossingMode === 'maximum'
-    ? (hasTwoForcedEndpoints
-        ? Number(degree(left) !== 1) - Number(degree(right) !== 1)
-        : Number(degree(left) < maximumCellDegree) - Number(degree(right) < maximumCellDegree))
-      || variationRank(left, generationIndex, 0) - variationRank(right, generationIndex, 0)
-    : degree(left) - degree(right)
-      || variationRank(left, generationIndex, 0) - variationRank(right, generationIndex, 0));
+  cells.sort((left, right) => {
+    const variationDifference = variationRank(left, generationIndex, 0)
+      - variationRank(right, generationIndex, 0);
+    if (hasTwoForcedEndpoints) {
+      return Number(degree(left) !== 1) - Number(degree(right) !== 1)
+        || variationDifference;
+    }
+    if (startMode === 'any') return variationDifference;
+    return crossingMode === 'maximum'
+      ? Number(degree(left) < maximumCellDegree) - Number(degree(right) < maximumCellDegree)
+        || variationDifference
+      : degree(left) - degree(right) || variationDifference;
+  });
 
   const turnProbability = Math.max(0, Math.min(100, options.turnProbability ?? 65)) / 100;
   const maxNodes = Math.max(

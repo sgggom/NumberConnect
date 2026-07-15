@@ -1,0 +1,76 @@
+{
+  "patterns": [
+    {
+      "id": "orange-cat-20x20",
+      "name": "橙色小猫",
+      "width": 20,
+      "height": 20,
+      "data": "orange-cat-20x20.json",
+      "preview": "orange-cat-20x20.svg"
+    },
+    {
+      "id": "strawberry-heart-20x20",
+      "name": "草莓甜心",
+      "width": 20,
+      "height": 20,
+      "data": "strawberry-heart-20x20.json",
+      "preview": "strawberry-heart-20x20.svg"
+    },
+    {
+      "id": "little-whale-30x30",
+      "name": "蓝鲸伙伴",
+      "width": 30,
+      "height": 30,
+      "data": "little-whale-30x30.json",
+      "preview": "little-whale-30x30.svg"
+    },
+    {
+      "id": "star-rocket-30x40",
+      "name": "星际火箭",
+      "width": 30,
+      "height": 40,
+      "data": "star-rocket-30x40.json",
+      "preview": "star-rocket-30x40.svg"
+    },
+    {
+      "id": "coastal-lighthouse-30x50",
+      "name": "海岸灯塔",
+      "width": 30,
+      "height": 50,
+      "data": "coastal-lighthouse-30x50.json",
+      "preview": "coastal-lighthouse-30x50.svg"
+    },
+    {
+      "id": "cherry-bunny-20x20",
+      "name": "樱桃小兔",
+      "width": 20,
+      "height": 20,
+      "data": "cherry-bunny-20x20.json",
+      "preview": "cherry-bunny-20x20.svg"
+    },
+    {
+      "id": "sunflower-fox-30x30",
+      "name": "向日葵狐狸",
+      "width": 30,
+      "height": 30,
+      "data": "sunflower-fox-30x30.json",
+      "preview": "sunflower-fox-30x30.svg"
+    },
+    {
+      "id": "mushroom-cottage-30x40",
+      "name": "蘑菇小屋",
+      "width": 30,
+      "height": 40,
+      "data": "mushroom-cottage-30x40.json",
+      "preview": "mushroom-cottage-30x40.svg"
+    },
+    {
+      "id": "moon-castle-30x50",
+      "name": "月夜城堡",
+      "width": 30,
+      "height": 50,
+      "data": "moon-castle-30x50.json",
+      "preview": "moon-castle-30x50.svg"
+    }
+  ]
+}
