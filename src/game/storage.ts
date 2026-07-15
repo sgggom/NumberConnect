@@ -1,8 +1,7 @@
 import { BoardShape, DEFAULT_SETTINGS, type GameSettings, type LevelData } from './types';
 
 const SETTINGS_KEY = 'number-connect.settings.v1';
-const CUSTOM_LEVELS_KEY = 'number-connect.custom-levels.v1';
-const LEVEL_COLLECTION_KEY = 'number-connect.level-collection.v1';
+const LEVEL_COLLECTION_KEY = 'number-connect.level-collection.v2';
 
 const hasStorage = (): boolean => typeof window !== 'undefined' && 'localStorage' in window;
 
@@ -81,12 +80,7 @@ export const loadLevelCollection = (bundledLevels: LevelData[]): LevelData[] => 
   if (storedValue !== null) {
     return parseLevelArray(storedValue).sort((left, right) => left.levelId - right.levelId);
   }
-
-  const legacyCustomLevels = parseLevelArray(window.localStorage.getItem(CUSTOM_LEVELS_KEY));
-  const merged = new Map<number, LevelData>();
-  bundledLevels.forEach((level) => merged.set(level.levelId, { ...level }));
-  legacyCustomLevels.forEach((level) => merged.set(level.levelId, { ...level, custom: true }));
-  return [...merged.values()].sort((left, right) => left.levelId - right.levelId);
+  return bundledLevels.map((level) => ({ ...level }));
 };
 
 export const saveLevelCollection = (levels: LevelData[]): void => {
@@ -102,7 +96,9 @@ export const loadBuiltInLevels = async (): Promise<LevelData[]> => {
   const payload = await response.json() as LevelData[] | { levels?: LevelData[] };
   const levels = Array.isArray(payload) ? payload : payload.levels;
   if (!Array.isArray(levels)) throw new Error('Invalid level collection');
-  return levels.map(withDefaultAlgorithm).sort((left, right) => left.levelId - right.levelId);
+  return levels
+    .map((level) => ({ ...withDefaultAlgorithm(level), custom: false }))
+    .sort((left, right) => left.levelId - right.levelId);
 };
 
 export const getNextLevelId = (levels: LevelData[]): number => {
