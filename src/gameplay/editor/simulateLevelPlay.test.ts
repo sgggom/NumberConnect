@@ -183,6 +183,56 @@ describe('editor level play simulation', () => {
     expect(result.steps[0].forkCount).toBeGreaterThanOrEqual(1);
   });
 
+  it('looks two cells ahead to reject a branch that strands a remaining cell', () => {
+    const path = [
+      { x: 6, y: 5 },
+      { x: 7, y: 4 },
+      { x: 8, y: 4 },
+      { x: 9, y: 5 },
+      { x: 9, y: 6 },
+      { x: 9, y: 7 },
+      { x: 8, y: 8 },
+      { x: 7, y: 8 },
+      { x: 6, y: 9 },
+      { x: 5, y: 10 },
+      { x: 4, y: 10 },
+      { x: 3, y: 10 },
+      { x: 2, y: 10 },
+      { x: 1, y: 9 },
+      { x: 1, y: 8 },
+      { x: 1, y: 7 },
+      { x: 1, y: 6 },
+      { x: 2, y: 5 },
+      { x: 2, y: 4 },
+      { x: 3, y: 3 },
+      { x: 4, y: 3 },
+      { x: 5, y: 4 },
+      { x: 5, y: 5 },
+      { x: 4, y: 5 },
+      { x: 3, y: 6 },
+      { x: 3, y: 7 },
+    ];
+    const hidden = new Set([
+      ...path.slice(1, 7).map(keyOf),
+      ...path.slice(22).map(keyOf),
+    ]);
+
+    const result = simulateLevelPlay({
+      path,
+      hiddenCellKeys: hidden,
+      shape: 'square',
+      random: () => 0.99,
+    });
+
+    expect(result.errorCount).toBe(0);
+    expect(result.steps).toHaveLength(1);
+    expect(result.steps[0]).toMatchObject({
+      outcome: 'complete',
+      attemptedCells: path,
+    });
+    expect(result.steps[0].forkCount).toBeGreaterThanOrEqual(1);
+  });
+
   it('does not solve past the two-cell prediction horizon', () => {
     const path = [
       { x: 5, y: 5 },

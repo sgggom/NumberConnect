@@ -44,6 +44,21 @@ export interface GameSettings {
   targetCrossings: number;
   showNextNumber: boolean;
   soundEnabled: boolean;
+  touchPreviewEnabled: boolean;
+  touchPreviewFollowsPointer: boolean;
+}
+
+export interface BoardNeighborhoodPreviewCell {
+  offsetX: number;
+  offsetY: number;
+  value: number | null;
+  center: boolean;
+}
+
+export interface BoardNeighborhoodPreview {
+  clientX: number;
+  clientY: number;
+  cells: BoardNeighborhoodPreviewCell[];
 }
 
 export interface EndlessStageSettings {
@@ -67,6 +82,7 @@ export interface BoardSessionInput {
   onProgress: (current: number, total: number) => void;
   onWrong: (message: string) => void;
   onComplete: () => void;
+  onNeighborhoodPreview?: (preview: BoardNeighborhoodPreview | null) => void;
 }
 
 export const RECTANGLE_SIZES: ReadonlyArray<Readonly<Cell>> = [
@@ -90,6 +106,8 @@ export const DEFAULT_SETTINGS: GameSettings = {
   targetCrossings: 5,
   showNextNumber: true,
   soundEnabled: true,
+  touchPreviewEnabled: true,
+  touchPreviewFollowsPointer: false,
 };
 
 export const cellKey = (cell: Cell): string => `${cell.x},${cell.y}`;

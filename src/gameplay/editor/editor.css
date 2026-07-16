@@ -70,7 +70,7 @@
 .editor-simulation-number.is-start { fill: #17202b; stroke: rgba(255,255,255,.28); }
 .editor-simulation-number.is-clue { fill: #eef7ff; opacity: .96; }
 .editor-simulation-number.is-hidden { fill: #f1dcff; stroke: rgba(40,16,60,.78); }
-.editor-simulation-error-node { fill: #b83245; stroke: #ffd8de; stroke-width: 4; vector-effect: non-scaling-stroke; transform-box: fill-box; transform-origin: center; filter: drop-shadow(0 0 10px rgba(240,91,108,.95)); animation: editor-simulation-error-pop .28s ease-out both; }
+.editor-simulation-error-node { fill: #b83245; stroke: #ffd8de; stroke-width: 4; vector-effect: non-scaling-stroke; filter: drop-shadow(0 0 10px rgba(240,91,108,.95)); }
 .editor-simulation-error-number { fill: #fff; stroke: rgba(90,8,22,.8); stroke-width: 3px; }
 .editor-path-line { fill: none; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .editor-path-line--shadow { stroke: rgba(5,11,18,.72); stroke-width: 8; }
@@ -173,15 +173,9 @@
   from { opacity: .25; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
 }
-@keyframes editor-simulation-error-pop {
-  from { opacity: .2; transform: scale(.55); }
-  to { opacity: 1; transform: scale(1); }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .editor-cell, .editor-grid { transition: none; }
   .editor-simulation-step.is-current { animation: none; }
-  .editor-simulation-error-node { animation: none; }
   .editor-simulation-mask, .editor-simulation-overlay { transition: none; }
 }
 

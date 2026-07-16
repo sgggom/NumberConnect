@@ -20,6 +20,7 @@ import {
 import {
   BoardShape,
   cellKey,
+  type BoardNeighborhoodPreview,
   type BoardSessionInput,
   type EndlessStageSettings,
   type GameMode,
@@ -67,6 +68,7 @@ class NumberConnectApp {
   private readonly appShell = query<HTMLElement>('#app');
   private readonly screenRouter = new ScreenRouter();
   private readonly events = new EventBus<GameEventMap>();
+  private readonly playScreen = query<HTMLElement>('#play-screen');
   private readonly gameHost = query<HTMLElement>('#game-host');
   private readonly playBackButton = query<HTMLButtonElement>('#back-button');
   private readonly levelLabel = query<HTMLElement>('#play-level-label');
@@ -75,6 +77,12 @@ class NumberConnectApp {
   private readonly livesLabel = query<HTMLElement>('#play-lives');
   private readonly solutionToggle = query<HTMLButtonElement>('#solution-toggle');
   private readonly solutionToggleLabel = query<HTMLElement>('#solution-toggle-label');
+  private readonly touchPreview = query<HTMLElement>('#touch-preview');
+  private readonly touchPreviewBoard = query<HTMLElement>('#touch-preview-board');
+  private readonly touchPreviewTitle = query<HTMLElement>('#touch-preview-title');
+  private readonly touchPreviewDragHandle = query<HTMLButtonElement>('#touch-preview-drag-handle');
+  private readonly touchPreviewToggle = query<HTMLButtonElement>('#touch-preview-toggle');
+  private readonly touchPreviewToggleLabel = query<HTMLElement>('#touch-preview-toggle-label');
   private readonly resultOverlay = query<HTMLElement>('#result-overlay');
   private readonly resultKicker = query<HTMLElement>('#result-kicker');
   private readonly resultTitle = query<HTMLElement>('#result-title');
@@ -132,6 +140,9 @@ class NumberConnectApp {
   private beadProgress?: BeadProgress;
   private currentBeadReward: BeadPixel[] = [];
   private beadRewardAnimating = false;
+  private activeNeighborhoodPreview: BoardNeighborhoodPreview | null = null;
+  private manualTouchPreviewPosition?: { left: number; top: number };
+  private touchPreviewDrag?: { pointerId: number; offsetX: number; offsetY: number };
 
   private readonly boardScene = new BoardScene();
   private readonly game: Phaser.Game;
@@ -148,6 +159,11 @@ class NumberConnectApp {
       backgroundColor: 'rgba(0,0,0,0)',
       render: { antialias: true, roundPixels: false },
       scale: { mode: Phaser.Scale.RESIZE, autoCenter: Phaser.Scale.CENTER_BOTH },
+      input: {
+        activePointers: 1,
+        touch: { capture: true },
+        windowEvents: true,
+      },
       scene: [this.boardScene],
     });
     this.editor = new LevelEditorController(query<HTMLElement>('#editor-screen'), {
@@ -161,14 +177,18 @@ class NumberConnectApp {
       onPlaytest: (level) => void this.startEditorPlaytest(level),
       onBack: () => this.backToLobby(),
     });
-    window.addEventListener('resize', () => requestAnimationFrame(() => this.syncBeadCellSize()));
+    window.addEventListener('resize', () => requestAnimationFrame(() => {
+      this.syncBeadCellSize();
+      this.repositionTouchPreview();
+    }));
   }
 
   public async initialize(): Promise<void> {
-    const boardReady = new Promise<void>((resolve) => {
-      this.game.events.once('board-ready', () => resolve());
-    });
-    const [builtInLevels, beadPatterns] = await Promise.all([loadBuiltInLevels(), loadBeadPatterns(), boardReady]);
+    const [builtInLevels, beadPatterns] = await Promise.all([
+      loadBuiltInLevels(),
+      loadBeadPatterns(),
+      this.boardScene.whenReady(),
+    ]);
     const beadSequence = loadBeadSequence(beadPatterns);
     this.builtInLevels = builtInLevels;
     this.beadPatterns = beadPatterns;
@@ -183,6 +203,7 @@ class NumberConnectApp {
     this.refreshLevelOptions();
     this.renderVideoStats();
     this.renderBeadScreen();
+    this.renderTouchPreviewState();
   }
 
   private bindLobby(): void {
@@ -205,9 +226,172 @@ class NumberConnectApp {
     this.playBackButton.addEventListener('click', () => this.leavePlayScreen());
     query('#play-settings-button').addEventListener('click', () => this.openSettings('play'));
     this.solutionToggle.addEventListener('click', () => this.setSolutionReveal(!this.solutionRevealed));
+    this.touchPreviewToggle.addEventListener('click', () => {
+      this.settings.touchPreviewEnabled = !this.settings.touchPreviewEnabled;
+      saveSettings(this.settings);
+      this.renderTouchPreviewState();
+    });
+    this.bindTouchPreviewDrag();
     this.restartButton.addEventListener('click', () => this.handleResultPrimary());
     this.nextButton.addEventListener('click', () => this.handleResultSecondary());
     this.resultLobbyButton.addEventListener('click', () => this.leavePlayScreen());
+  }
+
+  private bindTouchPreviewDrag(): void {
+    this.touchPreviewDragHandle.addEventListener('pointerdown', (event) => {
+      if (!this.settings.touchPreviewEnabled || this.settings.touchPreviewFollowsPointer || event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const bounds = this.touchPreview.getBoundingClientRect();
+      this.touchPreviewDrag = {
+        pointerId: event.pointerId,
+        offsetX: event.clientX - bounds.left,
+        offsetY: event.clientY - bounds.top,
+      };
+      this.touchPreview.classList.add('is-dragging');
+      this.touchPreviewDragHandle.setPointerCapture(event.pointerId);
+    });
+    this.touchPreviewDragHandle.addEventListener('pointermove', (event) => {
+      if (this.touchPreviewDrag?.pointerId !== event.pointerId) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const playBounds = this.playScreen.getBoundingClientRect();
+      this.placeTouchPreview(
+        event.clientX - playBounds.left - this.touchPreviewDrag.offsetX,
+        event.clientY - playBounds.top - this.touchPreviewDrag.offsetY,
+        true,
+      );
+    });
+    const finishDrag = (event: PointerEvent): void => this.finishTouchPreviewDrag(event.pointerId);
+    this.touchPreviewDragHandle.addEventListener('pointerup', finishDrag);
+    this.touchPreviewDragHandle.addEventListener('pointercancel', finishDrag);
+    this.touchPreviewDragHandle.addEventListener('lostpointercapture', finishDrag);
+  }
+
+  private finishTouchPreviewDrag(pointerId: number): void {
+    if (this.touchPreviewDrag?.pointerId !== pointerId) return;
+    this.touchPreviewDrag = undefined;
+    this.touchPreview.classList.remove('is-dragging');
+    if (this.touchPreviewDragHandle.hasPointerCapture(pointerId)) {
+      this.touchPreviewDragHandle.releasePointerCapture(pointerId);
+    }
+  }
+
+  private handleNeighborhoodPreview(preview: BoardNeighborhoodPreview | null): void {
+    this.activeNeighborhoodPreview = preview;
+    if (!this.settings.touchPreviewEnabled) return;
+    this.renderNeighborhoodPreview(preview);
+    if (preview && this.settings.touchPreviewFollowsPointer) {
+      this.placeTouchPreviewAbove(preview.clientX, preview.clientY);
+    }
+  }
+
+  private renderTouchPreviewState(): void {
+    const enabled = this.settings.touchPreviewEnabled;
+    const followsPointer = this.settings.touchPreviewFollowsPointer;
+    this.touchPreview.hidden = !enabled;
+    this.touchPreview.classList.toggle('is-following', followsPointer);
+    this.touchPreviewDragHandle.setAttribute('aria-disabled', String(followsPointer));
+    this.touchPreviewDragHandle.setAttribute(
+      'aria-label',
+      followsPointer ? '周围数字小窗正在跟随触摸位置' : '拖动周围数字小窗',
+    );
+    this.touchPreviewToggle.setAttribute('aria-pressed', String(enabled));
+    this.touchPreviewToggle.setAttribute('aria-label', enabled ? '关闭周围数字小窗' : '打开周围数字小窗');
+    this.touchPreviewToggleLabel.textContent = enabled ? '小窗开' : '小窗关';
+    if (!enabled) return;
+    this.renderNeighborhoodPreview(this.activeNeighborhoodPreview);
+    requestAnimationFrame(() => this.repositionTouchPreview());
+  }
+
+  private renderNeighborhoodPreview(preview: BoardNeighborhoodPreview | null): void {
+    this.touchPreviewBoard.classList.toggle('is-active', preview !== null);
+    if (!preview) {
+      this.touchPreviewTitle.textContent = '按住数字';
+      const hint = document.createElement('p');
+      hint.textContent = '按住棋盘中的数字';
+      this.touchPreviewBoard.replaceChildren(hint);
+      this.touchPreviewBoard.setAttribute('aria-label', '按住棋盘数字查看周围');
+      return;
+    }
+
+    const maxOffsetX = Math.max(1, ...preview.cells.map((cell) => Math.abs(cell.offsetX)));
+    const maxOffsetY = Math.max(1, ...preview.cells.map((cell) => Math.abs(cell.offsetY)));
+    const nodes = preview.cells.map((previewCell) => {
+      const cell = document.createElement('span');
+      cell.className = [
+        'touch-preview-cell',
+        previewCell.value === null ? 'is-hidden' : '',
+        previewCell.center ? 'is-center' : '',
+      ].filter(Boolean).join(' ');
+      cell.style.setProperty('--preview-x', `${50 + (previewCell.offsetX / maxOffsetX) * 34}%`);
+      cell.style.setProperty('--preview-y', `${50 + (previewCell.offsetY / maxOffsetY) * 34}%`);
+      cell.textContent = previewCell.value === null ? '' : String(previewCell.value);
+      cell.setAttribute('aria-hidden', 'true');
+      return cell;
+    });
+    const center = preview.cells.find((cell) => cell.center);
+    const visibleValues = preview.cells
+      .flatMap((cell) => cell.value === null ? [] : [cell.value])
+      .join('、');
+    this.touchPreviewTitle.textContent = center?.value === null || center === undefined
+      ? '当前隐藏格'
+      : `当前 ${center.value}`;
+    this.touchPreviewBoard.replaceChildren(...nodes);
+    this.touchPreviewBoard.setAttribute(
+      'aria-label',
+      visibleValues ? `当前格及周围可见数字：${visibleValues}` : '当前格及周围均为隐藏数字',
+    );
+  }
+
+  private repositionTouchPreview(): void {
+    if (!this.settings.touchPreviewEnabled || this.touchPreview.hidden) return;
+    if (this.settings.touchPreviewFollowsPointer && this.activeNeighborhoodPreview) {
+      this.placeTouchPreviewAbove(
+        this.activeNeighborhoodPreview.clientX,
+        this.activeNeighborhoodPreview.clientY,
+      );
+      return;
+    }
+    if (this.manualTouchPreviewPosition) {
+      this.placeTouchPreview(
+        this.manualTouchPreviewPosition.left,
+        this.manualTouchPreviewPosition.top,
+        true,
+      );
+      return;
+    }
+    const playBounds = this.playScreen.getBoundingClientRect();
+    const hostBounds = this.gameHost.getBoundingClientRect();
+    this.placeTouchPreview(
+      hostBounds.right - playBounds.left - this.touchPreview.offsetWidth - 10,
+      hostBounds.top - playBounds.top + 10,
+      true,
+    );
+  }
+
+  private placeTouchPreviewAbove(clientX: number, clientY: number): void {
+    const playBounds = this.playScreen.getBoundingClientRect();
+    this.placeTouchPreview(
+      clientX - playBounds.left - this.touchPreview.offsetWidth * 0.5,
+      clientY - playBounds.top - this.touchPreview.offsetHeight - 24,
+      false,
+    );
+  }
+
+  private placeTouchPreview(left: number, top: number, rememberManualPosition: boolean): void {
+    const playBounds = this.playScreen.getBoundingClientRect();
+    const margin = 8;
+    const maxLeft = Math.max(margin, playBounds.width - this.touchPreview.offsetWidth - margin);
+    const maxTop = Math.max(margin, playBounds.height - this.touchPreview.offsetHeight - margin);
+    const nextPosition = {
+      left: Math.min(maxLeft, Math.max(margin, left)),
+      top: Math.min(maxTop, Math.max(margin, top)),
+    };
+    this.touchPreview.style.right = 'auto';
+    this.touchPreview.style.left = `${nextPosition.left}px`;
+    this.touchPreview.style.top = `${nextPosition.top}px`;
+    if (rememberManualPosition) this.manualTouchPreviewPosition = nextPosition;
   }
 
   private bindSettings(): void {
@@ -238,6 +422,7 @@ class NumberConnectApp {
   private async showPlayScreen(): Promise<void> {
     this.setSolutionReveal(false);
     this.showScreen('play');
+    this.renderTouchPreviewState();
     this.resultOverlay.hidden = true;
     this.resultActionBusy = false;
     this.setResultActionsDisabled(false);
@@ -362,6 +547,7 @@ class NumberConnectApp {
         }
         void this.handleComplete();
       },
+      onNeighborhoodPreview: (preview) => this.handleNeighborhoodPreview(preview),
     };
   }
 
@@ -783,6 +969,7 @@ class NumberConnectApp {
     query<HTMLSelectElement>('#settings-level').value = String(this.settings.selectedLevelId);
     query<HTMLInputElement>('#settings-next').checked = this.settings.showNextNumber;
     query<HTMLInputElement>('#settings-sound').checked = this.settings.soundEnabled;
+    query<HTMLInputElement>('#settings-touch-preview-follow').checked = this.settings.touchPreviewFollowsPointer;
     this.refreshSettingsControls();
   }
 
@@ -808,7 +995,9 @@ class NumberConnectApp {
     this.settings.selectedLevelId = Number(query<HTMLSelectElement>('#settings-level').value) || this.settings.selectedLevelId;
     this.settings.showNextNumber = query<HTMLInputElement>('#settings-next').checked;
     this.settings.soundEnabled = query<HTMLInputElement>('#settings-sound').checked;
+    this.settings.touchPreviewFollowsPointer = query<HTMLInputElement>('#settings-touch-preview-follow').checked;
     saveSettings(this.settings);
+    this.renderTouchPreviewState();
     this.settingsDialog.close();
 
     if (this.settingsContext === 'play') {
