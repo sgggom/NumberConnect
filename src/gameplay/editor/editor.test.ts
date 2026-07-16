@@ -7,7 +7,12 @@ import {
   randomizeEditorPath,
   scoreEditorPathVariety,
 } from './findEditorPath';
-import { solveInitialFormationPath, solveRecognizedGridPath } from './ImageLevelRecognizer';
+import { calculateSquareGridLayout } from './editorGridLayout';
+import {
+  createThreeEightVisualEvidence,
+  solveInitialFormationPath,
+  solveRecognizedGridPath,
+} from './ImageLevelRecognizer';
 import { calculateEditorLevelMetrics } from './levelMetrics';
 import { LevelEditorModel } from './LevelEditorModel';
 
@@ -209,6 +214,41 @@ describe('level editor path generation', () => {
     expect(solved?.scoreGap).toBeGreaterThan(5);
   });
 
+  it('uses glyph topology to disambiguate swapped 3 and 8 OCR evidence', () => {
+    const values = [
+      6, 5, 44, 43, 54, 41,
+      4, 7, 45, 53, 42, 40,
+      3, 8, 46, 48, 52, 39,
+      2, 9, 47, 49, 51, 38,
+      10, 1, 22, 50, 35, 37,
+      11, 12, 21, 23, 34, 36,
+      13, 19, 20, 24, 33, 32,
+      14, 18, 25, 26, 31, 30,
+      15, 16, 17, 27, 28, 29,
+    ];
+    const threeEvidence = createThreeEightVisualEvidence(3, 64, 1, 0.67, new Map([[8, 78]]));
+    const eightEvidence = createThreeEightVisualEvidence(8, 0, 2, 1.05, new Map());
+    expect(threeEvidence).toEqual({ value: 3, confidence: 90 });
+    expect(eightEvidence).toEqual({ value: 8, confidence: 90 });
+
+    const evidence = values.map((value) => [{ value, confidence: 95 }]);
+    evidence[values.indexOf(3)] = [{ value: 8, confidence: 78 }, threeEvidence!];
+    evidence[values.indexOf(8)] = [eightEvidence!];
+    const solved = solveRecognizedGridPath(9, 6, evidence, 3000);
+
+    expect(solved?.path.map((cellIndex) => values[cellIndex])).toEqual(
+      Array.from({ length: 54 }, (_, index) => index + 1),
+    );
+  });
+
+  it('does not apply 3/8 topology evidence to multi-digit or mismatched glyphs', () => {
+    expect(createThreeEightVisualEvidence(3, 64, 0, 1.15, new Map([[31, 66]]))).toBeNull();
+    expect(createThreeEightVisualEvidence(3, 64, 1, 0.8, new Map([[31, 66]]))).toBeNull();
+    expect(createThreeEightVisualEvidence(3, 64, 2, 0.7, new Map([[8, 78]]))).toBeNull();
+    expect(createThreeEightVisualEvidence(3, 20, 1, 0.7, new Map([[8, 78]]))).toBeNull();
+    expect(createThreeEightVisualEvidence(8, 80, 1, 0.9, new Map([[3, 70]]))).toBeNull();
+  });
+
   it('reconstructs a 12x12 image path after sizing the board', () => {
     const path = serpentinePath(12, 12);
     const valuesByCell = new Array<number>(144);
@@ -284,6 +324,36 @@ describe('level editor path generation', () => {
     expect(model.shape).toBe('square');
     expect(model.size()).toEqual({ columns: 12, rows: 12 });
     expect(model.solutionPath).toEqual(squarePath);
+  });
+
+  it('fits rectangular editor grids with square cells in either orientation', () => {
+    const tall = calculateSquareGridLayout({
+      rows: 9,
+      columns: 6,
+      availableWidth: 568,
+      availableHeight: 806,
+      columnGap: 8,
+      rowGap: 8,
+      maxWidth: 760,
+      maxHeight: 760,
+    });
+    expect(tall.cellSize).toBeCloseTo(77.333, 3);
+    expect(tall.width).toBeCloseTo(504, 3);
+    expect(tall.height).toBeCloseTo(760, 3);
+
+    const wide = calculateSquareGridLayout({
+      rows: 6,
+      columns: 9,
+      availableWidth: 568,
+      availableHeight: 806,
+      columnGap: 8,
+      rowGap: 8,
+      maxWidth: 760,
+      maxHeight: 760,
+    });
+    expect(wide.cellSize).toBe(56);
+    expect(wide.width).toBe(568);
+    expect(wide.height).toBe(376);
   });
 
   it('preserves blank cells when applying a recognized initial formation', () => {

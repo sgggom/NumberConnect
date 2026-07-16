@@ -1,6 +1,7 @@
 import './editor.css';
 import { BoardShape, type LevelData } from '../../game/types';
 import { EditorSplitPaneController } from './EditorSplitPaneController';
+import { calculateSquareGridLayout } from './editorGridLayout';
 import {
   recognizeImageHiddenLayout,
   recognizeImageLevel,
@@ -34,7 +35,7 @@ export class LevelEditorController {
   private bound = false;
   private selectedLevelId?: number;
   private readonly splitPane: EditorSplitPaneController;
-  private readonly pathResizeObserver: ResizeObserver;
+  private readonly workspaceResizeObserver: ResizeObserver;
   private pathRevealCount?: number;
   private pathAnimationTimer?: number;
   private pathAnimationRun = 0;
@@ -52,14 +53,17 @@ export class LevelEditorController {
       this.query<HTMLElement>('.editor-layout'),
       this.query<HTMLElement>('#editor-resizer'),
     );
-    this.pathResizeObserver = new ResizeObserver(() => this.renderPathLines());
+    this.workspaceResizeObserver = new ResizeObserver(() => {
+      this.layoutGrid();
+      this.renderPathLines();
+    });
   }
 
   public bind(): void {
     if (this.bound) return;
     this.bound = true;
     this.splitPane.bind();
-    this.pathResizeObserver.observe(this.query<HTMLElement>('.editor-workspace'));
+    this.workspaceResizeObserver.observe(this.query<HTMLElement>('.editor-workspace'));
     this.query('#editor-back-button').addEventListener('click', () => {
       this.cancelPathAnimation();
       this.cancelImageRecognition();
@@ -259,6 +263,7 @@ export class LevelEditorController {
       }
     }
     grid.replaceChildren(...cells);
+    this.layoutGrid();
     this.renderPathLines();
 
     const shapeSelect = this.query<HTMLSelectElement>('#editor-shape');
@@ -825,6 +830,42 @@ export class LevelEditorController {
       label.textContent = String(value);
       svg.append(node, label);
     });
+  }
+
+  private layoutGrid(): void {
+    const grid = this.query<HTMLElement>('#editor-grid');
+    if (this.model.shape === 'hex') {
+      grid.style.removeProperty('width');
+      grid.style.removeProperty('height');
+      return;
+    }
+
+    const workspace = this.query<HTMLElement>('.editor-workspace');
+    const workspaceStyle = getComputedStyle(workspace);
+    const gridStyle = getComputedStyle(grid);
+    const availableWidth = workspace.clientWidth
+      - Number.parseFloat(workspaceStyle.paddingLeft)
+      - Number.parseFloat(workspaceStyle.paddingRight);
+    const availableHeight = workspace.clientHeight
+      - Number.parseFloat(workspaceStyle.paddingTop)
+      - Number.parseFloat(workspaceStyle.paddingBottom);
+    if (availableWidth <= 0 || availableHeight <= 0) return;
+
+    const { rows, columns } = this.model.size();
+    const maxWidth = Number.parseFloat(gridStyle.maxWidth);
+    const maxHeight = Number.parseFloat(gridStyle.maxHeight);
+    const layout = calculateSquareGridLayout({
+      rows,
+      columns,
+      availableWidth,
+      availableHeight,
+      columnGap: Number.parseFloat(gridStyle.columnGap) || 0,
+      rowGap: Number.parseFloat(gridStyle.rowGap) || 0,
+      maxWidth: Number.isFinite(maxWidth) ? maxWidth : availableWidth,
+      maxHeight: Number.isFinite(maxHeight) ? maxHeight : availableHeight,
+    });
+    grid.style.width = `${layout.width}px`;
+    grid.style.height = `${layout.height}px`;
   }
 
   private renderAlgorithmControls(): void {

@@ -79,6 +79,7 @@ interface OcrTileResult {
   canvas: HTMLCanvasElement;
   hasVisibleNumber: boolean;
   foregroundAspectRatio: number;
+  enclosedHoleCount: number;
   rawRectangle: { left: number; top: number; width: number; height: number };
 }
 
@@ -106,6 +107,9 @@ const MIN_GRID_SIZE = MIN_EDITOR_SIZE;
 const MAX_GRID_SIZE = MAX_EDITOR_SIZE;
 const OCR_CONFIDENCE_FLOOR = 45;
 const BEAM_WIDTH = 12000;
+const STRONG_WHOLE_IMAGE_EVIDENCE_FLOOR = 20;
+const SINGLE_DIGIT_MAX_ASPECT_RATIO = 1.1;
+const VISUAL_DISAMBIGUATION_CONFIDENCE = 90;
 
 let activeWorkerProgress: ProgressListener | undefined;
 let workerPromise: Promise<Awaited<ReturnType<typeof import('tesseract.js')['createWorker']>>> | undefined;
@@ -328,6 +332,73 @@ const removeDecorationLines = (pixels: Uint8ClampedArray, width: number, height:
   }
 };
 
+const countEnclosedBackgroundRegions = (
+  pixels: Uint8ClampedArray,
+  width: number,
+  height: number,
+): number => {
+  const visited = new Uint8Array(width * height);
+  let enclosedRegions = 0;
+  for (let start = 0; start < width * height; start += 1) {
+    if (visited[start] || pixels[start * 4] !== 255) continue;
+    const pending = [start];
+    visited[start] = 1;
+    let touchesEdge = false;
+    let area = 0;
+    while (pending.length > 0) {
+      const current = pending.pop()!;
+      const x = current % width;
+      const y = Math.floor(current / width);
+      area += 1;
+      if (x === 0 || x === width - 1 || y === 0 || y === height - 1) touchesEdge = true;
+      const neighbors = [current - 1, current + 1, current - width, current + width];
+      neighbors.forEach((next, direction) => {
+        if (next < 0 || next >= width * height || visited[next]) return;
+        if ((direction === 0 && x === 0) || (direction === 1 && x === width - 1)) return;
+        if (pixels[next * 4] !== 255) return;
+        visited[next] = 1;
+        pending.push(next);
+      });
+    }
+    if (!touchesEdge && area >= 2) enclosedRegions += 1;
+  }
+  return enclosedRegions;
+};
+
+export const createThreeEightVisualEvidence = (
+  value: number,
+  recognizedConfidence: number,
+  enclosedHoleCount: number,
+  foregroundAspectRatio: number,
+  existingEvidence: ReadonlyMap<number, number>,
+): GridOcrEvidence | null => {
+  if ((value !== 3 && value !== 8) || foregroundAspectRatio > SINGLE_DIGIT_MAX_ASPECT_RATIO) {
+    return null;
+  }
+  const strongExisting = [...existingEvidence].filter(([, confidence]) => (
+    confidence >= STRONG_WHOLE_IMAGE_EVIDENCE_FLOOR
+  ));
+  if (strongExisting.some(([candidate]) => candidate !== 3 && candidate !== 8)) return null;
+
+  // Two closed loops strongly identify an 8. Fewer loops can also come from a broken 8,
+  // so a 3 only overrides whole-image evidence when its per-cell OCR is already reliable.
+  const topologySupportsValue = value === 8
+    ? enclosedHoleCount >= 2
+    : recognizedConfidence >= OCR_CONFIDENCE_FLOOR
+      && enclosedHoleCount < 2
+      && strongExisting.some(([candidate]) => candidate === 8);
+  if (!topologySupportsValue) return null;
+
+  const strongestExisting = Math.max(0, ...existingEvidence.values());
+  return {
+    value,
+    confidence: Math.max(
+      VISUAL_DISAMBIGUATION_CONFIDENCE,
+      strongestExisting + 12,
+    ),
+  };
+};
+
 const createOcrTile = (
   source: HTMLCanvasElement,
   cell: GridCellOcr,
@@ -394,6 +465,7 @@ const createOcrTile = (
     canvas: tile,
     hasVisibleNumber: foregroundPixels >= Math.max(16, cropWidth * 0.5),
     foregroundAspectRatio: foregroundWidth / foregroundHeight,
+    enclosedHoleCount: countEnclosedBackgroundRegions(image.data, cropWidth, cropHeight),
     rawRectangle: {
       left: Math.max(0, Math.min(source.width - rawWidth, Math.round(cell.centerX - rawWidth * 0.5))),
       top: Math.max(0, Math.min(source.height - rawHeight, Math.round(cell.centerY - rawHeight * 0.5))),
@@ -805,7 +877,17 @@ export const recognizeImageLevel = async (
     const tile = tiles[index];
     const result = await worker.recognize(tile.canvas);
     const value = Number(result.data.text.replace(/\D/g, ''));
+    const visualEvidence = createThreeEightVisualEvidence(
+      value,
+      result.data.confidence,
+      tile.enclosedHoleCount,
+      tile.foregroundAspectRatio,
+      layout.cells[index].evidence,
+    );
     recordEvidence(index, value, result.data.confidence);
+    if (visualEvidence) {
+      recordEvidence(index, visualEvidence.value, visualEvidence.confidence);
+    }
     if (mode === 'initial-formation' && value === 1 && tile.foregroundAspectRatio >= 0.82) {
       recordEvidence(index, 11, Math.max(75, result.data.confidence));
     }
