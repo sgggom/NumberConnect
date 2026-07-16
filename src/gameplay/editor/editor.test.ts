@@ -7,6 +7,8 @@ import {
   randomizeEditorPath,
   scoreEditorPathVariety,
 } from './findEditorPath';
+import { solveInitialFormationPath, solveRecognizedGridPath } from './ImageLevelRecognizer';
+import { calculateEditorLevelMetrics } from './levelMetrics';
 import { LevelEditorModel } from './LevelEditorModel';
 
 describe('level editor path generation', () => {
@@ -171,6 +173,135 @@ describe('level editor path generation', () => {
     expect(countEditorPathCrossings(randomized, 'square')).toBeLessThanOrEqual(2);
     expect(randomized.map((cell) => `${cell.x},${cell.y}`).join('|'))
       .not.toBe(source?.map((cell) => `${cell.x},${cell.y}`).join('|'));
+  });
+
+  it('reconstructs an image path from OCR evidence and neighbor constraints', () => {
+    const values = [
+      34, 35, 37, 40, 39, 44, 43,
+      10, 33, 36, 38, 41, 42, 45,
+      9, 11, 32, 31, 30, 47, 46,
+      7, 8, 12, 18, 29, 28, 48,
+      6, 13, 17, 19, 27, 26, 49,
+      3, 5, 14, 16, 20, 21, 25,
+      4, 2, 1, 15, 22, 23, 24,
+    ];
+    const evidence = values.map((value) => {
+      if (value === 6) return [{ value: 8, confidence: 81 }];
+      if (value === 11) return [{ value: 1, confidence: 80 }];
+      if (value === 41) return [{ value: 4, confidence: 8 }];
+      return [{ value, confidence: 92 }];
+    });
+    const solved = solveRecognizedGridPath(7, 7, evidence, 3000);
+
+    expect(solved).not.toBeNull();
+    expect(solved?.path.map((cellIndex) => values[cellIndex])).toEqual(
+      Array.from({ length: 49 }, (_, index) => index + 1),
+    );
+    expect(solved?.scoreGap).toBeGreaterThan(5);
+  });
+
+  it('reconstructs a complete path from the visible clues of an initial formation', () => {
+    const clues: Array<number | null> = [
+      null, 36, null, 34, null, 4, null, 7,
+      38, null, 41, null, null, 9, null, null,
+      null, null, 64, null, null, 1, null, null,
+      null, 63, 56, null, 31, null, 13, 11,
+      59, 62, 55, null, null, null, null, null,
+      60, 61, 52, null, null, null, 28, 17,
+      49, null, 53, null, null, null, 20, null,
+      50, 48, 47, 25, null, 22, null, null,
+    ];
+    const clueCellByValue = new Map<number, number>();
+    clues.forEach((value, cellIndex) => {
+      if (value !== null) clueCellByValue.set(value, cellIndex);
+    });
+    const solved = solveInitialFormationPath(8, 8, clueCellByValue);
+
+    expect(solved).not.toBeNull();
+    clues.forEach((value, cellIndex) => {
+      if (value !== null) expect(solved?.path[value - 1]).toBe(cellIndex);
+    });
+    expect(solved?.ambiguous).toBe(true);
+  });
+
+  it('applies a recognized path as a complete manual editor level', () => {
+    const model = new LevelEditorModel();
+    const path = [
+      { x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 },
+      { x: 2, y: 1 }, { x: 1, y: 1 }, { x: 0, y: 1 },
+      { x: 0, y: 2 }, { x: 1, y: 2 }, { x: 2, y: 2 },
+    ];
+
+    expect(model.applyRecognizedPath(3, 3, path)).toBeNull();
+    expect(model.hasGeneratedPath).toBe(true);
+    expect(model.createLevel(88)).toMatchObject({
+      rows: 3,
+      columns: 3,
+      pathSource: 'manual',
+      solutionPath: path,
+    });
+  });
+
+  it('preserves blank cells when applying a recognized initial formation', () => {
+    const model = new LevelEditorModel();
+    const path = [
+      { x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 },
+      { x: 2, y: 1 }, { x: 1, y: 1 }, { x: 0, y: 1 },
+      { x: 0, y: 2 }, { x: 1, y: 2 }, { x: 2, y: 2 },
+    ];
+    const hiddenCells = [path[2], path[4], path[6]];
+
+    expect(model.applyRecognizedPath(3, 3, path, hiddenCells)).toBeNull();
+    expect(model.createLevel(89)?.hiddenCells).toEqual(hiddenCells);
+  });
+
+  it('applies a recognized hidden layout without replacing the complete path', () => {
+    const model = new LevelEditorModel();
+    const path = [
+      { x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 },
+      { x: 2, y: 1 }, { x: 1, y: 1 }, { x: 0, y: 1 },
+      { x: 0, y: 2 }, { x: 1, y: 2 }, { x: 2, y: 2 },
+    ];
+    const hiddenCells = [path[2], path[4], path[6]];
+
+    expect(model.applyRecognizedPath(3, 3, path)).toBeNull();
+    expect(model.applyRecognizedHiddenCells(3, 3, hiddenCells)).toBeNull();
+    expect(model.solutionPath).toEqual(path);
+    expect(model.createLevel(90)?.hiddenCells).toEqual(hiddenCells);
+    expect(model.applyRecognizedHiddenCells(4, 4, hiddenCells)).toBe('隐藏图片尺寸为 4×4，当前关卡为 3×3。');
+    expect(model.applyRecognizedHiddenCells(3, 3, [path[0]])).toBe('路径起点和终点必须在隐藏图片中显示。');
+  });
+
+  it('classifies straight, right, acute, and obtuse path angles', () => {
+    const metricsFor = (path: Array<{ x: number; y: number }>) => calculateEditorLevelMetrics({
+      path,
+      hiddenCellKeys: new Set(),
+      shape: 'square',
+    });
+
+    expect(metricsFor([{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }]).straightContinuations).toBe(1);
+    expect(metricsFor([{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }]).rightAngleTurns).toBe(1);
+    expect(metricsFor([{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: -1 }]).acuteAngleTurns).toBe(1);
+    expect(metricsFor([{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 1 }]).obtuseAngleTurns).toBe(1);
+  });
+
+  it('calculates crossings, hidden ratio, and longest visibility runs', () => {
+    const crossing = calculateEditorLevelMetrics({
+      path: [{ x: 0, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }, { x: 1, y: 0 }],
+      hiddenCellKeys: new Set(),
+      shape: 'square',
+    });
+    const visibility = calculateEditorLevelMetrics({
+      path: Array.from({ length: 7 }, (_, x) => ({ x, y: 0 })),
+      hiddenCellKeys: new Set(['2,0', '3,0', '5,0']),
+      shape: 'square',
+    });
+
+    expect(crossing.pathCrossings).toBe(1);
+    expect(visibility.hiddenCount).toBe(3);
+    expect(visibility.hiddenRatio).toBeCloseTo(3 / 7);
+    expect(visibility.longestHiddenRun).toBe(2);
+    expect(visibility.longestVisibleRun).toBe(2);
   });
 
 });

@@ -12,6 +12,36 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
     </header>
 
     <div class="editor-layout">
+      <aside class="editor-info-panel" aria-labelledby="editor-info-title">
+        <div class="editor-info-panel__header">
+          <p class="eyebrow">LEVEL INSIGHTS</p>
+          <h3 id="editor-info-title">关卡信息</h3>
+        </div>
+        <div class="editor-info-size">
+          <span>关卡尺寸</span>
+          <strong id="editor-info-size">8 × 8</strong>
+        </div>
+        <section class="editor-info-group" aria-labelledby="editor-info-path-title">
+          <h4 id="editor-info-path-title">路径结构</h4>
+          <dl>
+            <div><dt>直角拐弯次数</dt><dd id="editor-info-right-turns">0</dd></div>
+            <div><dt>锐角拐弯次数</dt><dd id="editor-info-acute-turns">0</dd></div>
+            <div><dt>钝角拐弯次数</dt><dd id="editor-info-obtuse-turns">0</dd></div>
+            <div><dt>直线次数</dt><dd id="editor-info-straight">0</dd></div>
+            <div><dt>路径交叉次数</dt><dd id="editor-info-crossings">0</dd></div>
+          </dl>
+        </section>
+        <section class="editor-info-group" aria-labelledby="editor-info-visibility-title">
+          <h4 id="editor-info-visibility-title">显示与隐藏</h4>
+          <dl>
+            <div class="editor-info-row--stacked"><dt>隐藏占比</dt><dd id="editor-info-hidden-ratio">0% · 0/0</dd></div>
+            <div><dt>最长隐藏长度</dt><dd id="editor-info-hidden-run">0</dd></div>
+            <div><dt>最长显示长度</dt><dd id="editor-info-visible-run">0</dd></div>
+          </dl>
+        </section>
+        <p class="editor-info-note">统计以当前数字路径为准，并随编辑实时更新。</p>
+      </aside>
+
       <section class="editor-board-pane" aria-label="棋盘区域">
         <div class="editor-workspace">
           <div id="editor-preview" class="editor-preview" aria-hidden="true"></div>
@@ -54,6 +84,20 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
             </select>
           </label>
           <div class="stepper"><span>尺寸</span><button id="editor-size-minus">−</button><b id="editor-size-value">8 × 8</b><button id="editor-size-plus">＋</button></div>
+          <div class="editor-image-import">
+            <div class="editor-image-import__group">
+              <div class="editor-image-import__heading"><b>精准识别</b><small>先完整关卡，再识别隐藏</small></div>
+              <div class="editor-image-import__actions">
+                <button id="editor-image-level-button" class="button button--secondary" type="button">识别完整关卡</button>
+                <button id="editor-image-hidden-button" class="button button--secondary" type="button">识别隐藏</button>
+              </div>
+            </div>
+            <div class="editor-image-import__group">
+              <div class="editor-image-import__heading"><b>快捷识别</b><small>会推测未显示的路径</small></div>
+              <button id="editor-image-formation-button" class="button button--secondary" type="button">识别初始阵型</button>
+            </div>
+            <small class="editor-image-import__shortcut">直接 Ctrl+V 使用上次选择，默认为完整关卡</small>
+          </div>
           <div class="editor-board-actions">
             <button id="editor-fill-button" class="button button--secondary button--small">填满棋盘</button>
             <button id="editor-clear-button" class="button button--secondary button--small">清空棋盘</button>

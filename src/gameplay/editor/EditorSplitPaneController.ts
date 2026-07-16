@@ -24,7 +24,7 @@ export class EditorSplitPaneController {
   }
 
   private startDrag(event: PointerEvent): void {
-    if (window.matchMedia('(max-width: 980px)').matches) return;
+    if (window.matchMedia('(max-width: 1180px)').matches) return;
     event.preventDefault();
     this.activePointerId = event.pointerId;
     this.separator.setPointerCapture(event.pointerId);
@@ -68,9 +68,10 @@ export class EditorSplitPaneController {
       this.minimumSidebarWidth,
       this.layout.clientWidth
         - this.minimumBoardWidth
+        - this.infoPanelWidth()
         - this.separator.offsetWidth
         - this.levelPanelWidth()
-        - this.columnGap() * 3,
+        - this.columnGap() * 4,
     );
     this.sidebarWidth = clamp(requestedWidth, this.minimumSidebarWidth, maximum);
     this.layout.style.setProperty('--editor-sidebar-width', `${this.sidebarWidth}px`);
@@ -86,15 +87,20 @@ export class EditorSplitPaneController {
     return this.layout.querySelector<HTMLElement>('.editor-level-panel')?.getBoundingClientRect().width ?? 280;
   }
 
+  private infoPanelWidth(): number {
+    return this.layout.querySelector<HTMLElement>('.editor-info-panel')?.getBoundingClientRect().width ?? 208;
+  }
+
   private columnGap(): number {
     return Number.parseFloat(window.getComputedStyle(this.layout).columnGap) || 0;
   }
 
   private updateAccessibility(width: number, maximum = this.layout.clientWidth
     - this.minimumBoardWidth
+    - this.infoPanelWidth()
     - this.separator.offsetWidth
     - this.levelPanelWidth()
-    - this.columnGap() * 3): void {
+    - this.columnGap() * 4): void {
     this.separator.setAttribute('aria-valuemin', String(this.minimumSidebarWidth));
     this.separator.setAttribute('aria-valuemax', String(Math.max(this.minimumSidebarWidth, Math.round(maximum))));
     this.separator.setAttribute('aria-valuenow', String(Math.round(width)));
