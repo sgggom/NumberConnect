@@ -324,8 +324,8 @@ class NumberConnectApp {
       this.touchPreviewCellNodes.clear();
       this.touchPreviewPathLines.replaceChildren();
       this.touchPreviewPathLineNodes.clear();
-      this.touchPreviewPointerLine.hidden = true;
-      this.touchPreviewPointerDot.hidden = true;
+      this.touchPreviewPointerLine.toggleAttribute('hidden', true);
+      this.touchPreviewPointerDot.toggleAttribute('hidden', true);
       this.touchPreviewBoard.setAttribute('aria-label', '按住棋盘数字查看周围');
       return;
     }
@@ -418,8 +418,8 @@ class NumberConnectApp {
         x: offsetPercent(preview.pointer.offsetX, maxOffsetX),
         y: offsetPercent(preview.pointer.offsetY, maxOffsetY),
       };
-      this.touchPreviewPointerLine.hidden = false;
-      this.touchPreviewPointerDot.hidden = false;
+      this.touchPreviewPointerLine.toggleAttribute('hidden', false);
+      this.touchPreviewPointerDot.toggleAttribute('hidden', false);
       this.touchPreviewPointerLine.style.setProperty('--preview-x1', `${pointerStart.x}%`);
       this.touchPreviewPointerLine.style.setProperty('--preview-y1', `${pointerStart.y}%`);
       this.touchPreviewPointerLine.style.setProperty('--preview-x2', `${pointerEnd.x}%`);
@@ -433,8 +433,8 @@ class NumberConnectApp {
       this.touchPreviewPointerDot.setAttribute('cx', String(pointerEnd.x));
       this.touchPreviewPointerDot.setAttribute('cy', String(pointerEnd.y));
     } else {
-      this.touchPreviewPointerLine.hidden = true;
-      this.touchPreviewPointerDot.hidden = true;
+      this.touchPreviewPointerLine.toggleAttribute('hidden', true);
+      this.touchPreviewPointerDot.toggleAttribute('hidden', true);
     }
 
     const center = preview.cells.find((cell) => cell.center);
