@@ -36,8 +36,9 @@
 .editor-path-number { fill: #fff; text-anchor: middle; dominant-baseline: central; font-family: "Nunito Sans", sans-serif; font-weight: 900; paint-order: stroke; stroke: rgba(5,11,18,.55); stroke-width: 2px; stroke-linejoin: round; }
 .editor-path-number.is-start { fill: #19212d; stroke: rgba(255,255,255,.25); }
 .editor-path-number.is-hidden { fill: #d9c6e8; font-style: italic; opacity: .72; }
-.editor-grid { --cols: 8; --rows: 8; position: relative; z-index: 2; width: min(100%, 760px); max-height: 76vh; aspect-ratio: var(--cols) / var(--rows); display: grid; grid-template-columns: repeat(var(--cols), 1fr); grid-template-rows: repeat(var(--rows), 1fr); gap: clamp(3px, .7vw, 8px); touch-action: none; user-select: none; transform-origin: center; transition: transform .18s ease; }
+.editor-grid { --cols: 8; --rows: 8; position: relative; z-index: 2; width: 100%; max-width: 760px; max-height: 76vh; aspect-ratio: var(--cols) / var(--rows); display: grid; grid-template-columns: repeat(var(--cols), 1fr); grid-template-rows: repeat(var(--rows), 1fr); gap: clamp(3px, .7vw, 8px); touch-action: none; user-select: none; transform-origin: center; transition: transform .18s ease; }
 .editor-cell { position: relative; min-width: 0; min-height: 0; padding: 0; border-radius: 24%; color: transparent; background: #222e3c; border: 1px solid rgba(255,255,255,.045); transition: background .1s ease, transform .1s ease; }
+.editor-grid:not([data-shape="hex"]) .editor-cell { aspect-ratio: 1; }
 .editor-grid[data-manual-mode="path"] .editor-cell::before { content: ""; position: absolute; inset: 18%; border: 1px dashed rgba(255,255,255,.2); border-radius: 50%; background: rgba(255,255,255,.025); pointer-events: none; }
 .editor-cell.is-active { background: #2f9e83; border-color: rgba(115,241,203,.45); }
 .editor-cell.is-path { color: #fff; background: #3e78d3; font-weight: 900; }
