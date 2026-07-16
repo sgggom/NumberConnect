@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { beadClusterPose, beadRewardTiming } from '../gameplay/beads/beadRewardAnimation';
+import { buildBoardNeighborhoodPreview } from './boardNeighborhood';
 import { ConnectionProgress, type ConnectionAction, type ConnectionFailure } from './connectionProgress';
 import { findSwappableHiddenPairs } from './hiddenSwap';
 import { projectCell } from './topology';
@@ -56,6 +57,10 @@ const hexagonPoints = (radius: number): Phaser.Geom.Point[] => Array.from({ leng
 const colorNumber = (hexColor: string): number => Number.parseInt(hexColor.slice(1), 16);
 
 export class BoardScene extends Phaser.Scene {
+  private resolveReady?: () => void;
+  private readonly readyPromise = new Promise<void>((resolve) => {
+    this.resolveReady = resolve;
+  });
   private session?: BoardSessionInput;
   private view?: BoardView;
   private connection?: ConnectionProgress;
@@ -66,9 +71,14 @@ export class BoardScene extends Phaser.Scene {
   private solutionRevealed = false;
   private hintTween?: Phaser.Tweens.Tween;
   private hintCell?: CellView;
+  private neighborhoodPreviewIndex?: number;
 
   public constructor() {
     super('board');
+  }
+
+  public whenReady(): Promise<void> {
+    return this.readyPromise;
   }
 
   public preload(): void {
@@ -87,10 +97,13 @@ export class BoardScene extends Phaser.Scene {
     this.input.on('pointerup', this.handlePointerUp, this);
     this.input.on('gameout', this.handlePointerUp, this);
     this.scale.on('resize', this.handleResize, this);
+    this.resolveReady?.();
+    this.resolveReady = undefined;
     this.game.events.emit('board-ready');
   }
 
   public setBoard(session: BoardSessionInput): void {
+    this.clearNeighborhoodPreview();
     this.stopHintPulse();
     this.view?.root.destroy(true);
     this.session = session;
@@ -106,6 +119,7 @@ export class BoardScene extends Phaser.Scene {
   public setPaused(paused: boolean): void {
     this.locked = paused || this.transitioning || this.connection?.complete === true;
     if (paused) {
+      this.clearNeighborhoodPreview();
       this.isDrawing = false;
       this.connection?.endStroke();
       this.wrongFeedbackActive = false;
@@ -129,6 +143,7 @@ export class BoardScene extends Phaser.Scene {
 
     this.locked = true;
     this.transitioning = true;
+    this.clearNeighborhoodPreview();
     this.stopHintPulse();
     this.disableViewInput(this.view);
     const oldView = this.view;
@@ -162,6 +177,7 @@ export class BoardScene extends Phaser.Scene {
     const view = this.view;
     const session = this.session;
     this.locked = true;
+    this.clearNeighborhoodPreview();
     this.stopHintPulse();
     this.playSound('victory');
 
@@ -593,6 +609,7 @@ export class BoardScene extends Phaser.Scene {
     this.isDrawing = true;
     this.wrongFeedbackActive = false;
     this.handleConnectionAction(this.connection.begin(index, this.solutionRevealed));
+    this.emitNeighborhoodPreview(index, pointer);
     if (this.view) {
       this.drawPointerLine(pointer.x - this.view.root.x, pointer.y - this.view.root.y);
     }
@@ -612,6 +629,8 @@ export class BoardScene extends Phaser.Scene {
       }
     });
     if (closest && this.connection) this.handleConnectionAction(this.connection.extend(closest.index));
+    const previewIndex = closest?.index ?? this.neighborhoodPreviewIndex;
+    if (!this.locked && previewIndex !== undefined) this.emitNeighborhoodPreview(previewIndex, pointer);
     this.drawPointerLine(localX, localY);
   }
 
@@ -621,7 +640,31 @@ export class BoardScene extends Phaser.Scene {
     this.wrongFeedbackActive = false;
     this.connection?.endStroke();
     this.view?.pointerLine.clear();
+    this.clearNeighborhoodPreview();
     if (wasDrawing) this.refreshView();
+  }
+
+  private emitNeighborhoodPreview(index: number, pointer: Phaser.Input.Pointer): void {
+    if (!this.session || !this.connection) return;
+    const canvasBounds = this.sys.game.canvas.getBoundingClientRect();
+    const clientX = canvasBounds.left + (pointer.x / Math.max(1, this.scale.width)) * canvasBounds.width;
+    const clientY = canvasBounds.top + (pointer.y / Math.max(1, this.scale.height)) * canvasBounds.height;
+    const preview = buildBoardNeighborhoodPreview(
+      this.session.level,
+      index,
+      (candidateIndex) => this.solutionRevealed || this.connection?.isVisible(candidateIndex) === true,
+      (candidateIndex) => this.connection?.displayNumber(candidateIndex) ?? candidateIndex + 1,
+      clientX,
+      clientY,
+    );
+    if (!preview) return;
+    this.neighborhoodPreviewIndex = index;
+    this.session.onNeighborhoodPreview?.(preview);
+  }
+
+  private clearNeighborhoodPreview(): void {
+    this.neighborhoodPreviewIndex = undefined;
+    this.session?.onNeighborhoodPreview?.(null);
   }
 
   private drawPointerLine(localX: number, localY: number): void {
@@ -668,6 +711,7 @@ export class BoardScene extends Phaser.Scene {
       this.locked = true;
       this.isDrawing = false;
       this.connection?.endStroke();
+      this.clearNeighborhoodPreview();
       this.session.onComplete();
     }
   }

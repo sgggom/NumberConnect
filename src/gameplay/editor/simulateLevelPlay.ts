@@ -30,6 +30,8 @@ interface SimulateLevelPlayInput {
   random?: () => number;
 }
 
+type CellNeighborMap = ReadonlyMap<string, ReadonlyArray<string>>;
+
 const keyOf = (cell: EditorCell): string => `${cell.x},${cell.y}`;
 
 const CANDIDATE_LOOKAHEAD_STEPS = 2;
@@ -81,6 +83,52 @@ const chooseCandidate = (
   return candidates[Math.floor(randomValue * candidates.length)];
 };
 
+const buildCellNeighborMap = (
+  cells: ReadonlyArray<EditorCell>,
+  shape: EditorShape,
+): CellNeighborMap => {
+  const neighborsByCell = new Map<string, string[]>();
+  cells.forEach((cell) => neighborsByCell.set(keyOf(cell), []));
+  for (let leftIndex = 0; leftIndex < cells.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < cells.length; rightIndex += 1) {
+      if (!areEditorCellsNeighbors(cells[leftIndex], cells[rightIndex], shape)) continue;
+      neighborsByCell.get(keyOf(cells[leftIndex]))?.push(keyOf(cells[rightIndex]));
+      neighborsByCell.get(keyOf(cells[rightIndex]))?.push(keyOf(cells[leftIndex]));
+    }
+  }
+  return neighborsByCell;
+};
+
+const leavesRemainingCellsConnected = (
+  current: EditorCell,
+  routeCellKeys: ReadonlySet<string>,
+  connectedKeys: ReadonlySet<string>,
+  predictedKeys: ReadonlySet<string>,
+  neighborsByCell: CellNeighborMap,
+): boolean => {
+  const remainingKeys = new Set<string>();
+  routeCellKeys.forEach((key) => {
+    if (!connectedKeys.has(key) && !predictedKeys.has(key)) remainingKeys.add(key);
+  });
+  if (remainingKeys.size === 0) return true;
+
+  const currentNeighbors = neighborsByCell.get(keyOf(current)) ?? [];
+  if (!currentNeighbors.some((key) => remainingKeys.has(key))) return false;
+
+  const firstRemainingKey = remainingKeys.values().next().value as string;
+  const reachableKeys = new Set([firstRemainingKey]);
+  const pendingKeys = [firstRemainingKey];
+  while (pendingKeys.length > 0) {
+    const key = pendingKeys.pop() as string;
+    for (const neighborKey of neighborsByCell.get(key) ?? []) {
+      if (!remainingKeys.has(neighborKey) || reachableKeys.has(neighborKey)) continue;
+      reachableKeys.add(neighborKey);
+      pendingKeys.push(neighborKey);
+    }
+  }
+  return reachableKeys.size === remainingKeys.size;
+};
+
 const minimumStepsBetween = (
   from: EditorCell,
   to: EditorCell,
@@ -108,7 +156,9 @@ const canReachNextVisibleNumber = (
   candidate: EditorCell,
   currentPosition: number,
   route: ReadonlyArray<EditorCell>,
+  routeCellKeys: ReadonlySet<string>,
   hiddenCellKeys: ReadonlySet<string>,
+  neighborsByCell: CellNeighborMap,
   shape: EditorShape,
 ): boolean => {
   let anchorIndex = currentPosition + 1;
@@ -130,6 +180,14 @@ const canReachNextVisibleNumber = (
   const lookAheadSteps = Math.min(CANDIDATE_LOOKAHEAD_STEPS, requiredIntermediateCount);
 
   const search = (current: EditorCell, predictedSteps: number): boolean => {
+    if (!leavesRemainingCellsConnected(
+      current,
+      routeCellKeys,
+      connectedKeys,
+      visited,
+      neighborsByCell,
+    )) return false;
+
     const remainingIntermediateCount = requiredIntermediateCount - predictedSteps;
     const remainingEdgesToAnchor = remainingIntermediateCount + 1;
     if (minimumStepsBetween(current, anchor, shape) > remainingEdgesToAnchor) return false;
@@ -187,7 +245,9 @@ const chooseAnalyzedCandidate = (
   current: EditorCell,
   currentPosition: number,
   route: ReadonlyArray<EditorCell>,
+  routeCellKeys: ReadonlySet<string>,
   hiddenCellKeys: ReadonlySet<string>,
+  neighborsByCell: CellNeighborMap,
   shape: EditorShape,
   random: () => number,
 ): EditorCell => {
@@ -195,7 +255,9 @@ const chooseAnalyzedCandidate = (
     candidate,
     currentPosition,
     route,
+    routeCellKeys,
     hiddenCellKeys,
+    neighborsByCell,
     shape,
   ));
   const available = safeCandidates.length > 0 ? safeCandidates : candidates;
@@ -232,6 +294,7 @@ export const simulateLevelPlay = ({
 
   const route = path.map((cell) => ({ ...cell }));
   const pathCellKeys = new Set(route.map(keyOf));
+  const neighborsByCell = buildCellNeighborMap(route, shape);
   const swappablePairs = findSwappableHiddenPairs(route, hiddenCellKeys, boardShapeFor(shape));
   const swappableByAnchor = new Map(swappablePairs.map(([firstIndex, secondIndex]) => [
     firstIndex - 1,
@@ -274,7 +337,9 @@ export const simulateLevelPlay = ({
             current,
             currentPosition,
             route,
+            pathCellKeys,
             hiddenCellKeys,
+            neighborsByCell,
             shape,
             random,
           )

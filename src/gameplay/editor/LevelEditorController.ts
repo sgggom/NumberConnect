@@ -620,7 +620,8 @@ export class LevelEditorController {
     ): void => {
       const digitCount = String(value).length;
       const fontSize = Math.max(8, Math.min(28, point.size * (digitCount >= 3 ? 0.3 : digitCount === 2 ? 0.38 : 0.46)));
-      const radius = Math.max(11, Math.min(point.size * 0.4, digitCount * fontSize * 0.3 + 5));
+      // Keep every number circle the same size; only the font scales for wider labels.
+      const radius = Math.max(11, Math.min(24, point.size * 0.4));
       const node = createSvgElement('circle');
       node.setAttribute('cx', String(point.x));
       node.setAttribute('cy', String(point.y));

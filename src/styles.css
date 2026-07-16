@@ -49,7 +49,7 @@ body::before {
   mask-image: linear-gradient(to bottom, black, transparent 85%);
 }
 
-button, select, input { font: inherit; }
+button, select, input { font: inherit; touch-action: manipulation; }
 button, select { color: inherit; }
 button { border: 0; cursor: pointer; }
 button:focus-visible, select:focus-visible, input:focus-visible { outline: 3px solid rgba(107, 182, 255, 0.7); outline-offset: 3px; }
@@ -228,7 +228,7 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 3px s
   .bead-gallery-item { transition: none; }
 }
 
-.play-screen { height: 100%; min-height: 0; padding: 12px 14px; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; gap: 10px; overflow: hidden; }
+.play-screen { height: 100%; min-height: 0; position: relative; isolation: isolate; padding: 12px 14px; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; gap: 10px; overflow: hidden; }
 .game-header { display: grid; grid-template-columns: 52px 1fr 52px; align-items: center; width: min(100%, 920px); margin: 0 auto; }
 .game-heading { text-align: center; }
 .game-heading p { margin: 0; color: #84baf2; font-size: .64rem; font-weight: 900; letter-spacing: .18em; }
@@ -246,7 +246,28 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 3px s
 .solution-toggle[aria-pressed="true"] { color: #9af1d4; border-color: rgba(88, 208, 170, .38); background: rgba(88, 208, 170, .12); }
 .game-host { width: 100%; min-height: 0; height: 100%; margin: 0 auto; overflow: hidden; border-radius: 24px; background: rgba(4, 10, 18, .2); box-shadow: inset 0 0 0 1px rgba(255,255,255,.035); touch-action: none; }
 .game-host canvas { display: block; width: 100% !important; height: 100% !important; }
-.gesture-hint { margin: 0 auto; color: #718098; text-align: center; font-size: .72rem; font-weight: 650; }
+.play-footer { min-width: 0; display: flex; align-items: center; justify-content: center; gap: 10px; }
+.gesture-hint { min-width: 0; margin: 0; color: #718098; text-align: center; font-size: .72rem; font-weight: 650; }
+.touch-preview-toggle { min-height: 32px; flex: 0 0 auto; padding: 5px 10px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid rgba(255,255,255,.11); border-radius: 999px; color: #91a0b6; background: rgba(255,255,255,.055); font-size: .7rem; font-weight: 800; }
+.touch-preview-toggle[aria-pressed="true"] { color: #9af1d4; border-color: rgba(88,208,170,.34); background: rgba(88,208,170,.12); }
+
+.touch-preview { width: 144px; position: absolute; top: 126px; right: 24px; z-index: 12; overflow: hidden; pointer-events: none; border: 1px solid rgba(132,186,242,.35); border-radius: 18px; background: rgba(20,29,41,.94); box-shadow: 0 14px 38px rgba(0,0,0,.36), inset 0 0 0 1px rgba(255,255,255,.035); backdrop-filter: blur(10px); }
+.touch-preview.is-dragging { border-color: rgba(88,208,170,.58); box-shadow: 0 18px 44px rgba(0,0,0,.42), 0 0 0 2px rgba(88,208,170,.14); }
+.touch-preview-handle { width: 100%; min-height: 36px; padding: 6px 9px 5px 11px; display: flex; align-items: center; justify-content: space-between; gap: 8px; pointer-events: auto; touch-action: none; cursor: grab; color: var(--ink); background: linear-gradient(135deg, rgba(101,158,228,.2), rgba(199,117,232,.1)); border-bottom: 1px solid rgba(255,255,255,.08); text-align: left; }
+.touch-preview.is-dragging .touch-preview-handle { cursor: grabbing; }
+.touch-preview.is-following .touch-preview-handle { pointer-events: none; cursor: default; }
+.touch-preview-handle span { min-width: 0; display: block; }
+.touch-preview-handle small, .touch-preview-handle b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.touch-preview-handle small { color: #8ebde9; font-size: .54rem; font-weight: 900; letter-spacing: .08em; }
+.touch-preview-handle b { margin-top: 1px; font-size: .7rem; }
+.touch-preview-handle i { color: #8fa0b7; font-size: 1.05rem; font-style: normal; line-height: 1; }
+.touch-preview.is-following .touch-preview-handle i { opacity: .4; }
+.touch-preview-board { height: 116px; position: relative; overflow: hidden; background: radial-gradient(circle at 50% 48%, rgba(101,158,228,.12), transparent 68%); }
+.touch-preview-board > p { position: absolute; inset: 0; margin: 0; display: grid; place-items: center; padding: 16px; color: #7f8da2; text-align: center; font-size: .66rem; font-weight: 750; line-height: 1.45; }
+.touch-preview-cell { width: 28px; height: 28px; position: absolute; left: var(--preview-x); top: var(--preview-y); z-index: 1; display: grid; place-items: center; transform: translate(-50%, -50%); border: 2px solid rgba(217,225,236,.88); border-radius: 50%; color: #172033; background: #f7f9fc; box-shadow: 0 4px 9px rgba(0,0,0,.22); font-size: .68rem; font-weight: 900; line-height: 1; }
+.touch-preview-cell.is-hidden { border-color: rgba(199,117,232,.58); color: transparent; background: rgba(118,80,184,.76); }
+.touch-preview-cell.is-center { z-index: 2; border-color: #ffdf70; background: #f2c241; box-shadow: 0 0 0 3px rgba(242,194,65,.22), 0 5px 11px rgba(0,0,0,.28); }
+.touch-preview-cell.is-center.is-hidden { background: #7650b8; }
 
 .result-overlay { position: absolute; inset: 0; z-index: 20; display: grid; place-items: end center; padding: 24px; background: linear-gradient(transparent 25%, rgba(6, 10, 16, .86)); }
 .result-card { width: min(100%, 480px); padding: 26px; text-align: center; border: 1px solid var(--line); border-radius: 26px; background: rgba(27, 37, 50, .96); box-shadow: var(--shadow); animation: result-in .34s ease-out both; }
@@ -312,4 +333,11 @@ input[type="range"] { width: 100%; accent-color: var(--green); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
   .lobby-ambient-halo { animation: none; }
+}
+
+@media (max-width: 360px) {
+  .touch-preview { width: 132px; }
+  .touch-preview-board { height: 106px; }
+  .touch-preview-cell { width: 25px; height: 25px; font-size: .62rem; }
+  .gesture-hint { font-size: .66rem; }
 }

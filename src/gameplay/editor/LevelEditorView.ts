@@ -1,4 +1,4 @@
-const LEVEL_EDITOR_VIEW_VERSION = '6';
+const LEVEL_EDITOR_VIEW_VERSION = '7';
 
 export const mountLevelEditorView = (host: HTMLElement): void => {
   const hasCurrentView = host.dataset.editorViewVersion === LEVEL_EDITOR_VIEW_VERSION
@@ -60,7 +60,7 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
             </div>
             <button id="editor-simulate-button" class="button button--secondary button--small" type="button" disabled>开始模拟</button>
           </div>
-          <p class="editor-simulation-rule">每 0.5 秒前进一格；分叉时向后预判两步，排除死路或不满足数字间距的选项，再优先靠近数值相近的显示数字，并列才随机。</p>
+          <p class="editor-simulation-rule">每 0.5 秒前进一格；分叉时向后预判两步，排除死路、数字间距不符或会让剩余格子断开的选项，再优先靠近数值相近的显示数字，并列才随机。</p>
           <div id="editor-simulation-summary" class="editor-simulation-summary" hidden>
             <div><span>总步数</span><strong id="editor-simulation-total-steps">0</strong></div>
             <div><span>错误次数</span><strong id="editor-simulation-error-count">0</strong></div>
