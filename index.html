@@ -111,7 +111,13 @@
             <i aria-hidden="true">⠿</i>
           </button>
           <div id="touch-preview-board" class="touch-preview-board" role="img" aria-label="按住棋盘数字查看周围">
-            <p>按住棋盘中的数字</p>
+            <svg id="touch-preview-lines" class="touch-preview-lines" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+              <g id="touch-preview-path-lines"></g>
+              <line id="touch-preview-pointer-line" class="touch-preview-pointer-line" hidden></line>
+              <circle id="touch-preview-pointer-dot" class="touch-preview-pointer-dot" r="2.5" hidden></circle>
+            </svg>
+            <div id="touch-preview-cells" class="touch-preview-cells" aria-hidden="true"></div>
+            <p id="touch-preview-hint" class="touch-preview-hint">按住棋盘中的数字</p>
           </div>
         </aside>
         <footer class="play-footer">

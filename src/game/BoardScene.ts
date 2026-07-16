@@ -26,6 +26,7 @@ interface BoardView {
   pointerLine: Phaser.GameObjects.Graphics;
   cells: Map<string, CellView>;
   radius: number;
+  step: number;
   centerX: number;
   centerY: number;
   panelWidth: number;
@@ -509,6 +510,7 @@ export class BoardScene extends Phaser.Scene {
       pointerLine,
       cells,
       radius,
+      step,
       centerX,
       centerY,
       panelWidth,
@@ -645,7 +647,11 @@ export class BoardScene extends Phaser.Scene {
   }
 
   private emitNeighborhoodPreview(index: number, pointer: Phaser.Input.Pointer): void {
-    if (!this.session || !this.connection) return;
+    if (!this.session || !this.connection || !this.view) return;
+    const centerCell = this.session.level.solutionPath[index];
+    const centerView = centerCell ? this.view.cells.get(cellKey(centerCell)) : undefined;
+    const localX = pointer.x - this.view.root.x;
+    const localY = pointer.y - this.view.root.y;
     const canvasBounds = this.sys.game.canvas.getBoundingClientRect();
     const clientX = canvasBounds.left + (pointer.x / Math.max(1, this.scale.width)) * canvasBounds.width;
     const clientY = canvasBounds.top + (pointer.y / Math.max(1, this.scale.height)) * canvasBounds.height;
@@ -656,6 +662,14 @@ export class BoardScene extends Phaser.Scene {
       (candidateIndex) => this.connection?.displayNumber(candidateIndex) ?? candidateIndex + 1,
       clientX,
       clientY,
+      {
+        connectedNodePairs: this.connection.connectedNodePairs(),
+        pointer: centerView ? {
+          fromIndex: this.connection.activeIndex ?? index,
+          offsetX: (localX - centerView.x) / this.view.step,
+          offsetY: (localY - centerView.y) / this.view.step,
+        } : null,
+      },
     );
     if (!preview) return;
     this.neighborhoodPreviewIndex = index;

@@ -79,6 +79,11 @@ class NumberConnectApp {
   private readonly solutionToggleLabel = query<HTMLElement>('#solution-toggle-label');
   private readonly touchPreview = query<HTMLElement>('#touch-preview');
   private readonly touchPreviewBoard = query<HTMLElement>('#touch-preview-board');
+  private readonly touchPreviewCells = query<HTMLElement>('#touch-preview-cells');
+  private readonly touchPreviewHint = query<HTMLElement>('#touch-preview-hint');
+  private readonly touchPreviewPathLines = query<SVGGElement>('#touch-preview-path-lines');
+  private readonly touchPreviewPointerLine = query<SVGLineElement>('#touch-preview-pointer-line');
+  private readonly touchPreviewPointerDot = query<SVGCircleElement>('#touch-preview-pointer-dot');
   private readonly touchPreviewTitle = query<HTMLElement>('#touch-preview-title');
   private readonly touchPreviewDragHandle = query<HTMLButtonElement>('#touch-preview-drag-handle');
   private readonly touchPreviewToggle = query<HTMLButtonElement>('#touch-preview-toggle');
@@ -143,6 +148,11 @@ class NumberConnectApp {
   private activeNeighborhoodPreview: BoardNeighborhoodPreview | null = null;
   private manualTouchPreviewPosition?: { left: number; top: number };
   private touchPreviewDrag?: { pointerId: number; offsetX: number; offsetY: number };
+  private readonly touchPreviewCellNodes = new Map<number, HTMLElement>();
+  private readonly touchPreviewPathLineNodes = new Map<string, SVGLineElement>();
+  private touchPreviewTargetPosition?: { left: number; top: number };
+  private touchPreviewRenderedPosition?: { left: number; top: number };
+  private touchPreviewPositionFrame?: number;
 
   private readonly boardScene = new BoardScene();
   private readonly game: Phaser.Game;
@@ -289,6 +299,7 @@ class NumberConnectApp {
   private renderTouchPreviewState(): void {
     const enabled = this.settings.touchPreviewEnabled;
     const followsPointer = this.settings.touchPreviewFollowsPointer;
+    if (!enabled || !followsPointer) this.cancelTouchPreviewPositionAnimation();
     this.touchPreview.hidden = !enabled;
     this.touchPreview.classList.toggle('is-following', followsPointer);
     this.touchPreviewDragHandle.setAttribute('aria-disabled', String(followsPointer));
@@ -308,28 +319,124 @@ class NumberConnectApp {
     this.touchPreviewBoard.classList.toggle('is-active', preview !== null);
     if (!preview) {
       this.touchPreviewTitle.textContent = '按住数字';
-      const hint = document.createElement('p');
-      hint.textContent = '按住棋盘中的数字';
-      this.touchPreviewBoard.replaceChildren(hint);
+      this.touchPreviewHint.hidden = false;
+      this.touchPreviewCells.replaceChildren();
+      this.touchPreviewCellNodes.clear();
+      this.touchPreviewPathLines.replaceChildren();
+      this.touchPreviewPathLineNodes.clear();
+      this.touchPreviewPointerLine.hidden = true;
+      this.touchPreviewPointerDot.hidden = true;
       this.touchPreviewBoard.setAttribute('aria-label', '按住棋盘数字查看周围');
       return;
     }
 
+    this.touchPreviewHint.hidden = true;
     const maxOffsetX = Math.max(1, ...preview.cells.map((cell) => Math.abs(cell.offsetX)));
     const maxOffsetY = Math.max(1, ...preview.cells.map((cell) => Math.abs(cell.offsetY)));
-    const nodes = preview.cells.map((previewCell) => {
-      const cell = document.createElement('span');
+    const offsetPercent = (offset: number, maximum: number): number => (
+      50 + (Math.max(-maximum * 1.12, Math.min(maximum * 1.12, offset)) / maximum) * 34
+    );
+    const positions = new Map<number, { x: number; y: number }>();
+
+    preview.cells.forEach((previewCell) => {
+      const position = {
+        x: offsetPercent(previewCell.offsetX, maxOffsetX),
+        y: offsetPercent(previewCell.offsetY, maxOffsetY),
+      };
+      positions.set(previewCell.index, position);
+      let cell = this.touchPreviewCellNodes.get(previewCell.index);
+      const created = cell === undefined;
+      if (!cell) {
+        cell = document.createElement('span');
+        this.touchPreviewCellNodes.set(previewCell.index, cell);
+        this.touchPreviewCells.append(cell);
+      }
       cell.className = [
         'touch-preview-cell',
         previewCell.value === null ? 'is-hidden' : '',
         previewCell.center ? 'is-center' : '',
       ].filter(Boolean).join(' ');
-      cell.style.setProperty('--preview-x', `${50 + (previewCell.offsetX / maxOffsetX) * 34}%`);
-      cell.style.setProperty('--preview-y', `${50 + (previewCell.offsetY / maxOffsetY) * 34}%`);
+      if (created) cell.classList.add('is-entering');
+      cell.style.setProperty('--preview-x', `${position.x}%`);
+      cell.style.setProperty('--preview-y', `${position.y}%`);
       cell.textContent = previewCell.value === null ? '' : String(previewCell.value);
       cell.setAttribute('aria-hidden', 'true');
-      return cell;
+      if (created) requestAnimationFrame(() => cell?.classList.remove('is-entering'));
     });
+
+    this.touchPreviewCellNodes.forEach((cell, index) => {
+      if (positions.has(index)) return;
+      cell.classList.add('is-leaving');
+      window.setTimeout(() => {
+        if (!cell.classList.contains('is-leaving')) return;
+        cell.remove();
+        if (this.touchPreviewCellNodes.get(index) === cell) this.touchPreviewCellNodes.delete(index);
+      }, 130);
+    });
+
+    const activeLineKeys = new Set<string>();
+    preview.lines.forEach(({ fromIndex, toIndex }) => {
+      const from = positions.get(fromIndex);
+      const to = positions.get(toIndex);
+      if (!from || !to) return;
+      const key = fromIndex < toIndex ? `${fromIndex}:${toIndex}` : `${toIndex}:${fromIndex}`;
+      activeLineKeys.add(key);
+      let line = this.touchPreviewPathLineNodes.get(key);
+      const created = line === undefined;
+      if (!line) {
+        line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.classList.add('touch-preview-path-line');
+        this.touchPreviewPathLineNodes.set(key, line);
+        this.touchPreviewPathLines.append(line);
+      }
+      line.classList.remove('is-leaving');
+      if (created) line.classList.add('is-entering');
+      line.style.setProperty('--preview-x1', `${from.x}%`);
+      line.style.setProperty('--preview-y1', `${from.y}%`);
+      line.style.setProperty('--preview-x2', `${to.x}%`);
+      line.style.setProperty('--preview-y2', `${to.y}%`);
+      line.setAttribute('x1', String(from.x));
+      line.setAttribute('y1', String(from.y));
+      line.setAttribute('x2', String(to.x));
+      line.setAttribute('y2', String(to.y));
+      if (created) requestAnimationFrame(() => line?.classList.remove('is-entering'));
+    });
+
+    this.touchPreviewPathLineNodes.forEach((line, key) => {
+      if (activeLineKeys.has(key)) return;
+      line.classList.add('is-leaving');
+      window.setTimeout(() => {
+        if (!line.classList.contains('is-leaving')) return;
+        line.remove();
+        if (this.touchPreviewPathLineNodes.get(key) === line) this.touchPreviewPathLineNodes.delete(key);
+      }, 130);
+    });
+
+    const pointerStart = preview.pointer ? positions.get(preview.pointer.fromIndex) : undefined;
+    if (preview.pointer && pointerStart) {
+      const pointerEnd = {
+        x: offsetPercent(preview.pointer.offsetX, maxOffsetX),
+        y: offsetPercent(preview.pointer.offsetY, maxOffsetY),
+      };
+      this.touchPreviewPointerLine.hidden = false;
+      this.touchPreviewPointerDot.hidden = false;
+      this.touchPreviewPointerLine.style.setProperty('--preview-x1', `${pointerStart.x}%`);
+      this.touchPreviewPointerLine.style.setProperty('--preview-y1', `${pointerStart.y}%`);
+      this.touchPreviewPointerLine.style.setProperty('--preview-x2', `${pointerEnd.x}%`);
+      this.touchPreviewPointerLine.style.setProperty('--preview-y2', `${pointerEnd.y}%`);
+      this.touchPreviewPointerDot.style.setProperty('--preview-pointer-x', `${pointerEnd.x}%`);
+      this.touchPreviewPointerDot.style.setProperty('--preview-pointer-y', `${pointerEnd.y}%`);
+      this.touchPreviewPointerLine.setAttribute('x1', String(pointerStart.x));
+      this.touchPreviewPointerLine.setAttribute('y1', String(pointerStart.y));
+      this.touchPreviewPointerLine.setAttribute('x2', String(pointerEnd.x));
+      this.touchPreviewPointerLine.setAttribute('y2', String(pointerEnd.y));
+      this.touchPreviewPointerDot.setAttribute('cx', String(pointerEnd.x));
+      this.touchPreviewPointerDot.setAttribute('cy', String(pointerEnd.y));
+    } else {
+      this.touchPreviewPointerLine.hidden = true;
+      this.touchPreviewPointerDot.hidden = true;
+    }
+
     const center = preview.cells.find((cell) => cell.center);
     const visibleValues = preview.cells
       .flatMap((cell) => cell.value === null ? [] : [cell.value])
@@ -337,7 +444,6 @@ class NumberConnectApp {
     this.touchPreviewTitle.textContent = center?.value === null || center === undefined
       ? '当前隐藏格'
       : `当前 ${center.value}`;
-    this.touchPreviewBoard.replaceChildren(...nodes);
     this.touchPreviewBoard.setAttribute(
       'aria-label',
       visibleValues ? `当前格及周围可见数字：${visibleValues}` : '当前格及周围均为隐藏数字',
@@ -376,10 +482,16 @@ class NumberConnectApp {
       clientX - playBounds.left - this.touchPreview.offsetWidth * 0.5,
       clientY - playBounds.top - this.touchPreview.offsetHeight - 24,
       false,
+      true,
     );
   }
 
-  private placeTouchPreview(left: number, top: number, rememberManualPosition: boolean): void {
+  private placeTouchPreview(
+    left: number,
+    top: number,
+    rememberManualPosition: boolean,
+    smooth = false,
+  ): void {
     const playBounds = this.playScreen.getBoundingClientRect();
     const margin = 8;
     const maxLeft = Math.max(margin, playBounds.width - this.touchPreview.offsetWidth - margin);
@@ -388,10 +500,55 @@ class NumberConnectApp {
       left: Math.min(maxLeft, Math.max(margin, left)),
       top: Math.min(maxTop, Math.max(margin, top)),
     };
-    this.touchPreview.style.right = 'auto';
-    this.touchPreview.style.left = `${nextPosition.left}px`;
-    this.touchPreview.style.top = `${nextPosition.top}px`;
     if (rememberManualPosition) this.manualTouchPreviewPosition = nextPosition;
+    if (smooth && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      this.touchPreviewTargetPosition = nextPosition;
+      if (!this.touchPreviewRenderedPosition) {
+        const bounds = this.touchPreview.getBoundingClientRect();
+        this.touchPreviewRenderedPosition = {
+          left: bounds.left - playBounds.left,
+          top: bounds.top - playBounds.top,
+        };
+      }
+      if (this.touchPreviewPositionFrame === undefined) {
+        this.touchPreviewPositionFrame = requestAnimationFrame(() => this.animateTouchPreviewPosition());
+      }
+      return;
+    }
+    this.cancelTouchPreviewPositionAnimation();
+    this.applyTouchPreviewPosition(nextPosition);
+  }
+
+  private animateTouchPreviewPosition(): void {
+    this.touchPreviewPositionFrame = undefined;
+    const target = this.touchPreviewTargetPosition;
+    if (!target) return;
+    const current = this.touchPreviewRenderedPosition ?? target;
+    const deltaX = target.left - current.left;
+    const deltaY = target.top - current.top;
+    if (Math.abs(deltaX) < 0.35 && Math.abs(deltaY) < 0.35) {
+      this.applyTouchPreviewPosition(target);
+      this.touchPreviewTargetPosition = undefined;
+      return;
+    }
+    this.applyTouchPreviewPosition({
+      left: current.left + deltaX * 0.34,
+      top: current.top + deltaY * 0.34,
+    });
+    this.touchPreviewPositionFrame = requestAnimationFrame(() => this.animateTouchPreviewPosition());
+  }
+
+  private applyTouchPreviewPosition(position: { left: number; top: number }): void {
+    this.touchPreview.style.right = 'auto';
+    this.touchPreview.style.left = `${position.left}px`;
+    this.touchPreview.style.top = `${position.top}px`;
+    this.touchPreviewRenderedPosition = position;
+  }
+
+  private cancelTouchPreviewPositionAnimation(): void {
+    if (this.touchPreviewPositionFrame !== undefined) cancelAnimationFrame(this.touchPreviewPositionFrame);
+    this.touchPreviewPositionFrame = undefined;
+    this.touchPreviewTargetPosition = undefined;
   }
 
   private bindSettings(): void {
