@@ -1,5 +1,14 @@
+const LEVEL_EDITOR_VIEW_VERSION = '6';
+
 export const mountLevelEditorView = (host: HTMLElement): void => {
-  if (host.childElementCount > 0) return;
+  const hasCurrentView = host.dataset.editorViewVersion === LEVEL_EDITOR_VIEW_VERSION
+    && host.querySelector('#editor-simulate-button') !== null;
+  if (host.childElementCount > 0 && hasCurrentView) return;
+
+  // Vite can hot-reload the controller while keeping the editor's old DOM.
+  // Rebuild stale markup so newly added controls are available before binding.
+  host.replaceChildren();
+  host.dataset.editorViewVersion = LEVEL_EDITOR_VIEW_VERSION;
   host.setAttribute('aria-labelledby', 'editor-title');
   host.innerHTML = `
     <header class="editor-header">
@@ -12,40 +21,62 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
     </header>
 
     <div class="editor-layout">
-      <aside class="editor-info-panel" aria-labelledby="editor-info-title">
-        <div class="editor-info-panel__header">
-          <p class="eyebrow">LEVEL INSIGHTS</p>
-          <h3 id="editor-info-title">关卡信息</h3>
-        </div>
-        <div class="editor-info-size">
-          <span>关卡尺寸</span>
-          <strong id="editor-info-size">8 × 8</strong>
-        </div>
-        <section class="editor-info-group" aria-labelledby="editor-info-path-title">
-          <h4 id="editor-info-path-title">路径结构</h4>
-          <dl>
-            <div><dt>直角拐弯次数</dt><dd id="editor-info-right-turns">0</dd></div>
-            <div><dt>锐角拐弯次数</dt><dd id="editor-info-acute-turns">0</dd></div>
-            <div><dt>钝角拐弯次数</dt><dd id="editor-info-obtuse-turns">0</dd></div>
-            <div><dt>直线次数</dt><dd id="editor-info-straight">0</dd></div>
-            <div><dt>路径交叉次数</dt><dd id="editor-info-crossings">0</dd></div>
-          </dl>
+      <div class="editor-insights-column">
+        <aside class="editor-info-panel" aria-labelledby="editor-info-title">
+          <div class="editor-info-panel__header">
+            <p class="eyebrow">LEVEL INSIGHTS</p>
+            <h3 id="editor-info-title">关卡信息</h3>
+          </div>
+          <div class="editor-info-size">
+            <span>关卡尺寸</span>
+            <strong id="editor-info-size">8 × 8</strong>
+          </div>
+          <section class="editor-info-group" aria-labelledby="editor-info-path-title">
+            <h4 id="editor-info-path-title">路径结构</h4>
+            <dl>
+              <div><dt>直角拐弯次数</dt><dd id="editor-info-right-turns">0</dd></div>
+              <div><dt>锐角拐弯次数</dt><dd id="editor-info-acute-turns">0</dd></div>
+              <div><dt>钝角拐弯次数</dt><dd id="editor-info-obtuse-turns">0</dd></div>
+              <div><dt>直线次数</dt><dd id="editor-info-straight">0</dd></div>
+              <div><dt>路径交叉次数</dt><dd id="editor-info-crossings">0</dd></div>
+            </dl>
+          </section>
+          <section class="editor-info-group" aria-labelledby="editor-info-visibility-title">
+            <h4 id="editor-info-visibility-title">显示与隐藏</h4>
+            <dl>
+              <div class="editor-info-row--stacked"><dt>隐藏占比</dt><dd id="editor-info-hidden-ratio">0% · 0/0</dd></div>
+              <div><dt>最长隐藏长度</dt><dd id="editor-info-hidden-run">0</dd></div>
+              <div><dt>最长显示长度</dt><dd id="editor-info-visible-run">0</dd></div>
+            </dl>
+          </section>
+          <p class="editor-info-note">统计以当前数字路径为准，并随编辑实时更新。</p>
+        </aside>
+
+        <section class="editor-simulation-panel" aria-labelledby="editor-simulation-title">
+          <div class="editor-simulation-panel__header">
+            <div>
+              <p class="eyebrow">PLAYER MODEL</p>
+              <h3 id="editor-simulation-title">模拟关卡</h3>
+            </div>
+            <button id="editor-simulate-button" class="button button--secondary button--small" type="button" disabled>开始模拟</button>
+          </div>
+          <p class="editor-simulation-rule">每 0.5 秒前进一格；分叉时向后预判两步，排除死路或不满足数字间距的选项，再优先靠近数值相近的显示数字，并列才随机。</p>
+          <div id="editor-simulation-summary" class="editor-simulation-summary" hidden>
+            <div><span>总步数</span><strong id="editor-simulation-total-steps">0</strong></div>
+            <div><span>错误次数</span><strong id="editor-simulation-error-count">0</strong></div>
+          </div>
+          <div id="editor-simulation-results" class="editor-simulation-results" aria-live="polite">
+            <p class="editor-simulation-empty">生成完整路径后，即可模拟一次玩家体验。</p>
+          </div>
         </section>
-        <section class="editor-info-group" aria-labelledby="editor-info-visibility-title">
-          <h4 id="editor-info-visibility-title">显示与隐藏</h4>
-          <dl>
-            <div class="editor-info-row--stacked"><dt>隐藏占比</dt><dd id="editor-info-hidden-ratio">0% · 0/0</dd></div>
-            <div><dt>最长隐藏长度</dt><dd id="editor-info-hidden-run">0</dd></div>
-            <div><dt>最长显示长度</dt><dd id="editor-info-visible-run">0</dd></div>
-          </dl>
-        </section>
-        <p class="editor-info-note">统计以当前数字路径为准，并随编辑实时更新。</p>
-      </aside>
+      </div>
 
       <section class="editor-board-pane" aria-label="棋盘区域">
         <div class="editor-workspace">
           <div id="editor-preview" class="editor-preview" aria-hidden="true"></div>
           <svg id="editor-path-lines" class="editor-path-lines" aria-hidden="true"></svg>
+          <div id="editor-simulation-mask" class="editor-simulation-mask" aria-hidden="true"></div>
+          <svg id="editor-simulation-overlay" class="editor-simulation-overlay" aria-hidden="true"></svg>
           <div id="editor-grid" class="editor-grid" aria-label="关卡绘制网格"></div>
         </div>
         <p id="editor-status" class="editor-status" aria-live="polite">在网格上拖动，绘制需要一笔覆盖的形状。</p>

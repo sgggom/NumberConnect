@@ -1,4 +1,5 @@
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
+const STACKED_LAYOUT_BREAKPOINT = 1500;
 
 export class EditorSplitPaneController {
   private readonly minimumSidebarWidth = 260;
@@ -24,7 +25,7 @@ export class EditorSplitPaneController {
   }
 
   private startDrag(event: PointerEvent): void {
-    if (window.matchMedia('(max-width: 1180px)').matches) return;
+    if (window.matchMedia(`(max-width: ${STACKED_LAYOUT_BREAKPOINT}px)`).matches) return;
     event.preventDefault();
     this.activePointerId = event.pointerId;
     this.separator.setPointerCapture(event.pointerId);
