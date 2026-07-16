@@ -263,8 +263,34 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 3px s
 .touch-preview-handle i { color: #8fa0b7; font-size: 1.05rem; font-style: normal; line-height: 1; }
 .touch-preview.is-following .touch-preview-handle i { opacity: .4; }
 .touch-preview-board { height: 116px; position: relative; overflow: hidden; background: radial-gradient(circle at 50% 48%, rgba(101,158,228,.12), transparent 68%); }
-.touch-preview-board > p { position: absolute; inset: 0; margin: 0; display: grid; place-items: center; padding: 16px; color: #7f8da2; text-align: center; font-size: .66rem; font-weight: 750; line-height: 1.45; }
-.touch-preview-cell { width: 28px; height: 28px; position: absolute; left: var(--preview-x); top: var(--preview-y); z-index: 1; display: grid; place-items: center; transform: translate(-50%, -50%); border: 2px solid rgba(217,225,236,.88); border-radius: 50%; color: #172033; background: #f7f9fc; box-shadow: 0 4px 9px rgba(0,0,0,.22); font-size: .68rem; font-weight: 900; line-height: 1; }
+.touch-preview-lines, .touch-preview-cells { position: absolute; inset: 0; width: 100%; height: 100%; }
+.touch-preview-lines { z-index: 0; overflow: visible; pointer-events: none; }
+.touch-preview-cells { z-index: 1; pointer-events: none; }
+.touch-preview-hint { position: absolute; inset: 0; z-index: 2; margin: 0; display: grid; place-items: center; padding: 16px; color: #7f8da2; text-align: center; font-size: .66rem; font-weight: 750; line-height: 1.45; }
+.touch-preview-path-line, .touch-preview-pointer-line {
+  x1: var(--preview-x1);
+  y1: var(--preview-y1);
+  x2: var(--preview-x2);
+  y2: var(--preview-y2);
+  fill: none;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+  transition: x1 .1s linear, y1 .1s linear, x2 .1s linear, y2 .1s linear, opacity .1s ease;
+}
+.touch-preview-path-line { stroke: #ffe08a; stroke-width: 5; opacity: .9; }
+.touch-preview-pointer-line { stroke: #fff4c2; stroke-width: 4; opacity: .8; }
+.touch-preview-pointer-dot {
+  cx: var(--preview-pointer-x);
+  cy: var(--preview-pointer-y);
+  fill: #fff4c2;
+  stroke: rgba(23,32,51,.55);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+  transition: cx .07s linear, cy .07s linear, opacity .1s ease;
+}
+.touch-preview-path-line.is-entering, .touch-preview-path-line.is-leaving { opacity: 0; }
+.touch-preview-cell { width: 28px; height: 28px; position: absolute; left: var(--preview-x); top: var(--preview-y); z-index: 1; display: grid; place-items: center; transform: translate(-50%, -50%); border: 2px solid rgba(217,225,236,.88); border-radius: 50%; color: #172033; background: #f7f9fc; box-shadow: 0 4px 9px rgba(0,0,0,.22); font-size: .68rem; font-weight: 900; line-height: 1; opacity: 1; transition: left .11s cubic-bezier(.2,.8,.2,1), top .11s cubic-bezier(.2,.8,.2,1), opacity .1s ease, background-color .1s ease, border-color .1s ease, box-shadow .1s ease; }
+.touch-preview-cell.is-entering, .touch-preview-cell.is-leaving { opacity: 0; }
 .touch-preview-cell.is-hidden { border-color: rgba(199,117,232,.58); color: transparent; background: rgba(118,80,184,.76); }
 .touch-preview-cell.is-center { z-index: 2; border-color: #ffdf70; background: #f2c241; box-shadow: 0 0 0 3px rgba(242,194,65,.22), 0 5px 11px rgba(0,0,0,.28); }
 .touch-preview-cell.is-center.is-hidden { background: #7650b8; }

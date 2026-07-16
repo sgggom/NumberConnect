@@ -49,16 +49,30 @@ export interface GameSettings {
 }
 
 export interface BoardNeighborhoodPreviewCell {
+  index: number;
   offsetX: number;
   offsetY: number;
   value: number | null;
   center: boolean;
 }
 
+export interface BoardNeighborhoodPreviewLine {
+  fromIndex: number;
+  toIndex: number;
+}
+
+export interface BoardNeighborhoodPreviewPointer {
+  fromIndex: number;
+  offsetX: number;
+  offsetY: number;
+}
+
 export interface BoardNeighborhoodPreview {
   clientX: number;
   clientY: number;
   cells: BoardNeighborhoodPreviewCell[];
+  lines: BoardNeighborhoodPreviewLine[];
+  pointer: BoardNeighborhoodPreviewPointer | null;
 }
 
 export interface EndlessStageSettings {
