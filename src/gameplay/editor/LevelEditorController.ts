@@ -17,7 +17,7 @@ import {
   renderEditorAlgorithmParameters,
   type EditorAlgorithmId,
 } from './algorithms';
-import type { EditorShape, ManualEditMode } from './types';
+import type { EditorCell, EditorShape, ManualEditMode } from './types';
 
 interface LevelEditorControllerOptions {
   getLevels: () => LevelData[];
@@ -43,6 +43,8 @@ export class LevelEditorController {
   private imageRecognitionRun = 0;
   private isImageRecognizing = false;
   private imageRecognitionMode: ImageRecognitionMode = 'complete-level';
+  private recognitionAmbiguousCellKeys = new Set<string>();
+  private recognitionAmbiguousPathSignature?: string;
 
   public constructor(
     private readonly host: HTMLElement,
@@ -166,6 +168,7 @@ export class LevelEditorController {
 
   public open(): void {
     this.cancelPathAnimation();
+    this.clearRecognitionAmbiguity();
     this.selectedLevelId = undefined;
     this.model.reset();
     this.render();
@@ -180,6 +183,12 @@ export class LevelEditorController {
 
   private render(): void {
     const { rows, columns } = this.model.size();
+    if (
+      this.recognitionAmbiguousPathSignature !== undefined
+      && this.recognitionAmbiguousPathSignature !== this.currentPathSignature()
+    ) {
+      this.clearRecognitionAmbiguity();
+    }
     const grid = this.query<HTMLElement>('#editor-grid');
     grid.style.setProperty('--cols', String(columns));
     grid.style.setProperty('--rows', String(rows));
@@ -230,6 +239,11 @@ export class LevelEditorController {
             this.painting = false;
             this.handlePathContextAction(key);
           });
+        }
+        if (this.recognitionAmbiguousCellKeys.has(key)) {
+          button.classList.add('is-recognition-ambiguous');
+          button.setAttribute('aria-label', `${button.getAttribute('aria-label')}，OCR 结果待核对`);
+          button.title = `${button.title ? `${button.title}；` : ''}OCR 结果待核对`;
         }
         button.addEventListener('pointerdown', (event) => {
           if (!this.model.isAvailableCell(column, row)) return;
@@ -377,6 +391,7 @@ export class LevelEditorController {
     this.imageRecognitionMode = mode;
     const run = ++this.imageRecognitionRun;
     this.cancelPathAnimation();
+    if (mode !== 'hidden-layout') this.clearRecognitionAmbiguity();
     this.isImageRecognizing = true;
     this.render();
     this.setStatus('正在准备图片识别，首次使用需要加载 OCR 模型。');
@@ -387,6 +402,7 @@ export class LevelEditorController {
       };
       let error: string | null;
       let message: string;
+      let ambiguousCells: EditorCell[] = [];
       if (mode === 'hidden-layout') {
         const result = await recognizeImageHiddenLayout(image, onProgress);
         if (run !== this.imageRecognitionRun || this.host.hidden) return;
@@ -401,15 +417,24 @@ export class LevelEditorController {
           result.solutionPath,
           mode === 'initial-formation' ? result.hiddenCells : undefined,
         );
-        message = mode === 'initial-formation'
-          ? `初始阵型识别完成：${result.columns}×${result.rows}，显示 ${result.visibleCount} 格，隐藏 ${result.hiddenCells.length} 格，已补全一条可用路径。请检查后试玩或添加到列表。`
-          : `完整关卡识别完成：${result.columns}×${result.rows}，直接识别 ${result.recognizedCount} 格，路径约束补全 ${result.inferredCount} 格。请继续识别隐藏，或检查后试玩。`;
+        ambiguousCells = result.ambiguousCells;
+        if (mode === 'initial-formation') {
+          message = `初始阵型识别完成：${result.columns}×${result.rows}，显示 ${result.visibleCount} 格，隐藏 ${result.hiddenCells.length} 格，已补全一条可用路径。请检查后试玩或添加到列表。`;
+        } else if (result.ambiguousCells.length > 0) {
+          message = `完整关卡已导入：${result.columns}×${result.rows}，已自动复核 ${result.retriedCellCount} 个可疑格；仍有 ${result.ambiguousCells.length} 个格子存在多种可能，已用橙色标记，请重点核对。`;
+        } else {
+          const retryMessage = result.retriedCellCount > 0
+            ? `已自动复核 ${result.retriedCellCount} 个可疑格并排除歧义。`
+            : '';
+          message = `完整关卡识别完成：${result.columns}×${result.rows}，直接识别 ${result.recognizedCount} 格，路径约束补全 ${result.inferredCount} 格。${retryMessage}请继续识别隐藏，或检查后试玩。`;
+        }
       }
       if (error) throw new Error(error);
+      if (mode !== 'hidden-layout') this.setRecognitionAmbiguity(ambiguousCells);
       this.selectedLevelId = undefined;
       this.isImageRecognizing = false;
       this.render();
-      this.setStatus(message);
+      this.setStatus(message, false, ambiguousCells.length > 0);
     } catch (error) {
       if (run !== this.imageRecognitionRun) return;
       this.isImageRecognizing = false;
@@ -433,6 +458,9 @@ export class LevelEditorController {
     if (this.imageRecognitionMode === 'hidden-layout') {
       if (progress.phase === 'reading') return '正在识别图片中的显示格和空位…';
       return '正在将隐藏格应用到当前路径…';
+    }
+    if (progress.phase === 'retrying') {
+      return `检测到候选路径接近，正在复核可疑格… ${progress.completed}/${progress.total}`;
     }
     if (progress.phase === 'reading') return `正在逐格读取数字… ${progress.completed}/${progress.total}`;
     return '正在按数字连续性校验并补全路径…';
@@ -890,10 +918,25 @@ export class LevelEditorController {
     });
   }
 
-  private setStatus(message: string, error = false): void {
+  private currentPathSignature(): string {
+    return this.model.solutionPath.map((cell) => `${cell.x},${cell.y}`).join('|');
+  }
+
+  private clearRecognitionAmbiguity(): void {
+    this.recognitionAmbiguousCellKeys.clear();
+    this.recognitionAmbiguousPathSignature = undefined;
+  }
+
+  private setRecognitionAmbiguity(cells: ReadonlyArray<EditorCell>): void {
+    this.recognitionAmbiguousCellKeys = new Set(cells.map((cell) => `${cell.x},${cell.y}`));
+    this.recognitionAmbiguousPathSignature = cells.length > 0 ? this.currentPathSignature() : undefined;
+  }
+
+  private setStatus(message: string, error = false, warning = false): void {
     const status = this.query<HTMLElement>('#editor-status');
     status.textContent = message;
     status.classList.toggle('is-error', error);
+    status.classList.toggle('is-warning', !error && warning);
   }
 
   private query<T extends Element>(selector: string): T {

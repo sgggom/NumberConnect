@@ -10,6 +10,10 @@ import {
 import { calculateSquareGridLayout } from './editorGridLayout';
 import {
   createThreeEightVisualEvidence,
+  differingCandidatePathCellIndexes,
+  differingPathCellIndexes,
+  fuseRetryOcrEvidence,
+  prioritizeAmbiguousRetryCellIndexes,
   solveInitialFormationPath,
   solveRecognizedGridPath,
 } from './ImageLevelRecognizer';
@@ -212,6 +216,60 @@ describe('level editor path generation', () => {
       Array.from({ length: 49 }, (_, index) => index + 1),
     );
     expect(solved?.scoreGap).toBeGreaterThan(5);
+  });
+
+  it('locates and prioritizes low-confidence cells shared by competing OCR paths', () => {
+    const primaryPath = [0, 1, 2, 3];
+    const alternativePath = [0, 2, 1, 3];
+    const evidence = [
+      [{ value: 1, confidence: 95 }],
+      [{ value: 2, confidence: 88 }],
+      [],
+      [{ value: 4, confidence: 95 }],
+    ];
+
+    expect(differingPathCellIndexes(primaryPath, alternativePath)).toEqual([1, 2]);
+    expect(differingCandidatePathCellIndexes(
+      primaryPath,
+      [alternativePath, [1, 0, 2, 3]],
+    )).toEqual([0, 1, 2]);
+    expect(prioritizeAmbiguousRetryCellIndexes(
+      primaryPath,
+      [alternativePath],
+      evidence,
+      1,
+    )).toEqual([2]);
+  });
+
+  it('keeps several close OCR paths available for targeted retries', () => {
+    const solved = solveRecognizedGridPath(
+      3,
+      3,
+      Array.from({ length: 9 }, () => []),
+      256,
+    );
+
+    expect(solved?.scoreGap).toBe(0);
+    expect(solved?.alternativePaths.length).toBeGreaterThan(1);
+    expect(solved?.alternativePaths.every(({ path }) => (
+      path.some((cellIndex, index) => cellIndex !== solved!.path[index])
+    ))).toBe(true);
+  });
+
+  it('boosts retry evidence when independent OCR variants agree', () => {
+    const fused = fuseRetryOcrEvidence(
+      new Map([[8, 78]]),
+      [
+        { value: 3, confidence: 62 },
+        { value: 3, confidence: 68 },
+        { value: 8, confidence: 50 },
+      ],
+    );
+
+    expect(fused).toEqual([
+      { value: 3, confidence: 80 },
+      { value: 8, confidence: 90 },
+    ]);
   });
 
   it('uses glyph topology to disambiguate swapped 3 and 8 OCR evidence', () => {

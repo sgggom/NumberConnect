@@ -26,7 +26,7 @@ interface OcrBlockLike {
 }
 
 export interface ImageRecognitionProgress {
-  phase: 'loading' | 'locating' | 'reading' | 'solving';
+  phase: 'loading' | 'locating' | 'reading' | 'retrying' | 'solving';
   completed: number;
   total: number;
   rows?: number;
@@ -42,6 +42,8 @@ export interface RecognizedImageLevel {
   recognizedCount: number;
   inferredCount: number;
   scoreGap: number;
+  retriedCellCount: number;
+  ambiguousCells: EditorCell[];
 }
 
 export interface RecognizedImageHiddenLayout {
@@ -92,6 +94,7 @@ interface BeamState {
 
 interface SolvedGridPath {
   path: number[];
+  alternativePaths: Array<{ path: number[]; score: number }>;
   score: number;
   scoreGap: number;
 }
@@ -110,6 +113,12 @@ const BEAM_WIDTH = 12000;
 const STRONG_WHOLE_IMAGE_EVIDENCE_FLOOR = 20;
 const SINGLE_DIGIT_MAX_ASPECT_RATIO = 1.1;
 const VISUAL_DISAMBIGUATION_CONFIDENCE = 90;
+const AMBIGUOUS_PATH_SCORE_GAP = 5;
+const RETRY_COLOR_DISTANCE_THRESHOLDS = [36, 64] as const;
+const RETRY_EVIDENCE_AGREEMENT_BONUS = 12;
+const MAX_AMBIGUOUS_RETRY_CELLS = 36;
+const AMBIGUOUS_PATH_CANDIDATE_LIMIT = 6;
+const AMBIGUOUS_PATH_REVIEW_SCORE_GAP = 10;
 
 let activeWorkerProgress: ProgressListener | undefined;
 let workerPromise: Promise<Awaited<ReturnType<typeof import('tesseract.js')['createWorker']>>> | undefined;
@@ -404,6 +413,7 @@ const createOcrTile = (
   cell: GridCellOcr,
   horizontalSpacing: number,
   verticalSpacing: number,
+  colorDistanceThreshold = 48,
 ): OcrTileResult => {
   const cropWidth = Math.max(22, Math.round(horizontalSpacing * 0.61));
   const cropHeight = Math.max(20, Math.round(verticalSpacing * 0.5));
@@ -418,7 +428,7 @@ const createOcrTile = (
     const greenDistance = image.data[index + 1] - backgroundGreen;
     const blueDistance = image.data[index + 2] - backgroundBlue;
     const distance = Math.hypot(redDistance, greenDistance, blueDistance);
-    const value = distance > 48 ? 0 : 255;
+    const value = distance > colorDistanceThreshold ? 0 : 255;
     image.data[index] = value;
     image.data[index + 1] = value;
     image.data[index + 2] = value;
@@ -664,9 +674,16 @@ export const solveRecognizedGridPath = (
   }
 
   const best = beam[0];
-  const runnerUp = beam.find((state) => state.path.some((cell, index) => cell !== best.path[index]));
+  const alternativeStates: BeamState[] = [];
+  for (const state of beam.slice(1)) {
+    if (!state.path.some((cell, index) => cell !== best.path[index])) continue;
+    alternativeStates.push(state);
+    if (alternativeStates.length >= AMBIGUOUS_PATH_CANDIDATE_LIMIT) break;
+  }
+  const runnerUp = alternativeStates[0];
   return {
     path: best.path,
+    alternativePaths: alternativeStates.map(({ path, score }) => ({ path, score })),
     score: best.score,
     scoreGap: runnerUp ? best.score - runnerUp.score : Number.POSITIVE_INFINITY,
   };
@@ -675,6 +692,89 @@ export const solveRecognizedGridPath = (
 const evidenceArrays = (cells: GridCellOcr[]): GridOcrEvidence[][] => cells.map((cell) => (
   [...cell.evidence].map(([value, confidence]) => ({ value, confidence }))
 ));
+
+export const differingPathCellIndexes = (
+  primaryPath: ReadonlyArray<number>,
+  alternativePath?: ReadonlyArray<number>,
+): number[] => {
+  if (!alternativePath || primaryPath.length !== alternativePath.length) return [];
+  const indexes = new Set<number>();
+  primaryPath.forEach((cellIndex, valueIndex) => {
+    const alternativeCellIndex = alternativePath[valueIndex];
+    if (cellIndex === alternativeCellIndex) return;
+    indexes.add(cellIndex);
+    indexes.add(alternativeCellIndex);
+  });
+  return [...indexes].sort((left, right) => left - right);
+};
+
+export const differingCandidatePathCellIndexes = (
+  primaryPath: ReadonlyArray<number>,
+  alternativePaths: ReadonlyArray<ReadonlyArray<number>>,
+): number[] => {
+  const indexes = new Set<number>();
+  alternativePaths.forEach((alternativePath) => {
+    differingPathCellIndexes(primaryPath, alternativePath).forEach((cellIndex) => indexes.add(cellIndex));
+  });
+  return [...indexes].sort((left, right) => left - right);
+};
+
+export const prioritizeAmbiguousRetryCellIndexes = (
+  primaryPath: ReadonlyArray<number>,
+  alternativePaths: ReadonlyArray<ReadonlyArray<number>>,
+  cellEvidence: ReadonlyArray<ReadonlyArray<GridOcrEvidence>>,
+  maxCells = MAX_AMBIGUOUS_RETRY_CELLS,
+): number[] => {
+  const candidateValuesByCell = new Map<number, Set<number>>();
+  [primaryPath, ...alternativePaths].forEach((path) => {
+    path.forEach((cellIndex, valueIndex) => {
+      const values = candidateValuesByCell.get(cellIndex) ?? new Set<number>();
+      values.add(valueIndex + 1);
+      candidateValuesByCell.set(cellIndex, values);
+    });
+  });
+  return differingCandidatePathCellIndexes(primaryPath, alternativePaths)
+    .map((cellIndex) => {
+      const evidence = new Map<number, number>();
+      (cellEvidence[cellIndex] ?? []).forEach(({ value, confidence }) => {
+        evidence.set(value, Math.max(evidence.get(value) ?? 0, confidence));
+      });
+      const strongestConfidence = Math.max(0, ...evidence.values());
+      const candidateConfidences = [...(candidateValuesByCell.get(cellIndex) ?? [])]
+        .map((value) => evidence.get(value) ?? 0)
+        .sort((left, right) => right - left);
+      const candidateGap = (candidateConfidences[0] ?? 0) - (candidateConfidences[1] ?? 0);
+      return {
+        cellIndex,
+        priority: strongestConfidence + candidateGap * 0.5,
+      };
+    })
+    .sort((left, right) => left.priority - right.priority || left.cellIndex - right.cellIndex)
+    .slice(0, Math.max(0, maxCells))
+    .map(({ cellIndex }) => cellIndex);
+};
+
+export const fuseRetryOcrEvidence = (
+  existingEvidence: ReadonlyMap<number, number>,
+  retryObservations: ReadonlyArray<GridOcrEvidence>,
+): GridOcrEvidence[] => {
+  const observationsByValue = new Map<number, number[]>();
+  retryObservations.forEach(({ value, confidence }) => {
+    if (!Number.isFinite(value) || value < 1 || !Number.isFinite(confidence)) return;
+    const observations = observationsByValue.get(value) ?? [];
+    observations.push(confidence);
+    observationsByValue.set(value, observations);
+  });
+  return [...observationsByValue].map(([value, observations]) => {
+    const existingConfidence = existingEvidence.get(value) ?? 0;
+    const agreementCount = observations.length + (existingConfidence > 0 ? 1 : 0);
+    return {
+      value,
+      confidence: Math.max(existingConfidence, ...observations)
+        + Math.max(0, agreementCount - 1) * RETRY_EVIDENCE_AGREEMENT_BONUS,
+    };
+  });
+};
 
 const formationClues = (
   cells: ReadonlyArray<GridCellOcr>,
@@ -865,6 +965,84 @@ export const recognizeImageLevel = async (
     const previous = layout.cells[cellIndex].evidence.get(value) ?? 0;
     layout.cells[cellIndex].evidence.set(value, Math.max(previous, confidence));
   };
+  const retryAmbiguousCells = async (solved: SolvedGridPath): Promise<number> => {
+    const retryLimit = Math.min(
+      MAX_AMBIGUOUS_RETRY_CELLS,
+      Math.max(12, Math.ceil(layout.cells.length * 0.25)),
+    );
+    const retryIndexes = prioritizeAmbiguousRetryCellIndexes(
+      solved.path,
+      solved.alternativePaths.map(({ path }) => path),
+      evidenceArrays(layout.cells),
+      retryLimit,
+    );
+    if (retryIndexes.length === 0) return 0;
+
+    await worker.setParameters({
+      tessedit_char_whitelist: '0123456789',
+      tessedit_pageseg_mode: tesseract.PSM.SINGLE_WORD,
+    });
+    const attemptsPerCell = 1 + RETRY_COLOR_DISTANCE_THRESHOLDS.length;
+    const retryTotal = retryIndexes.length * attemptsPerCell;
+    let retryCompleted = 0;
+    for (const cellIndex of retryIndexes) {
+      const observations: GridOcrEvidence[] = [];
+      const addObservation = (value: number, confidence: number): void => {
+        if (value < 1 || value > layout.cells.length || !Number.isFinite(confidence)) return;
+        observations.push({ value, confidence });
+      };
+      onProgress({
+        phase: 'retrying',
+        completed: retryCompleted,
+        total: retryTotal,
+        rows: layout.rows,
+        columns: layout.columns,
+      });
+      const rawResult = await worker.recognize(source, { rectangle: tiles[cellIndex].rawRectangle });
+      addObservation(Number(rawResult.data.text.replace(/\D/g, '')), rawResult.data.confidence);
+      retryCompleted += 1;
+
+      for (const threshold of RETRY_COLOR_DISTANCE_THRESHOLDS) {
+        onProgress({
+          phase: 'retrying',
+          completed: retryCompleted,
+          total: retryTotal,
+          rows: layout.rows,
+          columns: layout.columns,
+        });
+        const retryTile = createOcrTile(
+          source,
+          layout.cells[cellIndex],
+          layout.horizontalSpacing,
+          layout.verticalSpacing,
+          threshold,
+        );
+        const retryResult = await worker.recognize(retryTile.canvas);
+        const value = Number(retryResult.data.text.replace(/\D/g, ''));
+        addObservation(value, retryResult.data.confidence);
+        const visualEvidence = createThreeEightVisualEvidence(
+          value,
+          retryResult.data.confidence,
+          retryTile.enclosedHoleCount,
+          retryTile.foregroundAspectRatio,
+          layout.cells[cellIndex].evidence,
+        );
+        if (visualEvidence) observations.push(visualEvidence);
+        retryCompleted += 1;
+      }
+
+      fuseRetryOcrEvidence(layout.cells[cellIndex].evidence, observations)
+        .forEach(({ value, confidence }) => recordEvidence(cellIndex, value, confidence));
+    }
+    onProgress({
+      phase: 'retrying',
+      completed: retryTotal,
+      total: retryTotal,
+      rows: layout.rows,
+      columns: layout.columns,
+    });
+    return retryIndexes.length;
+  };
 
   await worker.setParameters({
     tessedit_char_whitelist: '0123456789',
@@ -909,6 +1087,8 @@ export const recognizeImageLevel = async (
   onProgress({ phase: 'solving', completed: 0, total: 1 });
   let solvedPath: number[];
   let scoreGap: number;
+  let retriedCellCount = 0;
+  let ambiguousCellIndexes: number[] = [];
   if (mode === 'initial-formation') {
     if (visibleCellIndexes.size < 2 || visibleCellIndexes.size >= layout.cells.length) {
       throw new Error('没有检测到有效的初始阵型空白格，请确认图片中同时包含显示数字和空白圆格。');
@@ -922,10 +1102,26 @@ export const recognizeImageLevel = async (
     solvedPath = solved.path;
     scoreGap = solved.ambiguous ? 0 : Number.POSITIVE_INFINITY;
   } else {
-    const solved = solveRecognizedGridPath(layout.rows, layout.columns, evidenceArrays(layout.cells));
+    let solved = solveRecognizedGridPath(layout.rows, layout.columns, evidenceArrays(layout.cells));
     if (!solved) throw new Error('数字之间无法组成一条覆盖全部格子的连续路径。');
+    if (Number.isFinite(solved.scoreGap) && solved.scoreGap < AMBIGUOUS_PATH_SCORE_GAP) {
+      retriedCellCount = await retryAmbiguousCells(solved);
+      if (retriedCellCount > 0) {
+        onProgress({ phase: 'solving', completed: 0, total: 1 });
+        solved = solveRecognizedGridPath(layout.rows, layout.columns, evidenceArrays(layout.cells));
+        if (!solved) throw new Error('数字之间无法组成一条覆盖全部格子的连续路径。');
+      }
+    }
     solvedPath = solved.path;
     scoreGap = solved.scoreGap;
+    if (Number.isFinite(scoreGap) && scoreGap < AMBIGUOUS_PATH_SCORE_GAP) {
+      ambiguousCellIndexes = differingCandidatePathCellIndexes(
+        solved.path,
+        solved.alternativePaths
+          .filter((alternative) => solved.score - alternative.score < AMBIGUOUS_PATH_REVIEW_SCORE_GAP)
+          .map(({ path }) => path),
+      );
+    }
   }
 
   const recognizedCount = solvedPath.reduce((count, cellIndex, pathIndex) => (
@@ -938,10 +1134,6 @@ export const recognizeImageLevel = async (
     const expected = mode === 'initial-formation' ? visibleCellIndexes.size : layout.cells.length;
     throw new Error(`只可靠识别出 ${recognizedCount}/${expected} 个显示数字，请粘贴更清晰的图片。`);
   }
-  if (mode === 'complete-level' && Number.isFinite(scoreGap) && scoreGap < 5) {
-    throw new Error('图片中有多种可能的数字路径，请换用更清晰或裁剪更紧的图片。');
-  }
-
   onProgress({ phase: 'solving', completed: 1, total: 1 });
   const hiddenCellIndexes = mode === 'initial-formation'
     ? Array.from({ length: layout.cells.length }, (_, index) => index)
@@ -962,5 +1154,10 @@ export const recognizeImageLevel = async (
     recognizedCount,
     inferredCount: layout.cells.length - recognizedCount,
     scoreGap,
+    retriedCellCount,
+    ambiguousCells: ambiguousCellIndexes.map((cellIndex) => ({
+      x: cellIndex % layout.columns,
+      y: Math.floor(cellIndex / layout.columns),
+    })),
   };
 };
