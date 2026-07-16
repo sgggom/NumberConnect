@@ -12,10 +12,28 @@ export interface ConnectionHint {
 }
 
 type Direction = -1 | 1;
+type SwapChoice = 'authored' | 'swapped';
+
+interface SwapSegment {
+  firstIndex: number;
+  secondIndex: number;
+  choice?: SwapChoice;
+}
+
+interface TransitionOption {
+  direction: Direction;
+  segment?: SwapSegment;
+  choice?: SwapChoice;
+}
+
+const edgeKey = (left: number, right: number): string =>
+  left < right ? `${left}:${right}` : `${right}:${left}`;
 
 export class ConnectionProgress {
-  private readonly connectedEdges = new Set<number>();
+  private readonly connectedEdges = new Map<string, readonly [number, number]>();
+  private readonly connectedNodes = new Set<number>();
   private readonly visibleIndices: Set<number>;
+  private readonly swapSegments: SwapSegment[];
   private active?: number;
   private previous?: number;
   private direction?: Direction;
@@ -23,8 +41,17 @@ export class ConnectionProgress {
   public constructor(
     private readonly totalNodes: number,
     initiallyVisible: Iterable<number>,
+    swappableHiddenPairs: Iterable<readonly [number, number]> = [],
   ) {
     this.visibleIndices = new Set(initiallyVisible);
+    this.swapSegments = [...swappableHiddenPairs]
+      .filter(([firstIndex, secondIndex]) => (
+        Number.isInteger(firstIndex)
+        && secondIndex === firstIndex + 1
+        && firstIndex > 0
+        && secondIndex < totalNodes - 1
+      ))
+      .map(([firstIndex, secondIndex]) => ({ firstIndex, secondIndex }));
   }
 
   public get activeIndex(): number | undefined { return this.active; }
@@ -52,23 +79,32 @@ export class ConnectionProgress {
     if (index === this.previous) return { type: 'ignored' };
 
     const targetAlreadyConnected = this.isNodeConnected(index);
-    const difference = index - this.active;
-    if (Math.abs(difference) !== 1) {
+    const options = this.transitionOptions(this.active, index);
+    if (options.length === 0) {
       if (targetAlreadyConnected) return { type: 'ignored' };
       return { type: 'wrong', index, reason: 'non-consecutive' };
     }
-    const edgeIndex = Math.min(this.active, index);
-    if (this.connectedEdges.has(edgeIndex)) return { type: 'ignored' };
+    const connectionKey = edgeKey(this.active, index);
+    if (this.connectedEdges.has(connectionKey)) return { type: 'ignored' };
 
-    const nextDirection = Math.sign(difference) as Direction;
-    if (this.direction !== undefined && nextDirection !== this.direction) {
+    const validOptions = this.direction === undefined
+      ? options
+      : options.filter(({ direction }) => direction === this.direction);
+    if (validOptions.length === 0) {
       if (targetAlreadyConnected) return { type: 'ignored' };
       return { type: 'wrong', index, reason: 'direction-change' };
     }
 
-    this.direction = nextDirection;
+    const selected = validOptions[0];
+    if (selected.segment && selected.choice) selected.segment.choice = selected.choice;
+    this.direction = selected.direction;
     const from = this.active;
-    this.connectedEdges.add(edgeIndex);
+    this.connectedEdges.set(
+      connectionKey,
+      from < index ? [from, index] : [index, from],
+    );
+    this.connectedNodes.add(from);
+    this.connectedNodes.add(index);
     this.visibleIndices.add(from);
     this.visibleIndices.add(index);
     this.previous = from;
@@ -83,21 +119,34 @@ export class ConnectionProgress {
   }
 
   public isVisible(index: number): boolean { return this.visibleIndices.has(index); }
-  public isEdgeConnected(index: number): boolean { return this.connectedEdges.has(index); }
+  public isEdgeConnected(index: number): boolean {
+    return this.connectedEdges.has(edgeKey(index, index + 1));
+  }
+  public connectedNodePairs(): Array<readonly [number, number]> {
+    return [...this.connectedEdges.values()];
+  }
+  public displayNumber(index: number): number {
+    const position = this.orderedIndices().indexOf(index);
+    return position < 0 ? index + 1 : position + 1;
+  }
   public isNodeConnected(index: number): boolean {
-    return this.connectedEdges.has(index - 1) || this.connectedEdges.has(index);
+    return this.connectedNodes.has(index);
   }
 
   public suggestedNextHint(): ConnectionHint | undefined {
     if (this.active === undefined) return undefined;
     const directions: Direction[] = this.direction === undefined ? [1, -1] : [this.direction];
+    const orderedIndices = this.orderedIndices();
+    const activePosition = orderedIndices.indexOf(this.active);
+    if (activePosition < 0) return undefined;
     for (const direction of directions) {
-      let index = this.active + direction;
-      while (this.inBounds(index)) {
+      let position = activePosition + direction;
+      while (this.inBounds(position)) {
+        const index = orderedIndices[position];
         if (this.visibleIndices.has(index)) {
-          return { index, consecutive: Math.abs(index - this.active) === 1 };
+          return { index, consecutive: Math.abs(position - activePosition) === 1 };
         }
-        index += direction;
+        position += direction;
       }
     }
     return undefined;
@@ -109,5 +158,63 @@ export class ConnectionProgress {
 
   private inBounds(index: number): boolean {
     return Number.isInteger(index) && index >= 0 && index < this.totalNodes;
+  }
+
+  private transitionOptions(from: number, to: number): TransitionOption[] {
+    const connectionKey = edgeKey(from, to);
+
+    for (const segment of this.swapSegments) {
+      const authoredOrder = [
+        segment.firstIndex - 1,
+        segment.firstIndex,
+        segment.secondIndex,
+        segment.secondIndex + 1,
+      ];
+      const swappedOrder = [
+        segment.firstIndex - 1,
+        segment.secondIndex,
+        segment.firstIndex,
+        segment.secondIndex + 1,
+      ];
+      const controlledEdges = new Set([
+        ...this.orderEdgeKeys(authoredOrder),
+        ...this.orderEdgeKeys(swappedOrder),
+      ]);
+      if (!controlledEdges.has(connectionKey)) continue;
+
+      const choices: SwapChoice[] = segment.choice
+        ? [segment.choice]
+        : ['authored', 'swapped'];
+      return choices.flatMap((choice): TransitionOption[] => {
+        const order = choice === 'authored' ? authoredOrder : swappedOrder;
+        const fromPosition = order.indexOf(from);
+        const toPosition = order.indexOf(to);
+        if (fromPosition < 0 || Math.abs(toPosition - fromPosition) !== 1) return [];
+        return [{
+          direction: Math.sign(toPosition - fromPosition) as Direction,
+          segment,
+          choice,
+        }];
+      });
+    }
+
+    if (Math.abs(to - from) !== 1) return [];
+    return [{ direction: Math.sign(to - from) as Direction }];
+  }
+
+  private orderEdgeKeys(order: ReadonlyArray<number>): string[] {
+    return order.slice(0, -1).map((value, index) => edgeKey(value, order[index + 1]));
+  }
+
+  private orderedIndices(): number[] {
+    const result = Array.from({ length: this.totalNodes }, (_, index) => index);
+    this.swapSegments.forEach((segment) => {
+      if (segment.choice !== 'swapped') return;
+      [result[segment.firstIndex], result[segment.secondIndex]] = [
+        result[segment.secondIndex],
+        result[segment.firstIndex],
+      ];
+    });
+    return result;
   }
 }

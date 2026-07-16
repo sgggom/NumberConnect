@@ -47,6 +47,7 @@
 .editor-cell.is-generating-head { box-shadow: 0 0 0 3px rgba(215,255,243,.7), 0 0 18px rgba(88,208,170,.85); }
 .editor-cell.is-manual-hidden { border-color: rgba(196,151,255,.9); background: #684d91; box-shadow: inset 0 0 0 2px rgba(196,151,255,.28); }
 .editor-cell.is-manual-hidden::after { content: "隐"; position: absolute; top: 3px; right: 4px; color: #f1dcff; font-size: clamp(7px, .65vw, 10px); font-weight: 900; line-height: 1; }
+.editor-cell.is-recognition-ambiguous { border-color: #f0b84b; box-shadow: inset 0 0 0 2px rgba(240,184,75,.52), 0 0 12px rgba(240,184,75,.42); }
 .editor-grid[data-shape="diamond"] { transform: rotate(45deg) scale(.68); }
 .editor-grid[data-shape="diamond"] .editor-cell { border-radius: 14%; }
 .editor-grid[data-shape="hex"] { padding-right: var(--hex-right-padding); padding-bottom: var(--hex-bottom-padding); gap: 0; }
@@ -54,6 +55,8 @@
 .editor-grid[data-shape="hex"] .editor-cell.is-column-odd { transform: translateY(50%); }
 .editor-grid .editor-cell.is-unavailable { visibility: hidden; pointer-events: none; }
 .editor-status { min-height: 24px; margin: 0; text-align: center; color: var(--muted); font-size: .82rem; font-weight: 700; }
+.editor-status.is-error { color: #ff9eaa; }
+.editor-status.is-warning { color: #f0c66e; }
 .editor-sidebar { min-height: 0; padding: 20px; display: flex; flex-direction: column; gap: 18px; overflow-y: auto; border: 1px solid var(--line); border-radius: 22px; background: var(--panel); }
 .editor-sidebar__heading { display: flex; align-items: end; justify-content: space-between; gap: 12px; }
 .editor-sidebar__heading h3 { margin: 4px 0 0; font-size: 1.15rem; }

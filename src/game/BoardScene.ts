@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { beadClusterPose, beadRewardTiming } from '../gameplay/beads/beadRewardAnimation';
 import { ConnectionProgress, type ConnectionAction, type ConnectionFailure } from './connectionProgress';
+import { findSwappableHiddenPairs } from './hiddenSwap';
 import { projectCell } from './topology';
 import { BoardShape, backgroundUrl, cellKey, type BoardSessionInput, type Cell } from './types';
 
@@ -393,7 +394,16 @@ export class BoardScene extends Phaser.Scene {
       .map((cell, index) => ({ index, hidden: session.hiddenCells.has(cellKey(cell)) }))
       .filter(({ index, hidden }) => !hidden || index === 0 || index === lastIndex)
       .map(({ index }) => index);
-    return new ConnectionProgress(session.level.solutionPath.length, visibleIndices);
+    const swappableHiddenPairs = findSwappableHiddenPairs(
+      session.level.solutionPath,
+      session.hiddenCells,
+      session.level.boardShape,
+    );
+    return new ConnectionProgress(
+      session.level.solutionPath.length,
+      visibleIndices,
+      swappableHiddenPairs,
+    );
   }
 
   private buildView(session: BoardSessionInput, offsetY: number): BoardView {
@@ -510,10 +520,9 @@ export class BoardScene extends Phaser.Scene {
     this.view.lines.lineStyle(Math.max(5, this.view.radius * 0.28), COLORS.line, 0.9);
     this.view.lines.beginPath();
 
-    for (let index = 0; index < path.length - 1; index += 1) {
-      if (!this.connection?.isEdgeConnected(index)) continue;
-      const from = this.view.cells.get(cellKey(path[index]));
-      const to = this.view.cells.get(cellKey(path[index + 1]));
+    for (const [fromIndex, toIndex] of this.connection?.connectedNodePairs() ?? []) {
+      const from = this.view.cells.get(cellKey(path[fromIndex]));
+      const to = this.view.cells.get(cellKey(path[toIndex]));
       if (!from || !to) continue;
       this.view.lines.moveTo(from.x, from.y);
       this.view.lines.lineTo(to.x, to.y);
@@ -533,6 +542,7 @@ export class BoardScene extends Phaser.Scene {
       const revealedHidden = this.solutionRevealed
         && this.connection?.isVisible(cellView.index) !== true
         && this.session!.hiddenCells.has(key);
+      cellView.label.setText(String(this.connection?.displayNumber(cellView.index) ?? cellView.index + 1));
       cellView.circle.setFillStyle(selected ? COLORS.selected : COLORS.tile, 1);
       cellView.circle.setStrokeStyle(2, selected ? COLORS.selectedBorder : COLORS.tileBorder, 1);
       cellView.label.setVisible(numberVisible);

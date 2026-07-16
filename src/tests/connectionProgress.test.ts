@@ -21,6 +21,39 @@ describe('connection progress', () => {
     expect(progress.isEdgeConnected(2)).toBe(true);
   });
 
+  it('accepts either order for a configured pair of swappable hidden numbers', () => {
+    const authored = new ConnectionProgress(4, [0, 3], [[1, 2]]);
+    authored.begin(0);
+    expect(authored.extend(1)).toMatchObject({ type: 'advanced' });
+    expect(authored.extend(2)).toMatchObject({ type: 'advanced' });
+    expect(authored.extend(3)).toMatchObject({ type: 'advanced', complete: true });
+
+    const swapped = new ConnectionProgress(4, [0, 3], [[1, 2]]);
+    swapped.begin(0);
+    expect(swapped.extend(2)).toMatchObject({ type: 'advanced' });
+    expect(swapped.displayNumber(2)).toBe(2);
+    expect(swapped.displayNumber(1)).toBe(3);
+    expect(swapped.extend(1)).toMatchObject({ type: 'advanced' });
+    expect(swapped.extend(3)).toMatchObject({ type: 'advanced', complete: true });
+    expect(swapped.connectedNodePairs()).toEqual([[0, 2], [1, 2], [1, 3]]);
+  });
+
+  it('accepts the swapped hidden pair when connecting backward', () => {
+    const progress = new ConnectionProgress(4, [0, 3], [[1, 2]]);
+
+    progress.begin(3);
+    expect(progress.extend(1)).toMatchObject({ type: 'advanced' });
+    expect(progress.extend(2)).toMatchObject({ type: 'advanced' });
+    expect(progress.extend(0)).toMatchObject({ type: 'advanced', complete: true });
+  });
+
+  it('does not allow a two-position jump unless the hidden pair is swappable', () => {
+    const progress = new ConnectionProgress(4, [0, 3]);
+
+    progress.begin(0);
+    expect(progress.extend(2)).toMatchObject({ type: 'wrong', reason: 'non-consecutive' });
+  });
+
   it('rejects hidden starting points and skipped numbers', () => {
     const progress = new ConnectionProgress(5, [0, 2, 4]);
 
