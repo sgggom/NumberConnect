@@ -83,7 +83,26 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
               <option value="hex">六边形蜂窝</option>
             </select>
           </label>
-          <div class="stepper"><span>尺寸</span><button id="editor-size-minus">−</button><b id="editor-size-value">8 × 8</b><button id="editor-size-plus">＋</button></div>
+          <div id="editor-uniform-size" class="stepper">
+            <span>尺寸</span>
+            <button id="editor-size-minus" type="button" aria-label="减小尺寸">−</button>
+            <b id="editor-size-value">8 × 8</b>
+            <button id="editor-size-plus" type="button" aria-label="增大尺寸">＋</button>
+          </div>
+          <div id="editor-rectangle-size" class="editor-size-pair" hidden>
+            <div class="stepper">
+              <span>宽度</span>
+              <button id="editor-width-minus" type="button" aria-label="减小宽度">−</button>
+              <b id="editor-width-value">5</b>
+              <button id="editor-width-plus" type="button" aria-label="增大宽度">＋</button>
+            </div>
+            <div class="stepper">
+              <span>高度</span>
+              <button id="editor-height-minus" type="button" aria-label="减小高度">−</button>
+              <b id="editor-height-value">8</b>
+              <button id="editor-height-plus" type="button" aria-label="增大高度">＋</button>
+            </div>
+          </div>
           <div class="editor-image-import">
             <div class="editor-image-import__group">
               <div class="editor-image-import__heading"><b>精准识别</b><small>先完整关卡，再识别隐藏</small></div>

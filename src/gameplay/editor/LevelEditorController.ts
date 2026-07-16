@@ -94,6 +94,22 @@ export class LevelEditorController {
       this.model.changeSize(1);
       this.render();
     });
+    this.query('#editor-width-minus').addEventListener('click', () => {
+      this.model.changeSize(-1, 'columns');
+      this.render();
+    });
+    this.query('#editor-width-plus').addEventListener('click', () => {
+      this.model.changeSize(1, 'columns');
+      this.render();
+    });
+    this.query('#editor-height-minus').addEventListener('click', () => {
+      this.model.changeSize(-1, 'rows');
+      this.render();
+    });
+    this.query('#editor-height-plus').addEventListener('click', () => {
+      this.model.changeSize(1, 'rows');
+      this.render();
+    });
     this.query('#editor-clear-button').addEventListener('click', () => {
       this.model.clear();
       this.render();
@@ -258,8 +274,19 @@ export class LevelEditorController {
     this.query<HTMLButtonElement>('#editor-clear-button').disabled = this.isPathAnimating;
     this.query<HTMLButtonElement>('#editor-generate-path-button').disabled = this.model.manualEditMode !== 'off' || this.isPathAnimating;
     this.query<HTMLButtonElement>('#editor-undo-delete-button').disabled = !this.model.canUndoDeletion || this.isPathAnimating;
-    this.query<HTMLButtonElement>('#editor-size-minus').disabled = this.isPathAnimating;
-    this.query<HTMLButtonElement>('#editor-size-plus').disabled = this.isPathAnimating;
+    const sizeLimits = this.model.sizeLimits();
+    const isRectangle = this.model.shape === 'rectangle';
+    this.query<HTMLElement>('#editor-uniform-size').hidden = isRectangle;
+    this.query<HTMLElement>('#editor-rectangle-size').hidden = !isRectangle;
+    this.query('#editor-size-value').textContent = `${columns} × ${rows}`;
+    this.query('#editor-width-value').textContent = String(columns);
+    this.query('#editor-height-value').textContent = String(rows);
+    this.query<HTMLButtonElement>('#editor-size-minus').disabled = this.isPathAnimating || rows <= sizeLimits.min;
+    this.query<HTMLButtonElement>('#editor-size-plus').disabled = this.isPathAnimating || rows >= sizeLimits.max;
+    this.query<HTMLButtonElement>('#editor-width-minus').disabled = this.isPathAnimating || columns <= sizeLimits.min;
+    this.query<HTMLButtonElement>('#editor-width-plus').disabled = this.isPathAnimating || columns >= sizeLimits.max;
+    this.query<HTMLButtonElement>('#editor-height-minus').disabled = this.isPathAnimating || rows <= sizeLimits.min;
+    this.query<HTMLButtonElement>('#editor-height-plus').disabled = this.isPathAnimating || rows >= sizeLimits.max;
     const imageLevelButton = this.query<HTMLButtonElement>('#editor-image-level-button');
     const imageHiddenButton = this.query<HTMLButtonElement>('#editor-image-hidden-button');
     const imageFormationButton = this.query<HTMLButtonElement>('#editor-image-formation-button');
@@ -280,7 +307,6 @@ export class LevelEditorController {
       activeButton.classList.add('is-loading');
       activeButton.textContent = '识别中…';
     }
-    this.query('#editor-size-value').textContent = `${columns} × ${rows}`;
     const nextId = this.options.getNextLevelId();
     this.query('#editor-save-id').textContent = `下次保存：${nextId}`;
     this.query<HTMLElement>('#editor-preview').style.backgroundImage = `url('./level-backgrounds/${this.model.previewName(nextId)}.png')`;
@@ -394,7 +420,11 @@ export class LevelEditorController {
 
   private imageRecognitionProgressMessage(progress: ImageRecognitionProgress): string {
     if (progress.phase === 'loading') return `正在加载 OCR 模型… ${progress.completed}%`;
-    if (progress.phase === 'locating') return '正在定位棋盘行列…';
+    if (progress.phase === 'locating') {
+      return progress.rows !== undefined && progress.columns !== undefined
+        ? `已识别棋盘尺寸：${progress.columns}×${progress.rows}，准备读取格子内容…`
+        : '正在先识别棋盘尺寸…';
+    }
     if (this.imageRecognitionMode === 'hidden-layout') {
       if (progress.phase === 'reading') return '正在识别图片中的显示格和空位…';
       return '正在将隐藏格应用到当前路径…';
@@ -774,8 +804,11 @@ export class LevelEditorController {
     }
     points.forEach((point, index) => {
       const value = index + 1;
-      const fontSize = Math.max(18, Math.min(36, point!.size * 0.56));
-      const nodeRadius = Math.max(fontSize * 0.72, String(value).length * fontSize * 0.32 + 5);
+      const digitCount = String(value).length;
+      const fontScale = digitCount >= 3 ? 0.34 : digitCount === 2 ? 0.46 : 0.56;
+      const fontSize = Math.max(7, Math.min(36, point!.size * fontScale));
+      const labelRadius = digitCount * fontSize * 0.3 + 3;
+      const nodeRadius = Math.max(fontSize * 0.68, Math.min(point!.size * 0.46, labelRadius));
       const node = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
       node.setAttribute('cx', String(point!.x));
       node.setAttribute('cy', String(point!.y));

@@ -10,18 +10,20 @@ import {
   type EditorAlgorithmSelection,
 } from './algorithms';
 import { areEditorCellsNeighbors } from './findEditorPath';
-import type { EditorCell, EditorShape, EditorSize, ManualEditMode } from './types';
-
-const RECTANGLE_SIZES: ReadonlyArray<Readonly<EditorCell>> = [
-  { x: 3, y: 5 },
-  { x: 4, y: 6 },
-  { x: 5, y: 8 },
-  { x: 6, y: 10 },
-  { x: 7, y: 12 },
-];
+import {
+  MAX_EDITOR_SIZE,
+  MIN_EDITOR_SIZE,
+  type EditorCell,
+  type EditorShape,
+  type EditorSize,
+  type EditorSizeAxis,
+  type ManualEditMode,
+} from './types';
 
 const BACKGROUNDS = ['apple', 'banana', 'orange', 'grapes', 'basket', 'pineapple'] as const;
-const wrap = (value: number, min: number, max: number): number => value < min ? max : value > max ? min : value;
+const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value));
+const MAX_DIAMOND_SIZE = 8;
+const MAX_HEX_SIZE = 10;
 const keyOf = (cell: EditorCell): string => `${cell.x},${cell.y}`;
 const createGenerationSeed = (): number => {
   if (globalThis.crypto?.getRandomValues) {
@@ -48,7 +50,8 @@ export class LevelEditorModel {
   private squareSize = 8;
   private diamondSize = 6;
   private hexSize = 6;
-  private rectangleIndex = 2;
+  private rectangleColumns = 5;
+  private rectangleRows = 8;
   private readonly paintedCells = new Set<string>();
   private path: EditorCell[] = [];
   private algorithm: EditorAlgorithmSelection = createEditorAlgorithm(DEFAULT_EDITOR_ALGORITHM_ID);
@@ -108,17 +111,17 @@ export class LevelEditorModel {
     this.deletionUndo = undefined;
     if (level.boardShape === BoardShape.Diamond) {
       this.currentShape = 'diamond';
-      this.diamondSize = Math.max(level.rows, level.columns);
+      this.diamondSize = clamp(Math.max(level.rows, level.columns), MIN_EDITOR_SIZE, MAX_DIAMOND_SIZE);
     } else if (level.boardShape === BoardShape.Rectangle) {
       this.currentShape = 'rectangle';
-      const exactIndex = RECTANGLE_SIZES.findIndex((size) => size.x === level.columns && size.y === level.rows);
-      this.rectangleIndex = exactIndex >= 0 ? exactIndex : 0;
+      this.rectangleColumns = clamp(level.columns, MIN_EDITOR_SIZE, MAX_EDITOR_SIZE);
+      this.rectangleRows = clamp(level.rows, MIN_EDITOR_SIZE, MAX_EDITOR_SIZE);
     } else if (level.boardShape === BoardShape.Hex) {
       this.currentShape = 'hex';
-      this.hexSize = Math.max(level.rows, level.columns);
+      this.hexSize = clamp(Math.max(level.rows, level.columns), MIN_EDITOR_SIZE, MAX_HEX_SIZE);
     } else {
       this.currentShape = 'square';
-      this.squareSize = Math.max(level.rows, level.columns);
+      this.squareSize = clamp(Math.max(level.rows, level.columns), MIN_EDITOR_SIZE, MAX_EDITOR_SIZE);
     }
 
     this.paintedCells.clear();
@@ -141,15 +144,17 @@ export class LevelEditorModel {
     path: ReadonlyArray<EditorCell>,
     hiddenCells?: ReadonlyArray<EditorCell>,
   ): string | null {
-    let shape: EditorShape;
-    if (rows === columns && rows >= 3 && rows <= 10) {
-      shape = 'square';
-    } else {
-      const rectangleIndex = RECTANGLE_SIZES.findIndex((size) => size.x === columns && size.y === rows);
-      if (rectangleIndex < 0) return `编辑器暂不支持 ${columns}×${rows} 的图片棋盘。`;
-      shape = 'rectangle';
-      this.rectangleIndex = rectangleIndex;
+    if (
+      !Number.isInteger(rows)
+      || !Number.isInteger(columns)
+      || rows < MIN_EDITOR_SIZE
+      || rows > MAX_EDITOR_SIZE
+      || columns < MIN_EDITOR_SIZE
+      || columns > MAX_EDITOR_SIZE
+    ) {
+      return `编辑器支持的图片棋盘尺寸为每边 ${MIN_EDITOR_SIZE}–${MAX_EDITOR_SIZE} 格，当前为 ${columns}×${rows}。`;
     }
+    const shape: EditorShape = rows === columns ? 'square' : 'rectangle';
     if (path.length !== rows * columns) return '图片路径没有覆盖全部格子。';
     const keys = new Set(path.map(keyOf));
     if (keys.size !== path.length) return '图片路径中存在重复格子。';
@@ -167,7 +172,12 @@ export class LevelEditorModel {
 
     this.deletionUndo = undefined;
     this.currentShape = shape;
-    if (shape === 'square') this.squareSize = rows;
+    if (shape === 'square') {
+      this.squareSize = rows;
+    } else {
+      this.rectangleColumns = columns;
+      this.rectangleRows = rows;
+    }
     this.paintedCells.clear();
     path.forEach((cell) => this.paintedCells.add(keyOf(cell)));
     this.path = path.map((cell) => ({ ...cell }));
@@ -241,8 +251,7 @@ export class LevelEditorModel {
 
   public size(): EditorSize {
     if (this.currentShape === 'rectangle') {
-      const size = RECTANGLE_SIZES[this.rectangleIndex];
-      return { rows: size.y, columns: size.x };
+      return { rows: this.rectangleRows, columns: this.rectangleColumns };
     }
     const size = this.currentShape === 'diamond'
       ? this.diamondSize
@@ -252,15 +261,28 @@ export class LevelEditorModel {
     return { rows: size, columns: size };
   }
 
-  public changeSize(direction: number): void {
+  public sizeLimits(): { min: number; max: number } {
+    return {
+      min: MIN_EDITOR_SIZE,
+      max: this.currentShape === 'diamond'
+        ? MAX_DIAMOND_SIZE
+        : this.currentShape === 'hex'
+          ? MAX_HEX_SIZE
+          : MAX_EDITOR_SIZE,
+    };
+  }
+
+  public changeSize(direction: number, axis?: EditorSizeAxis): void {
+    const { min, max } = this.sizeLimits();
     if (this.currentShape === 'rectangle') {
-      this.rectangleIndex = wrap(this.rectangleIndex + direction, 0, RECTANGLE_SIZES.length - 1);
+      if (axis !== 'rows') this.rectangleColumns = clamp(this.rectangleColumns + direction, min, max);
+      if (axis !== 'columns') this.rectangleRows = clamp(this.rectangleRows + direction, min, max);
     } else if (this.currentShape === 'diamond') {
-      this.diamondSize = wrap(this.diamondSize + direction, 3, 8);
+      this.diamondSize = clamp(this.diamondSize + direction, min, max);
     } else if (this.currentShape === 'hex') {
-      this.hexSize = wrap(this.hexSize + direction, 3, 10);
+      this.hexSize = clamp(this.hexSize + direction, min, max);
     } else {
-      this.squareSize = wrap(this.squareSize + direction, 3, 10);
+      this.squareSize = clamp(this.squareSize + direction, min, max);
     }
     this.trimCells();
     this.invalidatePath();

@@ -80,6 +80,8 @@
 .editor-image-import .button.is-loading::before { content: ""; width: 13px; height: 13px; margin-right: 7px; display: inline-block; vertical-align: -2px; border: 2px solid rgba(255,255,255,.3); border-top-color: currentColor; border-radius: 50%; animation: editor-image-spin .75s linear infinite; }
 .editor-board-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
 .editor-board-actions .button { min-width: 0; padding-inline: 7px; }
+.editor-size-pair { display: grid; gap: 6px; }
+.editor-size-pair[hidden], .stepper[hidden] { display: none; }
 .stepper { width: 100%; display: grid; grid-template-columns: 1fr 42px 90px 42px; gap: 6px; align-items: center; }
 .stepper span { color: var(--muted); font-size: .72rem; font-weight: 800; }
 .stepper button { height: 42px; border-radius: 10px; color: var(--ink); background: rgba(255,255,255,.09); font-size: 1.15rem; }

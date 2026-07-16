@@ -1,4 +1,8 @@
-import type { EditorCell } from './types';
+import {
+  MAX_EDITOR_SIZE,
+  MIN_EDITOR_SIZE,
+  type EditorCell,
+} from './types';
 
 interface OcrBox {
   x0: number;
@@ -25,6 +29,8 @@ export interface ImageRecognitionProgress {
   phase: 'loading' | 'locating' | 'reading' | 'solving';
   completed: number;
   total: number;
+  rows?: number;
+  columns?: number;
 }
 
 export interface RecognizedImageLevel {
@@ -96,8 +102,8 @@ export interface InitialFormationPathSolution {
 
 type ProgressListener = (progress: ImageRecognitionProgress) => void;
 
-const MIN_GRID_SIZE = 3;
-const MAX_GRID_SIZE = 10;
+const MIN_GRID_SIZE = MIN_EDITOR_SIZE;
+const MAX_GRID_SIZE = MAX_EDITOR_SIZE;
 const OCR_CONFIDENCE_FLOOR = 45;
 const BEAM_WIDTH = 12000;
 
@@ -719,7 +725,13 @@ const locateImageGrid = async (
     extendToImageEdges ? source.width : undefined,
     extendToImageEdges ? source.height : undefined,
   );
-  onProgress({ phase: 'locating', completed: 1, total: 1 });
+  onProgress({
+    phase: 'locating',
+    completed: 1,
+    total: 1,
+    rows: layout.rows,
+    columns: layout.columns,
+  });
 
   const tiles = layout.cells.map((cell) => createOcrTile(
     source,
@@ -770,7 +782,7 @@ export const recognizeImageLevel = async (
     layout,
     tiles,
     visibleCellIndexes,
-  } = await locateImageGrid(blob, mode === 'initial-formation', onProgress);
+  } = await locateImageGrid(blob, true, onProgress);
   const processedIndexes = mode === 'initial-formation'
     ? [...visibleCellIndexes]
     : layout.cells.map((_, index) => index);

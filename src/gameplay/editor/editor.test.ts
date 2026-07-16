@@ -11,6 +11,15 @@ import { solveInitialFormationPath, solveRecognizedGridPath } from './ImageLevel
 import { calculateEditorLevelMetrics } from './levelMetrics';
 import { LevelEditorModel } from './LevelEditorModel';
 
+const serpentinePath = (rows: number, columns: number) => Array.from(
+  { length: rows * columns },
+  (_, index) => {
+    const y = Math.floor(index / columns);
+    const offset = index % columns;
+    return { x: y % 2 === 0 ? offset : columns - offset - 1, y };
+  },
+);
+
 describe('level editor path generation', () => {
   it('uses algorithm 2 and the requested generation defaults for a new editor level', () => {
     const model = new LevelEditorModel();
@@ -200,6 +209,22 @@ describe('level editor path generation', () => {
     expect(solved?.scoreGap).toBeGreaterThan(5);
   });
 
+  it('reconstructs a 12x12 image path after sizing the board', () => {
+    const path = serpentinePath(12, 12);
+    const valuesByCell = new Array<number>(144);
+    path.forEach((cell, index) => {
+      valuesByCell[cell.y * 12 + cell.x] = index + 1;
+    });
+    const solved = solveRecognizedGridPath(
+      12,
+      12,
+      valuesByCell.map((value) => [{ value, confidence: 96 }]),
+      512,
+    );
+
+    expect(solved?.path).toEqual(path.map((cell) => cell.y * 12 + cell.x));
+  });
+
   it('reconstructs a complete path from the visible clues of an initial formation', () => {
     const clues: Array<number | null> = [
       null, 36, null, 34, null, 4, null, 7,
@@ -240,6 +265,25 @@ describe('level editor path generation', () => {
       pathSource: 'manual',
       solutionPath: path,
     });
+  });
+
+  it('supports independently sized rectangles and 12x12 recognized boards', () => {
+    const model = new LevelEditorModel();
+    model.setShape('rectangle');
+    model.changeSize(1, 'columns');
+    model.changeSize(1, 'rows');
+    expect(model.size()).toEqual({ columns: 6, rows: 9 });
+
+    const rectanglePath = serpentinePath(9, 6);
+    expect(model.applyRecognizedPath(9, 6, rectanglePath)).toBeNull();
+    expect(model.shape).toBe('rectangle');
+    expect(model.size()).toEqual({ columns: 6, rows: 9 });
+
+    const squarePath = serpentinePath(12, 12);
+    expect(model.applyRecognizedPath(12, 12, squarePath)).toBeNull();
+    expect(model.shape).toBe('square');
+    expect(model.size()).toEqual({ columns: 12, rows: 12 });
+    expect(model.solutionPath).toEqual(squarePath);
   });
 
   it('preserves blank cells when applying a recognized initial formation', () => {
