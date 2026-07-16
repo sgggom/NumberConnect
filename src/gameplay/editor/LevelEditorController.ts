@@ -1,6 +1,13 @@
 import './editor.css';
 import { BoardShape, type LevelData } from '../../game/types';
 import { EditorSplitPaneController } from './EditorSplitPaneController';
+import {
+  recognizeImageHiddenLayout,
+  recognizeImageLevel,
+  type ImageRecognitionMode,
+  type ImageRecognitionProgress,
+} from './ImageLevelRecognizer';
+import { calculateEditorLevelMetrics } from './levelMetrics';
 import { LevelEditorModel } from './LevelEditorModel';
 import { mountLevelEditorView } from './LevelEditorView';
 import {
@@ -32,6 +39,9 @@ export class LevelEditorController {
   private pathAnimationTimer?: number;
   private pathAnimationRun = 0;
   private isPathAnimating = false;
+  private imageRecognitionRun = 0;
+  private isImageRecognizing = false;
+  private imageRecognitionMode: ImageRecognitionMode = 'complete-level';
 
   public constructor(
     private readonly host: HTMLElement,
@@ -52,6 +62,7 @@ export class LevelEditorController {
     this.pathResizeObserver.observe(this.query<HTMLElement>('.editor-workspace'));
     this.query('#editor-back-button').addEventListener('click', () => {
       this.cancelPathAnimation();
+      this.cancelImageRecognition();
       this.options.onBack();
     });
     this.query<HTMLSelectElement>('#editor-shape').addEventListener('change', (event) => {
@@ -93,6 +104,9 @@ export class LevelEditorController {
       this.render();
       this.setStatus('棋盘已填满，请生成路径。');
     });
+    this.query('#editor-image-level-button').addEventListener('click', () => void this.readImageFromClipboard('complete-level'));
+    this.query('#editor-image-hidden-button').addEventListener('click', () => void this.readImageFromClipboard('hidden-layout'));
+    this.query('#editor-image-formation-button').addEventListener('click', () => void this.readImageFromClipboard('initial-formation'));
     this.query('#editor-undo-delete-button').addEventListener('click', () => this.undoLastDeletion());
     this.query('#editor-generate-path-button').addEventListener('click', () => this.generatePath());
     this.query('#editor-playtest-button').addEventListener('click', () => this.playtest());
@@ -116,6 +130,17 @@ export class LevelEditorController {
       if (!this.model.canUndoDeletion) return;
       event.preventDefault();
       this.undoLastDeletion();
+    });
+    window.addEventListener('paste', (event) => {
+      if (this.host.hidden || this.isImageRecognizing) return;
+      const target = event.target;
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || (target instanceof HTMLElement && target.isContentEditable)) return;
+      const imageItem = [...(event.clipboardData?.items ?? [])]
+        .find((item) => item.kind === 'file' && item.type.startsWith('image/'));
+      const image = imageItem?.getAsFile();
+      if (!image) return;
+      event.preventDefault();
+      void this.recognizeClipboardImage(image, this.imageRecognitionMode);
     });
   }
 
@@ -149,6 +174,7 @@ export class LevelEditorController {
     grid.dataset.manualMode = this.model.manualEditMode;
     grid.setAttribute('aria-busy', String(this.isPathAnimating));
     this.host.classList.toggle('is-path-animating', this.isPathAnimating);
+    this.host.classList.toggle('is-image-recognizing', this.isImageRecognizing);
     const order = this.model.pathOrder();
     const visiblePathLength = this.pathRevealCount ?? this.model.solutionPath.length;
     const cells: HTMLButtonElement[] = [];
@@ -234,6 +260,26 @@ export class LevelEditorController {
     this.query<HTMLButtonElement>('#editor-undo-delete-button').disabled = !this.model.canUndoDeletion || this.isPathAnimating;
     this.query<HTMLButtonElement>('#editor-size-minus').disabled = this.isPathAnimating;
     this.query<HTMLButtonElement>('#editor-size-plus').disabled = this.isPathAnimating;
+    const imageLevelButton = this.query<HTMLButtonElement>('#editor-image-level-button');
+    const imageHiddenButton = this.query<HTMLButtonElement>('#editor-image-hidden-button');
+    const imageFormationButton = this.query<HTMLButtonElement>('#editor-image-formation-button');
+    [imageLevelButton, imageHiddenButton, imageFormationButton].forEach((button) => {
+      button.disabled = this.isPathAnimating || this.isImageRecognizing;
+      button.classList.remove('is-loading');
+    });
+    imageHiddenButton.disabled ||= !this.model.hasGeneratedPath;
+    imageLevelButton.textContent = '识别完整关卡';
+    imageHiddenButton.textContent = '识别隐藏';
+    imageFormationButton.textContent = '识别初始阵型';
+    if (this.isImageRecognizing) {
+      const activeButton = this.imageRecognitionMode === 'initial-formation'
+        ? imageFormationButton
+        : this.imageRecognitionMode === 'hidden-layout'
+          ? imageHiddenButton
+          : imageLevelButton;
+      activeButton.classList.add('is-loading');
+      activeButton.textContent = '识别中…';
+    }
     this.query('#editor-size-value').textContent = `${columns} × ${rows}`;
     const nextId = this.options.getNextLevelId();
     this.query('#editor-save-id').textContent = `下次保存：${nextId}`;
@@ -241,7 +287,126 @@ export class LevelEditorController {
     this.query<HTMLButtonElement>('#editor-save-button').disabled = !this.model.hasGeneratedPath || this.isPathAnimating;
     this.query<HTMLButtonElement>('#editor-playtest-button').disabled = !this.model.hasGeneratedPath || this.isPathAnimating;
     this.query<HTMLButtonElement>('#editor-level-add').disabled = !this.model.hasGeneratedPath || this.isPathAnimating;
+    this.renderLevelMetrics(rows, columns);
     this.renderLevelList();
+  }
+
+  private renderLevelMetrics(rows: number, columns: number): void {
+    const metrics = calculateEditorLevelMetrics({
+      path: this.model.solutionPath,
+      hiddenCellKeys: this.model.hiddenCellKeys,
+      shape: this.model.shape,
+    });
+    const hiddenPercent = Math.round(metrics.hiddenRatio * 1000) / 10;
+    const hiddenTotal = this.model.solutionPath.length || this.model.activeCells.size;
+    this.query('#editor-info-size').textContent = `${columns} × ${rows}`;
+    this.query('#editor-info-right-turns').textContent = String(metrics.rightAngleTurns);
+    this.query('#editor-info-acute-turns').textContent = String(metrics.acuteAngleTurns);
+    this.query('#editor-info-obtuse-turns').textContent = String(metrics.obtuseAngleTurns);
+    this.query('#editor-info-straight').textContent = String(metrics.straightContinuations);
+    this.query('#editor-info-crossings').textContent = String(metrics.pathCrossings);
+    this.query('#editor-info-hidden-ratio').textContent = `${hiddenPercent}% · ${metrics.hiddenCount}/${hiddenTotal}`;
+    this.query('#editor-info-hidden-run').textContent = String(metrics.longestHiddenRun);
+    this.query('#editor-info-visible-run').textContent = String(metrics.longestVisibleRun);
+  }
+
+  private async readImageFromClipboard(mode: ImageRecognitionMode): Promise<void> {
+    this.imageRecognitionMode = mode;
+    if (mode === 'hidden-layout' && !this.model.hasGeneratedPath) {
+      this.setStatus('请先识别完整关卡，再识别隐藏。', true);
+      return;
+    }
+    if (!navigator.clipboard?.read) {
+      this.setStatus('当前浏览器不支持主动读取剪贴板，请直接按 Ctrl+V 粘贴图片。', true);
+      return;
+    }
+    try {
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        const imageType = item.types.find((type) => type.startsWith('image/'));
+        if (!imageType) continue;
+        await this.recognizeClipboardImage(await item.getType(imageType), mode);
+        return;
+      }
+      this.setStatus('剪贴板中没有图片，请先复制一张关卡截图。', true);
+    } catch (error) {
+      const message = error instanceof DOMException && error.name === 'NotAllowedError'
+        ? '没有剪贴板读取权限，请在编辑器中直接按 Ctrl+V 粘贴图片。'
+        : '无法读取剪贴板，请复制图片后重试或直接按 Ctrl+V。';
+      this.setStatus(message, true);
+    }
+  }
+
+  private async recognizeClipboardImage(image: Blob, mode: ImageRecognitionMode): Promise<void> {
+    if (this.isImageRecognizing) return;
+    if (mode === 'hidden-layout' && !this.model.hasGeneratedPath) {
+      this.setStatus('请先识别完整关卡，再识别隐藏。', true);
+      return;
+    }
+    this.imageRecognitionMode = mode;
+    const run = ++this.imageRecognitionRun;
+    this.cancelPathAnimation();
+    this.isImageRecognizing = true;
+    this.render();
+    this.setStatus('正在准备图片识别，首次使用需要加载 OCR 模型。');
+    try {
+      const onProgress = (progress: ImageRecognitionProgress): void => {
+        if (run !== this.imageRecognitionRun) return;
+        this.setStatus(this.imageRecognitionProgressMessage(progress));
+      };
+      let error: string | null;
+      let message: string;
+      if (mode === 'hidden-layout') {
+        const result = await recognizeImageHiddenLayout(image, onProgress);
+        if (run !== this.imageRecognitionRun || this.host.hidden) return;
+        error = this.model.applyRecognizedHiddenCells(result.rows, result.columns, result.hiddenCells);
+        message = `隐藏识别完成：${result.columns}×${result.rows}，显示 ${result.visibleCount} 格，隐藏 ${result.hiddenCells.length} 格；已保留当前完整路径。请检查后试玩或添加到列表。`;
+      } else {
+        const result = await recognizeImageLevel(image, mode, onProgress);
+        if (run !== this.imageRecognitionRun || this.host.hidden) return;
+        error = this.model.applyRecognizedPath(
+          result.rows,
+          result.columns,
+          result.solutionPath,
+          mode === 'initial-formation' ? result.hiddenCells : undefined,
+        );
+        message = mode === 'initial-formation'
+          ? `初始阵型识别完成：${result.columns}×${result.rows}，显示 ${result.visibleCount} 格，隐藏 ${result.hiddenCells.length} 格，已补全一条可用路径。请检查后试玩或添加到列表。`
+          : `完整关卡识别完成：${result.columns}×${result.rows}，直接识别 ${result.recognizedCount} 格，路径约束补全 ${result.inferredCount} 格。请继续识别隐藏，或检查后试玩。`;
+      }
+      if (error) throw new Error(error);
+      this.selectedLevelId = undefined;
+      this.isImageRecognizing = false;
+      this.render();
+      this.setStatus(message);
+    } catch (error) {
+      if (run !== this.imageRecognitionRun) return;
+      this.isImageRecognizing = false;
+      this.render();
+      const message = error instanceof Error && error.message
+        ? error.message
+        : mode === 'hidden-layout'
+          ? '隐藏识别失败，请换用更清晰且完整的初始阵型截图。'
+          : '图片识别失败，请换用更清晰的完整棋盘截图。';
+      this.setStatus(message, true);
+    }
+  }
+
+  private imageRecognitionProgressMessage(progress: ImageRecognitionProgress): string {
+    if (progress.phase === 'loading') return `正在加载 OCR 模型… ${progress.completed}%`;
+    if (progress.phase === 'locating') return '正在定位棋盘行列…';
+    if (this.imageRecognitionMode === 'hidden-layout') {
+      if (progress.phase === 'reading') return '正在识别图片中的显示格和空位…';
+      return '正在将隐藏格应用到当前路径…';
+    }
+    if (progress.phase === 'reading') return `正在逐格读取数字… ${progress.completed}/${progress.total}`;
+    return '正在按数字连续性校验并补全路径…';
+  }
+
+  private cancelImageRecognition(): void {
+    this.imageRecognitionRun += 1;
+    this.isImageRecognizing = false;
+    this.host.classList.remove('is-image-recognizing');
   }
 
   private paintCell(key: string): void {

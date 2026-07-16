@@ -135,6 +135,78 @@ export class LevelEditorModel {
     this.trimCells();
   }
 
+  public applyRecognizedPath(
+    rows: number,
+    columns: number,
+    path: ReadonlyArray<EditorCell>,
+    hiddenCells?: ReadonlyArray<EditorCell>,
+  ): string | null {
+    let shape: EditorShape;
+    if (rows === columns && rows >= 3 && rows <= 10) {
+      shape = 'square';
+    } else {
+      const rectangleIndex = RECTANGLE_SIZES.findIndex((size) => size.x === columns && size.y === rows);
+      if (rectangleIndex < 0) return `编辑器暂不支持 ${columns}×${rows} 的图片棋盘。`;
+      shape = 'rectangle';
+      this.rectangleIndex = rectangleIndex;
+    }
+    if (path.length !== rows * columns) return '图片路径没有覆盖全部格子。';
+    const keys = new Set(path.map(keyOf));
+    if (keys.size !== path.length) return '图片路径中存在重复格子。';
+    if (path.some((cell) => cell.x < 0 || cell.x >= columns || cell.y < 0 || cell.y >= rows)) {
+      return '图片路径包含棋盘范围外的格子。';
+    }
+    if (path.some((cell, index) => index > 0 && !areEditorCellsNeighbors(path[index - 1], cell, shape))) {
+      return '图片中的连续数字没有落在相邻格子中。';
+    }
+    const hiddenKeys = new Set(hiddenCells?.map(keyOf) ?? []);
+    if ([...hiddenKeys].some((key) => !keys.has(key))) return '初始阵型包含路径外的隐藏格子。';
+    if (path.length > 0 && (hiddenKeys.has(keyOf(path[0])) || hiddenKeys.has(keyOf(path[path.length - 1])))) {
+      return '路径起点和终点必须在初始阵型中显示。';
+    }
+
+    this.deletionUndo = undefined;
+    this.currentShape = shape;
+    if (shape === 'square') this.squareSize = rows;
+    this.paintedCells.clear();
+    path.forEach((cell) => this.paintedCells.add(keyOf(cell)));
+    this.path = path.map((cell) => ({ ...cell }));
+    this.generationCount = 0;
+    this.manualMode = 'off';
+    this.manualHiddenCells.clear();
+    hiddenKeys.forEach((key) => this.manualHiddenCells.add(key));
+    this.manualHiddenConfigured = hiddenCells !== undefined;
+    this.pathSource = 'manual';
+    this.generatedTargetHiddenCount = undefined;
+    return null;
+  }
+
+  public applyRecognizedHiddenCells(
+    rows: number,
+    columns: number,
+    hiddenCells: ReadonlyArray<EditorCell>,
+  ): string | null {
+    if (!this.hasGeneratedPath) return '请先识别完整关卡，再识别隐藏。';
+    const currentSize = this.size();
+    if (rows !== currentSize.rows || columns !== currentSize.columns) {
+      return `隐藏图片尺寸为 ${columns}×${rows}，当前关卡为 ${currentSize.columns}×${currentSize.rows}。`;
+    }
+    const pathKeys = new Set(this.path.map(keyOf));
+    const hiddenKeys = new Set(hiddenCells.map(keyOf));
+    if ([...hiddenKeys].some((key) => !pathKeys.has(key))) return '隐藏图片包含当前路径之外的格子。';
+    if (this.path.length > 0 && (hiddenKeys.has(keyOf(this.path[0])) || hiddenKeys.has(keyOf(this.path[this.path.length - 1])))) {
+      return '路径起点和终点必须在隐藏图片中显示。';
+    }
+
+    this.deletionUndo = undefined;
+    this.manualMode = 'off';
+    this.manualHiddenCells.clear();
+    hiddenKeys.forEach((key) => this.manualHiddenCells.add(key));
+    this.manualHiddenConfigured = true;
+    this.generatedTargetHiddenCount = undefined;
+    return null;
+  }
+
   public setAlgorithm(id: EditorAlgorithmId): void {
     this.algorithm = createEditorAlgorithm(id);
     this.invalidatePath();

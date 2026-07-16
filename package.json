@@ -12,7 +12,8 @@
     "bead-patterns": "node scripts/generate-bead-patterns.mjs"
   },
   "dependencies": {
-    "phaser": "^3.90.0"
+    "phaser": "^3.90.0",
+    "tesseract.js": "^6.0.1"
   },
   "devDependencies": {
     "typescript": "^5.8.3",
