@@ -54,21 +54,33 @@
           </svg>
         </div>
 
-        <button id="bead-mode-button" class="bead-mode-entry" type="button" aria-label="进入拼豆模式">
-          <span class="bead-mode-preview" aria-hidden="true">
-            <i></i><i class="is-pink"></i><i></i><i class="is-violet"></i><i></i>
-            <i class="is-pink"></i><i class="is-pink"></i><i class="is-violet"></i><i class="is-violet"></i><i class="is-violet"></i>
-            <i class="is-pink"></i><i class="is-gold"></i><i class="is-pink"></i><i class="is-violet"></i><i class="is-violet"></i>
-            <i></i><i class="is-pink"></i><i class="is-pink"></i><i class="is-violet"></i><i></i>
-            <i></i><i></i><i class="is-pink"></i><i></i><i></i>
-          </span>
-          <span class="bead-mode-copy">
-            <small>PIXEL BEADS</small>
-            <strong>拼豆模式</strong>
-            <span>选颜色 · 拼出像素图案</span>
-          </span>
-          <span class="bead-mode-arrow" aria-hidden="true">›</span>
-        </button>
+        <div class="lobby-feature-stack">
+          <button id="bead-mode-button" class="bead-mode-entry" type="button" aria-label="进入拼豆模式">
+            <span class="bead-mode-preview" aria-hidden="true">
+              <i></i><i class="is-pink"></i><i></i><i class="is-violet"></i><i></i>
+              <i class="is-pink"></i><i class="is-pink"></i><i class="is-violet"></i><i class="is-violet"></i><i class="is-violet"></i>
+              <i class="is-pink"></i><i class="is-gold"></i><i class="is-pink"></i><i class="is-violet"></i><i class="is-violet"></i>
+              <i></i><i class="is-pink"></i><i class="is-pink"></i><i class="is-violet"></i><i></i>
+              <i></i><i></i><i class="is-pink"></i><i></i><i></i>
+            </span>
+            <span class="bead-mode-copy">
+              <small>PIXEL BEADS</small>
+              <strong>拼豆模式</strong>
+              <span>选颜色 · 拼出像素图案</span>
+            </span>
+            <span class="bead-mode-arrow" aria-hidden="true">›</span>
+          </button>
+
+          <button id="collection-mode-button" class="collection-mode-entry" type="button" aria-label="打开收集玩法">
+            <span class="collection-mode-symbol" aria-hidden="true"><i></i><i></i><i></i><b>◇</b></span>
+            <span class="collection-mode-copy">
+              <small>COLLECTION</small>
+              <strong>收集玩法</strong>
+              <span>沿路线闯关 · 逐步解锁</span>
+            </span>
+            <span class="collection-mode-progress"><b id="collection-mode-count">0 / 0</b><i aria-hidden="true">›</i></span>
+          </button>
+        </div>
 
         <nav class="lobby-actions" aria-label="主菜单">
           <button id="start-button" class="menu-button menu-button--primary">
@@ -91,41 +103,26 @@
         <header class="game-header">
           <button id="back-button" class="icon-button" aria-label="返回大厅">←</button>
           <div class="game-heading">
-            <p id="play-mode-label">NUMBER CONNECT</p>
             <h2 id="play-level-label">关卡 1</h2>
           </div>
           <button id="play-settings-button" class="icon-button" aria-label="打开设置">⚙</button>
         </header>
         <div class="status-strip">
           <span id="play-lives" class="life-counter" role="status" aria-live="polite" aria-label="生命值 3" hidden>♥♥♥</span>
-          <span class="status-dot" aria-hidden="true"></span>
-          <p id="play-status" aria-live="polite">可从任意显示数字开始</p>
-          <button id="solution-toggle" class="solution-toggle" type="button" aria-pressed="false" aria-label="显示隐藏数字和完整连线">
-            <span aria-hidden="true">◎</span><b id="solution-toggle-label">显示答案</b>
-          </button>
+          <p class="progress-counter" aria-label="连接进度"><span>进度</span><b id="play-progress" aria-live="polite">0 / 0</b></p>
         </div>
         <div id="game-host" class="game-host" aria-label="数字连接棋盘"></div>
-        <aside id="touch-preview" class="touch-preview" aria-label="关卡小窗">
-          <button id="touch-preview-drag-handle" class="touch-preview-handle" type="button" aria-label="拖动关卡小窗">
-            <span><small>关卡小窗</small><b id="touch-preview-title">按住数字</b></span>
-            <i aria-hidden="true">⠿</i>
-          </button>
-          <div id="touch-preview-board" class="touch-preview-board" role="img" aria-label="等待关卡载入">
-            <svg id="touch-preview-lines" class="touch-preview-lines" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true" focusable="false">
-              <g id="touch-preview-path-lines"></g>
-              <line id="touch-preview-pointer-line" class="touch-preview-pointer-line" hidden></line>
-            </svg>
-            <div id="touch-preview-cells" class="touch-preview-cells" aria-hidden="true"></div>
-            <p id="touch-preview-hint" class="touch-preview-hint">按住棋盘中的数字</p>
+        <aside id="touch-preview" class="touch-preview" aria-label="关卡小窗，可按住任意位置拖动" hidden>
+          <div id="touch-preview-surface" class="touch-preview-surface">
+            <div id="touch-preview-board" class="touch-preview-board" role="img" aria-label="等待关卡载入">
+              <svg id="touch-preview-lines" class="touch-preview-lines" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+                <g id="touch-preview-path-lines"></g>
+                <line id="touch-preview-pointer-line" class="touch-preview-pointer-line" hidden></line>
+              </svg>
+              <div id="touch-preview-cells" class="touch-preview-cells" aria-hidden="true"></div>
+            </div>
           </div>
         </aside>
-        <footer class="play-footer">
-          <p class="gesture-hint">按住并拖动，依次连接相邻或斜对角数字</p>
-          <button id="touch-preview-toggle" class="touch-preview-toggle" type="button" aria-pressed="true">
-            <span aria-hidden="true">◉</span><b id="touch-preview-toggle-label">小窗开</b>
-          </button>
-        </footer>
-
         <div id="result-overlay" class="result-overlay" hidden>
           <div class="result-card">
             <span id="result-kicker" class="result-kicker">PUZZLE COMPLETE</span>
@@ -142,6 +139,29 @@
       </section>
 
       <section id="editor-screen" class="screen editor-screen" hidden></section>
+
+      <section id="collection-screen" class="screen collection-screen" hidden aria-labelledby="collection-screen-title">
+        <header class="collection-screen-header">
+          <button id="collection-back-button" class="icon-button" type="button" aria-label="返回大厅">←</button>
+          <div>
+            <p>COLLECTION ROUTE</p>
+            <h2 id="collection-screen-title">收集玩法</h2>
+          </div>
+          <button id="collection-gallery-button" class="icon-button" type="button" aria-label="打开拼豆图鉴">▦</button>
+        </header>
+        <div class="collection-map-scroll">
+          <div class="collection-map-heading">
+            <div><p class="eyebrow">LEVEL JOURNEY</p><h3>沿着路线逐关前进</h3></div>
+            <strong id="collection-route-progress">0 / 7</strong>
+          </div>
+          <div id="collection-route" class="collection-route" aria-label="收集玩法关卡路线">
+            <svg id="collection-route-lines" class="collection-route-lines" aria-hidden="true" focusable="false">
+              <path id="collection-route-base"></path>
+              <path id="collection-route-complete"></path>
+            </svg>
+          </div>
+        </div>
+      </section>
 
       <section id="bead-screen" class="screen bead-screen" hidden aria-labelledby="bead-screen-title">
         <header class="bead-screen-header">
@@ -202,6 +222,8 @@
           <label class="setting-row"><span><b>关卡列表</b><small>读取内置与本地编辑器关卡</small></span><select id="settings-level"></select></label>
           <label class="setting-row"><span><b>下一个数字提示</b><small>高亮下一处可见数字</small></span><input id="settings-next" class="switch" type="checkbox" checked /></label>
           <label class="setting-row"><span><b>游戏声音</b><small>连击、错误和胜利反馈</small></span><input id="settings-sound" class="switch" type="checkbox" checked /></label>
+          <label id="settings-solution-row" class="setting-row" hidden><span><b>显示答案</b><small>显示隐藏数字和完整连线</small></span><input id="solution-toggle" class="switch" type="checkbox" /></label>
+          <div class="setting-row setting-row--preview-size"><span><b>关卡小窗</b><small>选择关闭、窗口大小或扩展显示范围</small></span><div id="touch-preview-size" class="setting-segmented" role="radiogroup" aria-label="关卡小窗大小"><label><input type="radio" name="touch-preview-size" value="off" /><span>关闭</span></label><label><input type="radio" name="touch-preview-size" value="small" checked /><span>小</span></label><label><input type="radio" name="touch-preview-size" value="medium" /><span>中</span></label><label><input type="radio" name="touch-preview-size" value="large" /><span>大</span></label></div></div>
           <label class="setting-row"><span><b>小窗跟手</b><small>让关卡小窗始终显示在触摸位置上方</small></span><input id="settings-touch-preview-follow" class="switch" type="checkbox" /></label>
           <button id="video-stats-button" class="setting-row setting-row--button" type="button"><span><b>视频统计</b><small>查看奖励视频的触发点位</small></span><strong id="video-stats-count">0 次 ›</strong></button>
         </div>

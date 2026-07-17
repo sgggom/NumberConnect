@@ -42,7 +42,7 @@ describe('game settings migration', () => {
         targetCrossings: DEFAULT_SETTINGS.targetCrossings,
         selectedLevelId: 4,
         showNextNumber: false,
-        touchPreviewEnabled: DEFAULT_SETTINGS.touchPreviewEnabled,
+        touchPreviewSize: DEFAULT_SETTINGS.touchPreviewSize,
         touchPreviewFollowsPointer: DEFAULT_SETTINGS.touchPreviewFollowsPointer,
       });
     } finally {
@@ -50,7 +50,7 @@ describe('game settings migration', () => {
     }
   });
 
-  it('keeps saved small-window preferences', () => {
+  it('migrates saved small-window preferences', () => {
     const getItem = vi.fn(() => JSON.stringify({
       touchPreviewEnabled: false,
       touchPreviewFollowsPointer: true,
@@ -59,7 +59,7 @@ describe('game settings migration', () => {
 
     try {
       expect(loadSettings()).toMatchObject({
-        touchPreviewEnabled: false,
+        touchPreviewSize: 'off',
         touchPreviewFollowsPointer: true,
       });
     } finally {

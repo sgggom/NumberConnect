@@ -17,9 +17,15 @@ describe('board neighborhood preview', () => {
       (index) => index + 1,
       120,
       240,
+      { originClientX: 100, originClientY: 200 },
     );
 
-    expect(preview).toMatchObject({ clientX: 120, clientY: 240 });
+    expect(preview).toMatchObject({
+      clientX: 120,
+      clientY: 240,
+      originClientX: 100,
+      originClientY: 200,
+    });
     expect(preview?.cells).toHaveLength(9);
     expect(preview?.cells.find((cell) => cell.center)).toMatchObject({
       offsetX: 0,

@@ -10,7 +10,10 @@ type NeighborhoodLevel = Pick<LevelData, 'boardShape' | 'solutionPath'>;
 
 interface BoardNeighborhoodPreviewOptions {
   connectedNodePairs?: ReadonlyArray<readonly [number, number]>;
+  focusRingDepth?: 1 | 2;
   pointer?: BoardNeighborhoodPreviewPointer | null;
+  originClientX?: number;
+  originClientY?: number;
 }
 
 export const buildBoardNeighborhoodPreview = (
@@ -39,9 +42,13 @@ export const buildBoardNeighborhoodPreview = (
     y: (minY + maxY) * 0.5,
   };
   const centerCell = centerIndex === null ? undefined : level.solutionPath[centerIndex];
-  const focusRingKeys = new Set(centerCell
-    ? [centerCell, ...neighborCells(centerCell, level.boardShape)].map(cellKey)
-    : []);
+  const focusRingKeys = new Set<string>();
+  let ringFrontier = centerCell ? [centerCell] : [];
+  const focusRingDepth = options.focusRingDepth ?? 1;
+  for (let depth = 0; depth <= focusRingDepth; depth += 1) {
+    ringFrontier.forEach((cell) => focusRingKeys.add(cellKey(cell)));
+    ringFrontier = ringFrontier.flatMap((cell) => neighborCells(cell, level.boardShape));
+  }
   const cells = projectedCells.map(({ index, key, projected }) => ({
     index,
     offsetX: projected.x - boardCenter.x,
@@ -69,6 +76,8 @@ export const buildBoardNeighborhoodPreview = (
   return {
     clientX,
     clientY,
+    originClientX: options.originClientX ?? clientX,
+    originClientY: options.originClientY ?? clientY,
     cells,
     lines,
     pointer,

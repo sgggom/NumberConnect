@@ -6,6 +6,13 @@ export enum BoardShape {
   Hex = 4,
 }
 
+export const TOUCH_PREVIEW_SIZES = ['off', 'small', 'medium', 'large'] as const;
+export type TouchPreviewSize = typeof TOUCH_PREVIEW_SIZES[number];
+
+export const isTouchPreviewSize = (value: unknown): value is TouchPreviewSize => (
+  typeof value === 'string' && (TOUCH_PREVIEW_SIZES as readonly string[]).includes(value)
+);
+
 export interface Cell {
   x: number;
   y: number;
@@ -44,7 +51,7 @@ export interface GameSettings {
   targetCrossings: number;
   showNextNumber: boolean;
   soundEnabled: boolean;
-  touchPreviewEnabled: boolean;
+  touchPreviewSize: TouchPreviewSize;
   touchPreviewFollowsPointer: boolean;
 }
 
@@ -71,6 +78,8 @@ export interface BoardNeighborhoodPreviewPointer {
 export interface BoardNeighborhoodPreview {
   clientX: number;
   clientY: number;
+  originClientX: number;
+  originClientY: number;
   cells: BoardNeighborhoodPreviewCell[];
   lines: BoardNeighborhoodPreviewLine[];
   pointer: BoardNeighborhoodPreviewPointer | null;
@@ -93,6 +102,7 @@ export interface BoardSessionInput {
   completionGemColors?: readonly string[];
   showNextNumber: boolean;
   soundEnabled: boolean;
+  touchPreviewRingDepth: 1 | 2;
   mode: GameMode;
   onProgress: (current: number, total: number) => void;
   onWrong: (message: string) => void;
@@ -121,7 +131,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   targetCrossings: 5,
   showNextNumber: true,
   soundEnabled: true,
-  touchPreviewEnabled: true,
+  touchPreviewSize: 'small',
   touchPreviewFollowsPointer: false,
 };
 
