@@ -9,6 +9,7 @@ import { BoardScene } from './game/BoardScene';
 import { getEndlessStageSettings } from './game/difficulty';
 import { selectHiddenCells } from './game/hidden';
 import { formatLives } from './game/lives';
+import { levelBallColorCss } from './game/levelTheme';
 import {
   getNextLevelId,
   loadBuiltInLevels,
@@ -20,12 +21,14 @@ import {
 import {
   BoardShape,
   cellKey,
+  isTouchPreviewSize,
   type BoardNeighborhoodPreview,
   type BoardSessionInput,
   type EndlessStageSettings,
   type GameMode,
   type GameSettings,
   type LevelData,
+  type TouchPreviewSize,
 } from './game/types';
 import {
   createVideoView,
@@ -52,16 +55,79 @@ import {
   type BeadPixel,
   type BeadProgress,
 } from './gameplay/beads';
+import {
+  collectionArtworkResourcePath,
+  collectionArtworkUrl,
+} from './gameplay/collection/collectionArtwork';
 import { generateEndlessLevel } from './gameplay/endless/generateEndlessLevel';
 
 const nextFrame = (): Promise<void> => new Promise((resolve) => requestAnimationFrame(() => resolve()));
 const waitFor = (duration: number): Promise<void> => new Promise((resolve) => window.setTimeout(resolve, duration));
-type ResultContext = 'normal' | 'endless-stage' | 'life-depleted' | 'editor-playtest' | 'editor-playtest-failed';
-type PlayContext = 'normal' | 'editor-playtest' | 'bead';
+const TOUCH_PREVIEW_ENTER_DURATION_MS = 240;
+const TOUCH_PREVIEW_EXIT_DURATION_MS = 170;
+const COLLECTION_MIN_LEVELS = 7;
+const COLLECTION_PROGRESS_KEY = 'number-connect.collection-route.v1';
+
+const loadCollectionCompletedCount = (): number => {
+  try {
+    const value = Number(window.localStorage.getItem(COLLECTION_PROGRESS_KEY));
+    return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+  } catch {
+    return 0;
+  }
+};
+
+const saveCollectionCompletedCount = (count: number): void => {
+  try {
+    window.localStorage.setItem(COLLECTION_PROGRESS_KEY, String(Math.max(0, Math.floor(count))));
+  } catch {
+    // Collection progress remains available for the current session when storage is unavailable.
+  }
+};
+
+interface RoutePoint { x: number; y: number }
+
+const roundedRoutePath = (points: RoutePoint[], radius = 20): string => {
+  if (points.length === 0) return '';
+  if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
+  let path = `M ${points[0].x} ${points[0].y}`;
+  for (let index = 1; index < points.length - 1; index += 1) {
+    const previous = points[index - 1];
+    const current = points[index];
+    const next = points[index + 1];
+    const incomingLength = Math.hypot(current.x - previous.x, current.y - previous.y) || 1;
+    const outgoingLength = Math.hypot(next.x - current.x, next.y - current.y) || 1;
+    const cornerRadius = Math.min(radius, incomingLength * 0.35, outgoingLength * 0.35);
+    const before = {
+      x: current.x - (current.x - previous.x) / incomingLength * cornerRadius,
+      y: current.y - (current.y - previous.y) / incomingLength * cornerRadius,
+    };
+    const after = {
+      x: current.x + (next.x - current.x) / outgoingLength * cornerRadius,
+      y: current.y + (next.y - current.y) / outgoingLength * cornerRadius,
+    };
+    path += ` L ${before.x} ${before.y} Q ${current.x} ${current.y} ${after.x} ${after.y}`;
+  }
+  const last = points[points.length - 1];
+  return `${path} L ${last.x} ${last.y}`;
+};
+
+type ResultContext = 'normal' | 'collection' | 'endless-stage' | 'life-depleted' | 'editor-playtest' | 'editor-playtest-failed';
+type PlayContext = 'normal' | 'collection' | 'editor-playtest' | 'bead';
 
 interface BeadFlightCluster {
   layer: HTMLElement;
   gems: HTMLElement[];
+}
+
+interface TouchPreviewVisibilityAnimation {
+  fromScale: number;
+  fromOpacity: number;
+  toScale: number;
+  toOpacity: number;
+  duration: number;
+  hideOnComplete: boolean;
+  startTime?: number;
 }
 
 class NumberConnectApp {
@@ -72,21 +138,16 @@ class NumberConnectApp {
   private readonly gameHost = query<HTMLElement>('#game-host');
   private readonly playBackButton = query<HTMLButtonElement>('#back-button');
   private readonly levelLabel = query<HTMLElement>('#play-level-label');
-  private readonly modeLabel = query<HTMLElement>('#play-mode-label');
-  private readonly statusLabel = query<HTMLElement>('#play-status');
+  private readonly progressLabel = query<HTMLElement>('#play-progress');
   private readonly livesLabel = query<HTMLElement>('#play-lives');
-  private readonly solutionToggle = query<HTMLButtonElement>('#solution-toggle');
-  private readonly solutionToggleLabel = query<HTMLElement>('#solution-toggle-label');
+  private readonly solutionToggle = query<HTMLInputElement>('#solution-toggle');
   private readonly touchPreview = query<HTMLElement>('#touch-preview');
+  private readonly touchPreviewSurface = query<HTMLElement>('#touch-preview-surface');
   private readonly touchPreviewBoard = query<HTMLElement>('#touch-preview-board');
   private readonly touchPreviewCells = query<HTMLElement>('#touch-preview-cells');
-  private readonly touchPreviewHint = query<HTMLElement>('#touch-preview-hint');
   private readonly touchPreviewPathLines = query<SVGGElement>('#touch-preview-path-lines');
   private readonly touchPreviewPointerLine = query<SVGLineElement>('#touch-preview-pointer-line');
-  private readonly touchPreviewTitle = query<HTMLElement>('#touch-preview-title');
-  private readonly touchPreviewDragHandle = query<HTMLButtonElement>('#touch-preview-drag-handle');
-  private readonly touchPreviewToggle = query<HTMLButtonElement>('#touch-preview-toggle');
-  private readonly touchPreviewToggleLabel = query<HTMLElement>('#touch-preview-toggle-label');
+  private readonly touchPreviewSizeControl = query<HTMLElement>('#touch-preview-size');
   private readonly resultOverlay = query<HTMLElement>('#result-overlay');
   private readonly resultKicker = query<HTMLElement>('#result-kicker');
   private readonly resultTitle = query<HTMLElement>('#result-title');
@@ -112,6 +173,13 @@ class NumberConnectApp {
   private readonly beadStartButton = query<HTMLButtonElement>('#bead-start-button');
   private readonly beadGalleryButton = query<HTMLButtonElement>('#bead-gallery-button');
   private readonly beadGalleryCount = query<HTMLElement>('#bead-gallery-count');
+  private readonly collectionModeCount = query<HTMLElement>('#collection-mode-count');
+  private readonly collectionScreen = query<HTMLElement>('#collection-screen');
+  private readonly collectionRoute = query<HTMLElement>('#collection-route');
+  private readonly collectionRouteLines = query<SVGSVGElement>('#collection-route-lines');
+  private readonly collectionRouteBase = query<SVGPathElement>('#collection-route-base');
+  private readonly collectionRouteComplete = query<SVGPathElement>('#collection-route-complete');
+  private readonly collectionRouteProgress = query<HTMLElement>('#collection-route-progress');
   private readonly beadGalleryDialog = query<HTMLDialogElement>('#bead-gallery-dialog');
   private readonly beadGalleryTotal = query<HTMLElement>('#bead-gallery-total');
   private readonly beadGalleryEmpty = query<HTMLElement>('#bead-gallery-empty');
@@ -144,9 +212,18 @@ class NumberConnectApp {
   private beadProgress?: BeadProgress;
   private currentBeadReward: BeadPixel[] = [];
   private beadRewardAnimating = false;
+  private collectionCompletedCount = loadCollectionCompletedCount();
+  private currentCollectionIndex = 0;
   private activeNeighborhoodPreview: BoardNeighborhoodPreview | null = null;
   private manualTouchPreviewPosition?: { left: number; top: number };
   private touchPreviewDrag?: { pointerId: number; offsetX: number; offsetY: number };
+  private activeGameTouchPointerId?: number;
+  private touchPreviewVisibilityAnimation?: TouchPreviewVisibilityAnimation;
+  private touchPreviewVisibilityFrame?: number;
+  private touchPreviewVisibilityScale = 0.08;
+  private touchPreviewVisibilityOpacity = 0;
+  private touchPreviewHiding = false;
+  private touchPreviewLastOrigin?: { x: number; y: number };
   private readonly touchPreviewCellNodes = new Map<number, HTMLElement>();
   private readonly touchPreviewPathLineNodes = new Map<string, SVGLineElement>();
   private touchPreviewTargetPosition?: { left: number; top: number };
@@ -189,7 +266,8 @@ class NumberConnectApp {
     });
     window.addEventListener('resize', () => requestAnimationFrame(() => {
       this.syncBeadCellSize();
-      if (this.settings.touchPreviewEnabled) {
+      if (!this.collectionScreen.hidden) this.renderCollectionPath();
+      if (this.isTouchPreviewEnabled()) {
         this.renderNeighborhoodPreview(this.activeNeighborhoodPreview);
       }
       this.repositionTouchPreview();
@@ -216,6 +294,7 @@ class NumberConnectApp {
     this.refreshLevelOptions();
     this.renderVideoStats();
     this.renderBeadScreen();
+    this.renderCollectionEntryProgress();
     this.renderTouchPreviewState();
   }
 
@@ -223,6 +302,9 @@ class NumberConnectApp {
     query('#start-button').addEventListener('click', () => void this.startNormalMode());
     query('#endless-button').addEventListener('click', () => void this.startEndlessMode());
     query('#bead-mode-button').addEventListener('click', () => this.openBeadMode());
+    query('#collection-mode-button').addEventListener('click', () => this.openCollectionMode());
+    query('#collection-back-button').addEventListener('click', () => this.backToLobby());
+    query('#collection-gallery-button').addEventListener('click', () => this.openBeadGallery());
     this.beadBackButton.addEventListener('click', () => this.closeBeadMode());
     this.beadStartButton.addEventListener('click', () => void this.startBeadLevel());
     this.beadGalleryButton.addEventListener('click', () => this.openBeadGallery());
@@ -238,21 +320,45 @@ class NumberConnectApp {
   private bindPlayControls(): void {
     this.playBackButton.addEventListener('click', () => this.leavePlayScreen());
     query('#play-settings-button').addEventListener('click', () => this.openSettings('play'));
-    this.solutionToggle.addEventListener('click', () => this.setSolutionReveal(!this.solutionRevealed));
-    this.touchPreviewToggle.addEventListener('click', () => {
-      this.settings.touchPreviewEnabled = !this.settings.touchPreviewEnabled;
-      saveSettings(this.settings);
-      this.renderTouchPreviewState();
-    });
+    this.bindSingleTouchInput();
     this.bindTouchPreviewDrag();
     this.restartButton.addEventListener('click', () => this.handleResultPrimary());
     this.nextButton.addEventListener('click', () => this.handleResultSecondary());
     this.resultLobbyButton.addEventListener('click', () => this.leavePlayScreen());
   }
 
+  private bindSingleTouchInput(): void {
+    this.playScreen.addEventListener('pointerdown', (event) => {
+      if (event.pointerType !== 'touch') return;
+      if (this.activeGameTouchPointerId === undefined) {
+        this.activeGameTouchPointerId = event.pointerId;
+        return;
+      }
+      if (this.activeGameTouchPointerId !== event.pointerId) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }
+    }, { capture: true });
+
+    const releaseTouch = (event: PointerEvent): void => {
+      if (event.pointerType === 'touch' && this.activeGameTouchPointerId === event.pointerId) {
+        this.activeGameTouchPointerId = undefined;
+      }
+    };
+    this.playScreen.addEventListener('pointerup', releaseTouch, { capture: true });
+    this.playScreen.addEventListener('pointercancel', releaseTouch, { capture: true });
+  }
+
   private bindTouchPreviewDrag(): void {
-    this.touchPreviewDragHandle.addEventListener('pointerdown', (event) => {
-      if (!this.settings.touchPreviewEnabled || this.settings.touchPreviewFollowsPointer || event.button !== 0) return;
+    this.touchPreview.addEventListener('pointerdown', (event) => {
+      if (
+        !this.isTouchPreviewEnabled()
+        || !this.activeNeighborhoodPreview
+        || this.settings.touchPreviewFollowsPointer
+        || this.touchPreviewHiding
+        || this.touchPreview.hidden
+        || event.button !== 0
+      ) return;
       event.preventDefault();
       event.stopPropagation();
       const bounds = this.touchPreview.getBoundingClientRect();
@@ -262,9 +368,9 @@ class NumberConnectApp {
         offsetY: event.clientY - bounds.top,
       };
       this.touchPreview.classList.add('is-dragging');
-      this.touchPreviewDragHandle.setPointerCapture(event.pointerId);
+      this.touchPreview.setPointerCapture(event.pointerId);
     });
-    this.touchPreviewDragHandle.addEventListener('pointermove', (event) => {
+    this.touchPreview.addEventListener('pointermove', (event) => {
       if (this.touchPreviewDrag?.pointerId !== event.pointerId) return;
       event.preventDefault();
       event.stopPropagation();
@@ -276,54 +382,212 @@ class NumberConnectApp {
       );
     });
     const finishDrag = (event: PointerEvent): void => this.finishTouchPreviewDrag(event.pointerId);
-    this.touchPreviewDragHandle.addEventListener('pointerup', finishDrag);
-    this.touchPreviewDragHandle.addEventListener('pointercancel', finishDrag);
-    this.touchPreviewDragHandle.addEventListener('lostpointercapture', finishDrag);
+    this.touchPreview.addEventListener('pointerup', finishDrag);
+    this.touchPreview.addEventListener('pointercancel', finishDrag);
+    this.touchPreview.addEventListener('lostpointercapture', finishDrag);
   }
 
   private finishTouchPreviewDrag(pointerId: number): void {
     if (this.touchPreviewDrag?.pointerId !== pointerId) return;
     this.touchPreviewDrag = undefined;
     this.touchPreview.classList.remove('is-dragging');
-    if (this.touchPreviewDragHandle.hasPointerCapture(pointerId)) {
-      this.touchPreviewDragHandle.releasePointerCapture(pointerId);
+    if (this.touchPreview.hasPointerCapture(pointerId)) {
+      this.touchPreview.releasePointerCapture(pointerId);
     }
   }
 
   private handleNeighborhoodPreview(preview: BoardNeighborhoodPreview | null): void {
-    this.activeNeighborhoodPreview = preview;
-    if (!this.settings.touchPreviewEnabled) return;
-    this.renderNeighborhoodPreview(preview);
-    if (preview?.pointer && this.settings.touchPreviewFollowsPointer) {
-      this.placeTouchPreviewAbove(preview.clientX, preview.clientY);
+    const previousPreview = this.activeNeighborhoodPreview;
+    const focusIndex = preview?.cells.find((cell) => cell.center)?.index;
+    const activePreview = focusIndex === undefined ? null : preview;
+    this.activeNeighborhoodPreview = activePreview;
+    if (!this.isTouchPreviewEnabled() || !activePreview) {
+      this.hideTouchPreview(previousPreview);
+      return;
     }
+
+    const shouldAnimateIn = previousPreview === null || this.touchPreview.hidden || this.touchPreviewHiding;
+    this.touchPreviewLastOrigin = {
+      x: activePreview.originClientX,
+      y: activePreview.originClientY,
+    };
+    this.touchPreview.hidden = false;
+    this.renderNeighborhoodPreview(activePreview);
+    if (activePreview.pointer && this.settings.touchPreviewFollowsPointer && !this.touchPreviewDrag) {
+      this.placeTouchPreviewAbove(activePreview.clientX, activePreview.clientY, !shouldAnimateIn);
+    } else if (shouldAnimateIn) {
+      this.repositionTouchPreview();
+    }
+    if (shouldAnimateIn) this.animateTouchPreviewIn(activePreview);
   }
 
   private renderTouchPreviewState(): void {
-    const enabled = this.settings.touchPreviewEnabled;
-    const followsPointer = this.settings.touchPreviewFollowsPointer;
+    const previewSize = this.settings.touchPreviewSize;
+    const enabled = previewSize !== 'off';
+    const followsPointer = enabled && this.settings.touchPreviewFollowsPointer;
+    this.touchPreview.dataset.size = previewSize;
     if (!enabled || !followsPointer) this.cancelTouchPreviewPositionAnimation();
-    this.touchPreview.hidden = !enabled;
     this.touchPreview.classList.toggle('is-following', followsPointer);
-    this.touchPreviewDragHandle.setAttribute('aria-disabled', String(followsPointer));
-    this.touchPreviewDragHandle.setAttribute(
+    this.touchPreview.setAttribute(
       'aria-label',
-      followsPointer ? '关卡小窗正在跟随触摸位置' : '拖动关卡小窗',
+      followsPointer
+        ? '正在跟随触摸位置的关卡小窗'
+        : '关卡小窗，可按住任意位置拖动',
     );
-    this.touchPreviewToggle.setAttribute('aria-pressed', String(enabled));
-    this.touchPreviewToggle.setAttribute('aria-label', enabled ? '关闭关卡小窗' : '打开关卡小窗');
-    this.touchPreviewToggleLabel.textContent = enabled ? '小窗开' : '小窗关';
-    if (!enabled) return;
+    if (!enabled) {
+      const previousPreview = this.activeNeighborhoodPreview;
+      this.activeNeighborhoodPreview = null;
+      this.hideTouchPreview(previousPreview);
+      return;
+    }
+    if (!this.activeNeighborhoodPreview) {
+      this.hideTouchPreview();
+      return;
+    }
+    const shouldAnimateIn = this.touchPreview.hidden || this.touchPreviewHiding;
+    this.touchPreview.hidden = false;
     this.renderNeighborhoodPreview(this.activeNeighborhoodPreview);
-    requestAnimationFrame(() => this.repositionTouchPreview());
+    if (this.settings.touchPreviewFollowsPointer && this.activeNeighborhoodPreview.pointer) {
+      this.placeTouchPreviewAbove(
+        this.activeNeighborhoodPreview.clientX,
+        this.activeNeighborhoodPreview.clientY,
+        !shouldAnimateIn,
+      );
+    } else {
+      this.repositionTouchPreview();
+    }
+    if (shouldAnimateIn) this.animateTouchPreviewIn(this.activeNeighborhoodPreview);
+  }
+
+  private animateTouchPreviewIn(preview: BoardNeighborhoodPreview): void {
+    const wasAnimating = this.touchPreviewVisibilityFrame !== undefined;
+    this.cancelTouchPreviewVisibilityAnimation();
+    this.touchPreviewHiding = false;
+    this.setTouchPreviewAnimationOrigin(preview.originClientX, preview.originClientY);
+    if (!wasAnimating) this.applyTouchPreviewVisibility(0.08, 0);
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      this.applyTouchPreviewVisibility(1, 1);
+      return;
+    }
+
+    this.touchPreviewVisibilityAnimation = {
+      fromScale: this.touchPreviewVisibilityScale,
+      fromOpacity: this.touchPreviewVisibilityOpacity,
+      toScale: 1,
+      toOpacity: 1,
+      duration: TOUCH_PREVIEW_ENTER_DURATION_MS,
+      hideOnComplete: false,
+    };
+    this.touchPreviewVisibilityFrame = requestAnimationFrame((timestamp) => (
+      this.animateTouchPreviewVisibility(timestamp)
+    ));
+  }
+
+  private hideTouchPreview(preview?: BoardNeighborhoodPreview | null): void {
+    if (this.touchPreview.hidden || this.touchPreviewHiding) return;
+    this.touchPreviewHiding = true;
+    this.cancelTouchPreviewPositionAnimation();
+    const drag = this.touchPreviewDrag;
+    this.touchPreviewDrag = undefined;
+    this.touchPreview.classList.remove('is-dragging');
+    if (drag && this.touchPreview.hasPointerCapture(drag.pointerId)) {
+      this.touchPreview.releasePointerCapture(drag.pointerId);
+    }
+
+    const origin = preview
+      ? { x: preview.originClientX, y: preview.originClientY }
+      : this.touchPreviewLastOrigin;
+    if (!origin || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      this.finishTouchPreviewHide();
+      return;
+    }
+
+    this.cancelTouchPreviewVisibilityAnimation();
+    this.setTouchPreviewAnimationOrigin(origin.x, origin.y);
+    this.touchPreviewVisibilityAnimation = {
+      fromScale: this.touchPreviewVisibilityScale,
+      fromOpacity: this.touchPreviewVisibilityOpacity,
+      toScale: 0.08,
+      toOpacity: 0,
+      duration: TOUCH_PREVIEW_EXIT_DURATION_MS,
+      hideOnComplete: true,
+    };
+    this.touchPreviewVisibilityFrame = requestAnimationFrame((timestamp) => (
+      this.animateTouchPreviewVisibility(timestamp)
+    ));
+  }
+
+  private animateTouchPreviewVisibility(timestamp: number): void {
+    this.touchPreviewVisibilityFrame = undefined;
+    const animation = this.touchPreviewVisibilityAnimation;
+    if (!animation) return;
+    if (animation.startTime === undefined) animation.startTime = timestamp;
+    const progress = Math.min(1, Math.max(0, (timestamp - animation.startTime) / animation.duration));
+    const scaleProgress = animation.hideOnComplete
+      ? progress ** 3
+      : 1 + 2.35 * (progress - 1) ** 3 + 1.35 * (progress - 1) ** 2;
+    const opacityProgress = animation.hideOnComplete
+      ? progress ** 2
+      : 1 - (1 - progress) ** 3;
+    this.applyTouchPreviewVisibility(
+      animation.fromScale + (animation.toScale - animation.fromScale) * scaleProgress,
+      animation.fromOpacity + (animation.toOpacity - animation.fromOpacity) * opacityProgress,
+    );
+
+    if (progress < 1) {
+      this.touchPreviewVisibilityFrame = requestAnimationFrame((nextTimestamp) => (
+        this.animateTouchPreviewVisibility(nextTimestamp)
+      ));
+      return;
+    }
+
+    this.touchPreviewVisibilityAnimation = undefined;
+    if (animation.hideOnComplete && !this.activeNeighborhoodPreview) {
+      this.finishTouchPreviewHide();
+      return;
+    }
+    this.touchPreviewHiding = false;
+    this.applyTouchPreviewVisibility(1, 1);
+  }
+
+  private applyTouchPreviewVisibility(scale: number, opacity: number): void {
+    this.touchPreviewVisibilityScale = scale;
+    this.touchPreviewVisibilityOpacity = opacity;
+    this.touchPreviewSurface.style.transform = `scale(${scale})`;
+    this.touchPreviewSurface.style.opacity = String(opacity);
+  }
+
+  private setTouchPreviewAnimationOrigin(clientX: number, clientY: number): void {
+    const bounds = this.touchPreview.getBoundingClientRect();
+    this.touchPreviewSurface.style.transformOrigin = (
+      `${clientX - bounds.left}px ${clientY - bounds.top}px`
+    );
+  }
+
+  private cancelTouchPreviewVisibilityAnimation(): void {
+    if (this.touchPreviewVisibilityFrame !== undefined) {
+      cancelAnimationFrame(this.touchPreviewVisibilityFrame);
+      this.touchPreviewVisibilityFrame = undefined;
+    }
+    this.touchPreviewVisibilityAnimation = undefined;
+  }
+
+  private finishTouchPreviewHide(): void {
+    this.cancelTouchPreviewVisibilityAnimation();
+    this.touchPreviewHiding = false;
+    this.touchPreview.hidden = true;
+    this.applyTouchPreviewVisibility(0.08, 0);
+    this.renderNeighborhoodPreview(null);
   }
 
   private renderNeighborhoodPreview(preview: BoardNeighborhoodPreview | null): void {
+    this.touchPreviewBoard.style.setProperty(
+      '--level-ball-color',
+      levelBallColorCss(this.currentLevel?.levelId ?? 1),
+    );
     this.touchPreviewBoard.classList.toggle('is-active', preview !== null);
     if (!preview) {
       this.touchPreviewBoard.classList.remove('has-focus');
-      this.touchPreviewTitle.textContent = '按住数字';
-      this.touchPreviewHint.hidden = false;
       this.touchPreviewCells.replaceChildren();
       this.touchPreviewCellNodes.clear();
       this.touchPreviewPathLines.replaceChildren();
@@ -336,7 +600,6 @@ class NumberConnectApp {
     const center = preview.cells.find((cell) => cell.center);
     const hasFocus = center !== undefined;
     this.touchPreviewBoard.classList.toggle('has-focus', hasFocus);
-    this.touchPreviewHint.hidden = hasFocus;
     const maxOffset = Math.max(
       0.5,
       ...preview.cells.flatMap((cell) => [Math.abs(cell.offsetX), Math.abs(cell.offsetY)]),
@@ -352,18 +615,15 @@ class NumberConnectApp {
       ),
     );
     const gridUnitSize = (boardSize * 0.84) / Math.max(1, maxOffset * 2);
-    const targetGridUnitSize = boardSize * 0.31;
+    const contentScale = this.settings.touchPreviewSize === 'large' ? 0.6 : 1;
+    const targetGridUnitSize = boardSize * 0.31 * contentScale;
     const cameraScale = Math.max(0.25, Math.min(12, targetGridUnitSize / gridUnitSize));
-    const targetCellSize = boardSize * 0.2;
+    const targetCellSize = boardSize * 0.2 * contentScale;
     const cellSize = targetCellSize / cameraScale;
     this.touchPreviewBoard.style.setProperty('--touch-preview-cell-size', `${cellSize.toFixed(2)}px`);
     this.touchPreviewBoard.style.setProperty(
       '--touch-preview-line-width',
       `${Math.max(3.5, Math.min(4.5, boardSize * 0.03)).toFixed(2)}px`,
-    );
-    this.touchPreviewBoard.style.setProperty(
-      '--touch-preview-cell-border',
-      `${(Math.max(1.4, Math.min(2, boardSize * 0.013)) / cameraScale).toFixed(2)}px`,
     );
     const positions = new Map<number, { x: number; y: number }>();
 
@@ -484,21 +744,16 @@ class NumberConnectApp {
       this.touchPreviewPointerLine.toggleAttribute('hidden', true);
     }
 
-    this.touchPreviewTitle.textContent = center === undefined
-      ? '按住数字'
-      : center.value === null
-        ? '当前隐藏格'
-        : `当前 ${center.value}`;
     this.touchPreviewBoard.setAttribute(
       'aria-label',
       center === undefined
-        ? '按住棋盘数字查看当前格周围一圈'
+        ? `按住棋盘数字查看当前格周围${this.settings.touchPreviewSize === 'large' ? '两圈' : '一圈'}`
         : `完整关卡网格，当前格${center.value === null ? '为隐藏数字' : `数字为 ${center.value}`}`,
     );
   }
 
   private repositionTouchPreview(): void {
-    if (!this.settings.touchPreviewEnabled || this.touchPreview.hidden) return;
+    if (!this.isTouchPreviewEnabled() || this.touchPreview.hidden || this.touchPreviewDrag) return;
     if (this.settings.touchPreviewFollowsPointer && this.activeNeighborhoodPreview?.pointer) {
       this.placeTouchPreviewAbove(
         this.activeNeighborhoodPreview.clientX,
@@ -523,13 +778,13 @@ class NumberConnectApp {
     );
   }
 
-  private placeTouchPreviewAbove(clientX: number, clientY: number): void {
+  private placeTouchPreviewAbove(clientX: number, clientY: number, smooth = true): void {
     const playBounds = this.playScreen.getBoundingClientRect();
     this.placeTouchPreview(
       clientX - playBounds.left - this.touchPreview.offsetWidth * 0.5,
       clientY - playBounds.top - this.touchPreview.offsetHeight - 24,
       false,
-      true,
+      smooth,
     );
   }
 
@@ -611,8 +866,28 @@ class NumberConnectApp {
     this.touchPreviewLastFrameTime = undefined;
   }
 
+  private isTouchPreviewEnabled(): boolean {
+    return this.settings.touchPreviewSize !== 'off';
+  }
+
+  private selectedTouchPreviewSize(): TouchPreviewSize {
+    const value = this.touchPreviewSizeControl.querySelector<HTMLInputElement>(
+      'input[name="touch-preview-size"]:checked',
+    )?.value;
+    return isTouchPreviewSize(value) ? value : 'small';
+  }
+
+  private setTouchPreviewSizeControl(size: TouchPreviewSize): void {
+    this.touchPreviewSizeControl.querySelectorAll<HTMLInputElement>(
+      'input[name="touch-preview-size"]',
+    ).forEach((input) => {
+      input.checked = input.value === size;
+    });
+  }
+
   private bindSettings(): void {
     query('#settings-apply-button').addEventListener('click', () => void this.applySettings());
+    this.touchPreviewSizeControl.addEventListener('change', () => this.refreshSettingsControls());
     query('#video-stats-button').addEventListener('click', () => this.openVideoStats());
     query('#video-stats-reset').addEventListener('click', () => this.resetVideoStats());
     query('#settings-lobby-button').addEventListener('click', () => {
@@ -647,6 +922,8 @@ class NumberConnectApp {
       ? '返回关卡编辑器'
       : this.playContext === 'bead'
         ? '返回拼豆图纸'
+        : this.playContext === 'collection'
+          ? '返回收集路线'
         : '返回大厅';
     this.playBackButton.setAttribute('aria-label', backLabel);
     this.playBackButton.title = backLabel;
@@ -658,9 +935,7 @@ class NumberConnectApp {
 
   private setSolutionReveal(revealed: boolean): void {
     this.solutionRevealed = revealed;
-    this.solutionToggle.setAttribute('aria-pressed', String(revealed));
-    this.solutionToggle.setAttribute('aria-label', revealed ? '隐藏完整答案' : '显示隐藏数字和完整连线');
-    this.solutionToggleLabel.textContent = revealed ? '隐藏答案' : '显示答案';
+    this.solutionToggle.checked = revealed;
     this.boardScene.setSolutionReveal(revealed);
   }
 
@@ -743,11 +1018,12 @@ class NumberConnectApp {
         : undefined,
       showNextNumber: this.settings.showNextNumber,
       soundEnabled: this.settings.soundEnabled,
+      touchPreviewRingDepth: this.settings.touchPreviewSize === 'large' ? 2 : 1,
       mode: this.mode,
       onProgress: (current, total) => {
         this.currentProgress = current;
         this.currentTotal = total;
-        this.setStatus(`${current} / ${total}`);
+        this.renderProgress();
         if (this.playContext !== 'editor-playtest') {
           this.events.emit('level.progressed', { ...eventContext, current, total });
         }
@@ -756,7 +1032,7 @@ class NumberConnectApp {
         if (this.playContext !== 'editor-playtest') {
           this.events.emit('level.wrong-move', { ...eventContext, current: this.currentProgress, message });
         }
-        this.handleWrong(message);
+        this.handleWrong();
       },
       onComplete: () => {
         if (this.playContext !== 'editor-playtest') {
@@ -773,13 +1049,7 @@ class NumberConnectApp {
     this.currentProgress = 0;
     this.currentTotal = level.solutionPath.length;
     this.updateGameHeading(level);
-    this.setStatus(this.playContext === 'editor-playtest'
-      ? '编辑器试玩 · 可从任意显示数字开始'
-      : this.playContext === 'bead'
-        ? `完成连线后翻开 ${this.currentBeadReward.length} 颗拼豆`
-      : this.mode === 'endless'
-        ? `阶段 ${this.stage} · 可从任意显示数字开始`
-        : '可从任意显示数字开始，按连续顺序连接。');
+    this.renderProgress();
     this.boardScene.setBoard(this.makeSession(level, profile));
     if (this.playContext !== 'editor-playtest') {
       this.events.emit('level.started', {
@@ -792,28 +1062,27 @@ class NumberConnectApp {
   }
 
   private updateGameHeading(level: LevelData): void {
+    if (this.playContext === 'collection') {
+      this.levelLabel.textContent = `收集关卡 ${this.currentCollectionIndex + 1}`;
+      return;
+    }
     if (this.playContext === 'bead') {
-      this.modeLabel.textContent = 'PIXEL BEADS';
       this.levelLabel.textContent = `拼豆关卡 · 关卡 ${level.levelId}`;
       return;
     }
     if (this.playContext === 'editor-playtest') {
-      this.modeLabel.textContent = 'EDITOR PLAYTEST';
       this.levelLabel.textContent = `试玩关卡 · ${level.columns} × ${level.rows}`;
       return;
     }
     if (this.mode === 'endless') {
-      this.modeLabel.textContent = 'ENDLESS MODE';
       this.levelLabel.textContent = `无尽 · 阶段 ${this.stage}`;
       return;
     }
-    this.modeLabel.textContent = level.custom ? 'CUSTOM LEVEL' : 'LEVEL MODE';
     this.levelLabel.textContent = `${level.custom ? '自制关卡' : '关卡'} ${level.levelId}`;
   }
 
-  private setStatus(message: string, error = false): void {
-    this.statusLabel.textContent = message;
-    this.statusLabel.parentElement?.classList.toggle('is-error', error);
+  private renderProgress(): void {
+    this.progressLabel.textContent = `${this.currentProgress} / ${this.currentTotal}`;
   }
 
   private renderLives(): void {
@@ -822,8 +1091,7 @@ class NumberConnectApp {
     this.livesLabel.setAttribute('aria-label', `生命值 ${this.lives}`);
   }
 
-  private handleWrong(message: string): void {
-    this.setStatus(message, true);
+  private handleWrong(): void {
     if (this.lives <= 0) return;
     this.lives -= 1;
     this.renderLives();
@@ -833,7 +1101,6 @@ class NumberConnectApp {
   private handleLifeDepleted(): void {
     this.boardScene.setPaused(true);
     if (this.playContext === 'editor-playtest') {
-      this.setStatus('编辑器试玩 · 生命值耗尽', true);
       this.resultContext = 'editor-playtest-failed';
       this.resultKicker.textContent = 'PLAYTEST PAUSED';
       this.resultTitle.textContent = '试玩结束';
@@ -848,7 +1115,6 @@ class NumberConnectApp {
       return;
     }
 
-    this.setStatus(this.mode === 'endless' ? `阶段 ${this.stage} · 生命值耗尽` : '生命值耗尽', true);
     this.resultContext = 'life-depleted';
     this.resultKicker.textContent = 'OUT OF HEARTS';
     this.resultTitle.textContent = '生命已耗尽';
@@ -858,7 +1124,11 @@ class NumberConnectApp {
     this.restartButton.textContent = '重新开始';
     this.nextButton.textContent = '观看视频获取 1♥';
     this.nextButton.hidden = false;
-    this.resultLobbyButton.textContent = this.playContext === 'bead' ? '返回拼豆图纸' : '放弃';
+    this.resultLobbyButton.textContent = this.playContext === 'bead'
+      ? '返回拼豆图纸'
+      : this.playContext === 'collection'
+        ? '返回收集路线'
+        : '放弃';
     this.resultActions.classList.remove('is-single');
     this.setResultActionsDisabled(false);
     this.resultOverlay.hidden = false;
@@ -889,6 +1159,25 @@ class NumberConnectApp {
     this.nextButton.textContent = '下一关';
     this.resultLobbyButton.textContent = '返回大厅';
     this.resultActions.classList.remove('is-single');
+    this.setResultActionsDisabled(false);
+    this.resultOverlay.hidden = false;
+  }
+
+  private showCollectionResult(): void {
+    const total = this.collectionLevelCount();
+    const hasNext = this.currentCollectionIndex + 1 < total;
+    this.resultContext = 'collection';
+    this.resultKicker.textContent = 'ROUTE CLEARED';
+    this.resultTitle.textContent = `图片 ${this.currentCollectionIndex + 1} 已收集`;
+    this.resultMessage.textContent = hasNext
+      ? `图片已放入路线节点，关卡 ${this.currentCollectionIndex + 2} 已解锁。`
+      : '最后一张图片已放入路线节点，整条收集路线已经完成。';
+    this.resultReward.hidden = true;
+    this.restartButton.textContent = '重新挑战';
+    this.nextButton.hidden = !hasNext;
+    this.nextButton.textContent = '下一关';
+    this.resultLobbyButton.textContent = '返回收集路线';
+    this.resultActions.classList.toggle('is-single', !hasNext);
     this.setResultActionsDisabled(false);
     this.resultOverlay.hidden = false;
   }
@@ -937,6 +1226,8 @@ class NumberConnectApp {
       void this.advanceEndlessStage(true);
     } else if (this.resultContext === 'life-depleted') {
       this.continueAfterFailureVideo();
+    } else if (this.resultContext === 'collection') {
+      this.nextCollectionLevel();
     } else if (this.resultContext === 'normal') {
       this.nextLevel();
     }
@@ -944,7 +1235,6 @@ class NumberConnectApp {
 
   private async handleComplete(): Promise<void> {
     if (this.playContext === 'bead') {
-      this.setStatus(`关卡完成 · 获得 ${this.currentBeadReward.length} 颗拼豆`);
       await this.boardScene.showCompletion();
       if (this.playContext !== 'bead' || !this.beadPattern || !this.beadProgress) return;
 
@@ -1016,7 +1306,6 @@ class NumberConnectApp {
       return;
     }
     if (this.playContext === 'editor-playtest') {
-      this.setStatus('编辑器试玩完成');
       await this.boardScene.showCompletion();
       if (this.playContext === 'editor-playtest') this.showEditorPlaytestResult();
       return;
@@ -1024,14 +1313,18 @@ class NumberConnectApp {
     if (this.mode === 'endless') {
       this.lives += 1;
       this.renderLives();
-      this.setStatus(`阶段 ${this.stage} 完成 · 生命 +1`);
       this.showEndlessStageResult();
       return;
     }
 
-    this.setStatus('关卡完成');
-    await this.boardScene.showCompletion();
-    this.showNormalResult();
+    if (this.playContext === 'collection') {
+      await this.boardScene.showCompletion({ revealImage: true });
+      this.completeCollectionLevel();
+      this.showCollectionResult();
+    } else {
+      await this.boardScene.showCompletion();
+      this.showNormalResult();
+    }
   }
 
   private async advanceEndlessStage(watchedVideo: boolean): Promise<void> {
@@ -1046,7 +1339,6 @@ class NumberConnectApp {
       this.events.emit('video.rewarded', { placement: 'endless-stage-complete', stage: this.stage });
       saveVideoViews(this.videoViews);
       this.renderVideoStats();
-      this.setStatus(`阶段 ${this.stage} · 视频奖励生命 +1`);
     }
 
     this.resultOverlay.hidden = true;
@@ -1054,12 +1346,13 @@ class NumberConnectApp {
     const profile = getEndlessStageSettings(this.stage);
     const next = this.createEndlessLevel(this.stage, profile);
     this.currentLevel = next;
+    this.currentProgress = 0;
+    this.currentTotal = next.solutionPath.length;
     this.updateGameHeading(next);
-    this.setStatus(`阶段 ${this.stage} · 难度提升`);
+    this.renderProgress();
 
     try {
       await this.boardScene.transitionTo(this.makeSession(next, profile));
-      this.setStatus(`阶段 ${this.stage} · 可从任意显示数字开始`);
     } finally {
       this.resultActionBusy = false;
       this.setResultActionsDisabled(false);
@@ -1082,7 +1375,6 @@ class NumberConnectApp {
     this.renderVideoStats();
     this.resultOverlay.hidden = true;
     this.boardScene.setPaused(false);
-    this.setStatus('生命 +1 · 继续连接相邻的连续数字');
   }
 
   private restartCurrent(): void {
@@ -1101,6 +1393,19 @@ class NumberConnectApp {
     this.renderLives();
     this.selectNextNormalLevel();
     this.setCurrentBoard(this.createNormalLevel());
+  }
+
+  private nextCollectionLevel(): void {
+    const nextIndex = this.currentCollectionIndex + 1;
+    if (nextIndex >= this.collectionLevelCount()) {
+      this.leavePlayScreen();
+      return;
+    }
+    this.resultOverlay.hidden = true;
+    this.currentCollectionIndex = nextIndex;
+    this.lives = 3;
+    this.renderLives();
+    this.setCurrentBoard(this.createCollectionLevel(nextIndex));
   }
 
   private selectNextNormalLevel(): void {
@@ -1133,6 +1438,11 @@ class NumberConnectApp {
       this.editor.resumeFromPlaytest();
       return;
     }
+    if (this.playContext === 'collection') {
+      this.showScreen('collection');
+      this.renderCollectionMap();
+      return;
+    }
     this.backToLobby();
   }
 
@@ -1147,8 +1457,11 @@ class NumberConnectApp {
       ? '返回编辑器'
       : this.playContext === 'bead'
         ? '返回拼豆图纸'
+        : this.playContext === 'collection'
+          ? '返回收集路线'
         : '返回大厅';
     query<HTMLElement>('#endless-settings-note').hidden = !(context === 'play' && this.mode === 'endless');
+    query<HTMLElement>('#settings-solution-row').hidden = context !== 'play';
     this.settingsDialog.showModal();
   }
 
@@ -1186,6 +1499,8 @@ class NumberConnectApp {
     query<HTMLSelectElement>('#settings-level').value = String(this.settings.selectedLevelId);
     query<HTMLInputElement>('#settings-next').checked = this.settings.showNextNumber;
     query<HTMLInputElement>('#settings-sound').checked = this.settings.soundEnabled;
+    this.solutionToggle.checked = this.solutionRevealed;
+    this.setTouchPreviewSizeControl(this.settings.touchPreviewSize);
     query<HTMLInputElement>('#settings-touch-preview-follow').checked = this.settings.touchPreviewFollowsPointer;
     this.refreshSettingsControls();
   }
@@ -1203,15 +1518,18 @@ class NumberConnectApp {
 
   private refreshSettingsControls(): void {
     const levelLocked = this.settingsContext === 'play'
-      && (this.mode === 'endless' || this.playContext === 'editor-playtest' || this.playContext === 'bead');
+      && (this.mode === 'endless' || this.playContext === 'editor-playtest' || this.playContext === 'bead' || this.playContext === 'collection');
     query<HTMLSelectElement>('#settings-level').disabled = levelLocked;
+    query<HTMLInputElement>('#settings-touch-preview-follow').disabled = this.selectedTouchPreviewSize() === 'off';
   }
 
   private async applySettings(): Promise<void> {
+    const revealSolution = this.settingsContext === 'play' && this.solutionToggle.checked;
     this.settings.shape = BoardShape.Level;
     this.settings.selectedLevelId = Number(query<HTMLSelectElement>('#settings-level').value) || this.settings.selectedLevelId;
     this.settings.showNextNumber = query<HTMLInputElement>('#settings-next').checked;
     this.settings.soundEnabled = query<HTMLInputElement>('#settings-sound').checked;
+    this.settings.touchPreviewSize = this.selectedTouchPreviewSize();
     this.settings.touchPreviewFollowsPointer = query<HTMLInputElement>('#settings-touch-preview-follow').checked;
     saveSettings(this.settings);
     this.renderTouchPreviewState();
@@ -1221,11 +1539,12 @@ class NumberConnectApp {
       if (this.mode === 'endless') {
         const profile = getEndlessStageSettings(this.stage);
         this.setCurrentBoard(this.createEndlessLevel(this.stage, profile), profile);
-      } else if ((this.playContext === 'editor-playtest' || this.playContext === 'bead') && this.currentLevel) {
+      } else if ((this.playContext === 'editor-playtest' || this.playContext === 'bead' || this.playContext === 'collection') && this.currentLevel) {
         this.setCurrentBoard(this.currentLevel);
       } else {
         this.setCurrentBoard(this.createNormalLevel());
       }
+      this.setSolutionReveal(revealSolution);
       await nextFrame();
     }
   }
@@ -1234,6 +1553,141 @@ class NumberConnectApp {
     this.playContext = 'normal';
     this.showScreen('editor');
     this.editor.open();
+  }
+
+  private openCollectionMode(): void {
+    this.playContext = 'collection';
+    this.showScreen('collection');
+    this.renderCollectionMap();
+  }
+
+  private collectionLevelCount(): number {
+    return Math.max(COLLECTION_MIN_LEVELS, this.levels.length);
+  }
+
+  private createCollectionLevel(index: number): LevelData {
+    const existing = this.levels[index];
+    const stage = index + 1;
+    const level = existing ?? generateEndlessLevel(
+      getEndlessStageSettings(stage),
+      730001 + stage * 1009,
+    );
+    return {
+      ...level,
+      levelId: stage,
+      backgroundResourcePath: collectionArtworkResourcePath(index),
+    };
+  }
+
+  private async startCollectionLevel(index: number): Promise<void> {
+    const total = this.collectionLevelCount();
+    const completed = Math.min(this.collectionCompletedCount, total);
+    if (index < 0 || index >= total || index > completed) return;
+    this.currentCollectionIndex = index;
+    this.playContext = 'collection';
+    this.mode = 'normal';
+    this.lives = 3;
+    this.renderLives();
+    await this.showPlayScreen();
+    this.setCurrentBoard(this.createCollectionLevel(index));
+  }
+
+  private completeCollectionLevel(): void {
+    const total = this.collectionLevelCount();
+    this.collectionCompletedCount = Math.min(
+      total,
+      Math.max(this.collectionCompletedCount, this.currentCollectionIndex + 1),
+    );
+    saveCollectionCompletedCount(this.collectionCompletedCount);
+    this.renderCollectionEntryProgress();
+  }
+
+  private renderCollectionEntryProgress(): void {
+    const total = this.collectionLevelCount();
+    const completed = Math.min(this.collectionCompletedCount, total);
+    this.collectionModeCount.textContent = `${completed} / ${total}`;
+  }
+
+  private renderCollectionMap(): void {
+    const total = this.collectionLevelCount();
+    const completed = Math.min(this.collectionCompletedCount, total);
+    this.collectionCompletedCount = completed;
+    this.collectionRouteProgress.textContent = `${completed} / ${total}`;
+    this.renderCollectionEntryProgress();
+    const rows = total <= 3 ? 1 : 1 + Math.ceil((total - 3) / 2);
+    this.collectionRoute.style.setProperty('--collection-route-rows', String(rows));
+
+    const nodes = Array.from({ length: total }, (_, index) => {
+      const node = document.createElement('button');
+      node.type = 'button';
+      node.className = 'collection-level-node';
+      node.dataset.collectionIndex = String(index);
+      const isCompleted = index < completed;
+      const isCurrent = index === completed && completed < total;
+      const isLocked = index > completed;
+      node.classList.toggle('is-completed', isCompleted);
+      node.classList.toggle('is-current', isCurrent);
+      node.classList.toggle('is-locked', isLocked);
+      node.disabled = isLocked;
+
+      let row: number;
+      let column: number;
+      if (index < 3) {
+        row = 1;
+        column = index + 1;
+      } else {
+        row = 2 + Math.floor((index - 3) / 2);
+        const positionInRow = (index - 3) % 2;
+        column = row % 2 === 0
+          ? (positionInRow === 0 ? 3 : 1)
+          : (positionInRow === 0 ? 1 : 3);
+      }
+      node.style.gridRow = String(row);
+      node.style.gridColumn = String(column);
+
+      const bubble = document.createElement('span');
+      bubble.className = 'collection-level-node__bubble';
+      if (isCompleted) {
+        const image = document.createElement('img');
+        image.src = collectionArtworkUrl(index);
+        image.alt = '';
+        image.loading = 'lazy';
+        image.decoding = 'async';
+        const number = document.createElement('b');
+        number.className = 'collection-level-node__number';
+        number.textContent = String(index + 1);
+        bubble.append(image, number);
+      } else {
+        bubble.textContent = String(index + 1);
+      }
+      const state = document.createElement('small');
+      state.textContent = isCompleted ? '已收集' : isCurrent ? '当前关卡' : '未解锁';
+      node.setAttribute('aria-label', `收集关卡 ${index + 1}，${state.textContent}`);
+      node.append(bubble, state);
+      if (!isLocked) node.addEventListener('click', () => void this.startCollectionLevel(index));
+      return node;
+    });
+
+    this.collectionRoute.replaceChildren(this.collectionRouteLines, ...nodes);
+    requestAnimationFrame(() => this.renderCollectionPath());
+  }
+
+  private renderCollectionPath(): void {
+    if (this.collectionScreen.hidden) return;
+    const routeBounds = this.collectionRoute.getBoundingClientRect();
+    const nodes = Array.from(this.collectionRoute.querySelectorAll<HTMLElement>('.collection-level-node'));
+    if (routeBounds.width <= 0 || routeBounds.height <= 0 || nodes.length === 0) return;
+    const points = nodes.map((node) => {
+      const bounds = node.getBoundingClientRect();
+      return {
+        x: bounds.left - routeBounds.left + bounds.width * 0.5,
+        y: bounds.top - routeBounds.top + bounds.height * 0.5 - 10,
+      };
+    });
+    this.collectionRouteLines.setAttribute('viewBox', `0 0 ${routeBounds.width} ${routeBounds.height}`);
+    this.collectionRouteBase.setAttribute('d', roundedRoutePath(points));
+    const availableCount = Math.min(points.length, this.collectionCompletedCount + 1);
+    this.collectionRouteComplete.setAttribute('d', roundedRoutePath(points.slice(0, availableCount)));
   }
 
   private openBeadMode(): void {

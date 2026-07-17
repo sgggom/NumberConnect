@@ -1,4 +1,10 @@
-import { BoardShape, DEFAULT_SETTINGS, type GameSettings, type LevelData } from './types';
+import {
+  BoardShape,
+  DEFAULT_SETTINGS,
+  isTouchPreviewSize,
+  type GameSettings,
+  type LevelData,
+} from './types';
 
 const SETTINGS_KEY = 'number-connect.settings.v1';
 const LEVEL_COLLECTION_KEY = 'number-connect.level-collection.v2';
@@ -36,10 +42,19 @@ const withDefaultAlgorithm = (level: LevelData): LevelData => {
 export const loadSettings = (): GameSettings => {
   if (!hasStorage()) return { ...DEFAULT_SETTINGS };
   try {
-    const stored = JSON.parse(window.localStorage.getItem(SETTINGS_KEY) ?? '{}') as Partial<GameSettings>;
+    const stored = JSON.parse(window.localStorage.getItem(SETTINGS_KEY) ?? '{}') as (
+      Partial<GameSettings> & { touchPreviewEnabled?: boolean }
+    );
+    const { touchPreviewEnabled, ...currentSettings } = stored;
+    const touchPreviewSize = isTouchPreviewSize(stored.touchPreviewSize)
+      ? stored.touchPreviewSize
+      : touchPreviewEnabled === false
+        ? 'off'
+        : DEFAULT_SETTINGS.touchPreviewSize;
     return {
       ...DEFAULT_SETTINGS,
-      ...stored,
+      ...currentSettings,
+      touchPreviewSize,
       shape: BoardShape.Level,
       squareSize: DEFAULT_SETTINGS.squareSize,
       diamondSize: DEFAULT_SETTINGS.diamondSize,

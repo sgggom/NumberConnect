@@ -1,6 +1,6 @@
 import { query } from './dom';
 
-export type ScreenName = 'lobby' | 'play' | 'editor' | 'bead';
+export type ScreenName = 'lobby' | 'play' | 'editor' | 'bead' | 'collection';
 
 export class ScreenRouter {
   private readonly appShell = query<HTMLElement>('#app');
@@ -9,6 +9,7 @@ export class ScreenRouter {
     play: query<HTMLElement>('#play-screen'),
     editor: query<HTMLElement>('#editor-screen'),
     bead: query<HTMLElement>('#bead-screen'),
+    collection: query<HTMLElement>('#collection-screen'),
   };
 
   public show(name: ScreenName): void {

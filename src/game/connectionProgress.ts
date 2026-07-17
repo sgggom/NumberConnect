@@ -1,4 +1,7 @@
-export type ConnectionFailure = 'hidden-start' | 'non-consecutive' | 'direction-change';
+export type ConnectionFailure =
+  | 'hidden-start'
+  | 'non-consecutive'
+  | 'direction-change';
 
 export type ConnectionAction =
   | { type: 'started'; index: number }
@@ -65,10 +68,12 @@ export class ConnectionProgress {
     if (!allowHidden && !this.visibleIndices.has(index)) {
       return { type: 'wrong', index, reason: 'hidden-start' };
     }
+    const segmentDirection = this.segmentStartDirection(index);
+    if (segmentDirection === null) return { type: 'ignored' };
     this.visibleIndices.add(index);
     this.active = index;
     this.previous = undefined;
-    this.direction = undefined;
+    this.direction = segmentDirection;
     return { type: 'started', index };
   }
 
@@ -158,6 +163,23 @@ export class ConnectionProgress {
 
   private inBounds(index: number): boolean {
     return Number.isInteger(index) && index >= 0 && index < this.totalNodes;
+  }
+
+  private segmentStartDirection(index: number): Direction | null | undefined {
+    const connectedNeighbors = [...this.connectedEdges.values()].flatMap(([left, right]) => {
+      if (left === index) return [right];
+      if (right === index) return [left];
+      return [];
+    });
+    if (connectedNeighbors.length === 0) return undefined;
+    if (connectedNeighbors.length > 1) return null;
+
+    const orderedIndices = this.orderedIndices();
+    const position = orderedIndices.indexOf(index);
+    const neighborPosition = orderedIndices.indexOf(connectedNeighbors[0]);
+    if (neighborPosition < position) return 1;
+    if (neighborPosition > position) return -1;
+    return undefined;
   }
 
   private transitionOptions(from: number, to: number): TransitionOption[] {
