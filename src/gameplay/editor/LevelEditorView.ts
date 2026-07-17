@@ -1,8 +1,9 @@
-const LEVEL_EDITOR_VIEW_VERSION = '7';
+const LEVEL_EDITOR_VIEW_VERSION = '8';
 
 export const mountLevelEditorView = (host: HTMLElement): void => {
   const hasCurrentView = host.dataset.editorViewVersion === LEVEL_EDITOR_VIEW_VERSION
-    && host.querySelector('#editor-simulate-button') !== null;
+    && host.querySelector('#editor-simulate-button') !== null
+    && host.querySelector('#editor-simulation-next-button') !== null;
   if (host.childElementCount > 0 && hasCurrentView) return;
 
   // Vite can hot-reload the controller while keeping the editor's old DOM.
@@ -58,9 +59,12 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
               <p class="eyebrow">PLAYER MODEL</p>
               <h3 id="editor-simulation-title">模拟关卡</h3>
             </div>
-            <button id="editor-simulate-button" class="button button--secondary button--small" type="button" disabled>开始模拟</button>
+            <div class="editor-simulation-controls">
+              <button id="editor-simulate-button" class="button button--secondary button--small" type="button" disabled>开始模拟</button>
+              <button id="editor-simulation-next-button" class="button button--secondary button--small" type="button" title="手动前进一格" disabled>下一步</button>
+            </div>
           </div>
-          <p class="editor-simulation-rule">每 0.5 秒前进一格；分叉时向后预判两步，排除死路、数字间距不符或会让剩余格子断开的选项，再优先靠近数值相近的显示数字，并列才随机。</p>
+          <p class="editor-simulation-rule">自动模拟每 0.5 秒前进一格，也可点击“下一步”逐格检查；分叉时预判到下一个显示数字，排除沿途或连接后出现死路、数字间距不符、剩余格子断开的选项，再优先靠近数值相近的显示数字，并列才随机。</p>
           <div id="editor-simulation-summary" class="editor-simulation-summary" hidden>
             <div><span>总步数</span><strong id="editor-simulation-total-steps">0</strong></div>
             <div><span>错误次数</span><strong id="editor-simulation-error-count">0</strong></div>
@@ -94,6 +98,7 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
             <select id="editor-algorithm">
               <option value="algorithm-1">算法1</option>
               <option value="algorithm-2" selected>算法2</option>
+              <option value="algorithm-3">算法3</option>
             </select>
           </label>
         </div>

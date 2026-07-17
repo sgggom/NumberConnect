@@ -34,8 +34,6 @@ type CellNeighborMap = ReadonlyMap<string, ReadonlyArray<string>>;
 
 const keyOf = (cell: EditorCell): string => `${cell.x},${cell.y}`;
 
-const CANDIDATE_LOOKAHEAD_STEPS = 2;
-
 const boardShapeFor = (shape: EditorShape): BoardShape => {
   if (shape === 'diamond') return BoardShape.Diamond;
   if (shape === 'rectangle') return BoardShape.Rectangle;
@@ -165,47 +163,67 @@ const canReachNextVisibleNumber = (
   while (anchorIndex < route.length && hiddenCellKeys.has(keyOf(route[anchorIndex]))) anchorIndex += 1;
   if (anchorIndex >= route.length) anchorIndex = route.length - 1;
   const anchor = route[anchorIndex];
-  // The selected candidate is a+1. Look ahead through at most two more hidden
-  // cells; for a three-hidden-cell interval those are exactly a+2 and a+3.
+  // The selected candidate is a+1. Every remaining intermediate cell must be
+  // placed before the next visible-number anchor can be connected.
   const requiredIntermediateCount = anchorIndex - currentPosition - 2;
   if (requiredIntermediateCount < 0) return keyOf(candidate) === keyOf(anchor);
 
   const connectedKeys = new Set(route.slice(0, currentPosition + 1).map(keyOf));
   const anchorKey = keyOf(anchor);
+  if (keyOf(candidate) === anchorKey) return false;
   const intermediateCells = route.filter((cell) => {
     const key = keyOf(cell);
     return key !== anchorKey && hiddenCellKeys.has(key) && !connectedKeys.has(key);
   });
   const visited = new Set([keyOf(candidate)]);
-  const lookAheadSteps = Math.min(CANDIDATE_LOOKAHEAD_STEPS, requiredIntermediateCount);
+  const failedStates = new Set<string>();
 
   const search = (current: EditorCell, predictedSteps: number): boolean => {
+    const stateKey = `${keyOf(current)}:${predictedSteps}:${[...visited].sort().join('|')}`;
+    if (failedStates.has(stateKey)) return false;
     if (!leavesRemainingCellsConnected(
       current,
       routeCellKeys,
       connectedKeys,
       visited,
       neighborsByCell,
-    )) return false;
+    )) {
+      failedStates.add(stateKey);
+      return false;
+    }
 
     const remainingIntermediateCount = requiredIntermediateCount - predictedSteps;
     const remainingEdgesToAnchor = remainingIntermediateCount + 1;
-    if (minimumStepsBetween(current, anchor, shape) > remainingEdgesToAnchor) return false;
-    if (remainingIntermediateCount === 0) return areEditorCellsNeighbors(current, anchor, shape);
+    if (minimumStepsBetween(current, anchor, shape) > remainingEdgesToAnchor) {
+      failedStates.add(stateKey);
+      return false;
+    }
+    if (remainingIntermediateCount === 0) {
+      if (!areEditorCellsNeighbors(current, anchor, shape)) {
+        failedStates.add(stateKey);
+        return false;
+      }
+      visited.add(anchorKey);
+      const remainsConnectedAfterAnchor = leavesRemainingCellsConnected(
+        anchor,
+        routeCellKeys,
+        connectedKeys,
+        visited,
+        neighborsByCell,
+      );
+      visited.delete(anchorKey);
+      if (!remainsConnectedAfterAnchor) failedStates.add(stateKey);
+      return remainsConnectedAfterAnchor;
+    }
 
     const availableCount = intermediateCells.reduce(
       (count, cell) => count + (visited.has(keyOf(cell)) ? 0 : 1),
       0,
     );
-    if (availableCount < remainingIntermediateCount) return false;
-
-    const continuations = intermediateCells.filter((next) => {
-      const key = keyOf(next);
-      return !visited.has(key) && areEditorCellsNeighbors(current, next, shape);
-    });
-    // At the two-step horizon, only rule out a branch when the resulting cell
-    // is already a dead end. Do not solve the rest of a long interval globally.
-    if (predictedSteps === lookAheadSteps) return continuations.length > 0;
+    if (availableCount < remainingIntermediateCount) {
+      failedStates.add(stateKey);
+      return false;
+    }
 
     for (const next of intermediateCells) {
       const key = keyOf(next);
@@ -214,6 +232,7 @@ const canReachNextVisibleNumber = (
       if (search(next, predictedSteps + 1)) return true;
       visited.delete(key);
     }
+    failedStates.add(stateKey);
     return false;
   };
 

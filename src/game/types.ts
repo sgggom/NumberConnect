@@ -54,6 +54,7 @@ export interface BoardNeighborhoodPreviewCell {
   offsetY: number;
   value: number | null;
   center: boolean;
+  inFocusRing: boolean;
 }
 
 export interface BoardNeighborhoodPreviewLine {

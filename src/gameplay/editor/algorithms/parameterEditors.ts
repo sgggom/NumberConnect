@@ -89,5 +89,53 @@ export const renderEditorAlgorithmParameters = (
       host.append(note);
       break;
     }
+    case 'algorithm-3': {
+      const description = document.createElement('p');
+      description.textContent = EDITOR_ALGORITHMS.find((item) => item.id === selection.id)?.description ?? '';
+      const update = (parameters: Partial<typeof selection.parameters>): void => onChange({
+        ...selection,
+        parameters: { ...selection.parameters, ...parameters },
+      });
+      const crossingsDisabled = shape === 'hex';
+      const targetCrossings = crossingsDisabled ? 0 : selection.parameters.targetCrossings;
+      const crossings = numberField('最大交叉数量', targetCrossings, 0, 99, (value) => update({ targetCrossings: value }));
+      const crossingsInput = crossings.querySelector('input')!;
+      crossingsInput.disabled = crossingsDisabled;
+      crossingsInput.title = crossingsDisabled ? '六边形蜂窝棋盘不会产生交叉' : '允许出现的最大交叉数量';
+      const crossingHidden = numberField(
+        '交叉处隐藏概率 %',
+        crossingsDisabled ? 0 : selection.parameters.crossingHiddenProbability,
+        0,
+        100,
+        (value) => update({ crossingHiddenProbability: value }),
+      );
+      const crossingHiddenInput = crossingHidden.querySelector('input')!;
+      crossingHiddenInput.disabled = crossingsDisabled;
+      crossingHiddenInput.title = crossingsDisabled
+        ? '六边形蜂窝棋盘不会产生交叉'
+        : '交叉线段两端数字成为隐藏候选的概率';
+      host.append(
+        description,
+        crossings,
+        numberField('路径拐弯概率 %', selection.parameters.turnProbability, 0, 100, (value) => update({ turnProbability: value })),
+        numberField('直线处隐藏概率 %', selection.parameters.straightHiddenProbability, 0, 100, (value) => update({ straightHiddenProbability: value })),
+        numberField('拐弯处隐藏概率 %', selection.parameters.turnHiddenProbability, 0, 100, (value) => update({ turnHiddenProbability: value })),
+        crossingHidden,
+        numberField('隐藏占比 %', selection.parameters.hiddenPercent, 0, 100, (value) => update({ hiddenPercent: value })),
+        numberField(
+          '隐藏成片最大尺寸（格）',
+          selection.parameters.maxHiddenClusterSize,
+          1,
+          8,
+          (value) => update({ maxHiddenClusterSize: value }),
+        ),
+      );
+      const note = document.createElement('small');
+      note.textContent = crossingsDisabled
+        ? '六边形棋盘无交叉；其余概率先决定隐藏候选，再受隐藏占比、成片尺寸和唯一解限制。'
+        : '交叉概率作用于交叉线段两端数字；各概率先决定候选，再受隐藏占比、成片尺寸和唯一解限制。';
+      host.append(note);
+      break;
+    }
   }
 };

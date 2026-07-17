@@ -35,10 +35,10 @@ const toCell = (key: string): Cell => {
   return { x, y };
 };
 
-export const runAlgorithm2 = (
+export const generateAlgorithm2Path = (
   context: EditorAlgorithmContext,
-  selection: Algorithm2Selection,
-): EditorAlgorithmResult | null => {
+  parameters: Pick<Algorithm2Selection['parameters'], 'targetCrossings' | 'turnProbability'>,
+): EditorCell[] | null => {
   const providedFallback = context.fallbackPath?.map((cell) => ({ ...cell }));
   const fallbackKeys = new Set(providedFallback?.map((cell) => `${cell.x},${cell.y}`));
   const hasValidFallback = providedFallback?.length === context.activeCells.size
@@ -53,12 +53,12 @@ export const runAlgorithm2 = (
         context.columns,
         context.activeCells,
         context.shape,
-        selection.parameters.targetCrossings,
+        parameters.targetCrossings,
         context.generationIndex,
         { crossingMode: 'maximum', startMode: 'any', ...(realtime ? { maxNodes: 6000 } : {}) },
       );
   const candidates: EditorCell[][] = [];
-  const zeroCrossingLimit = selection.parameters.targetCrossings <= 0;
+  const zeroCrossingLimit = parameters.targetCrossings <= 0;
   const attempts = realtime
     ? 2
     : zeroCrossingLimit
@@ -71,13 +71,13 @@ export const runAlgorithm2 = (
       context.columns,
       context.activeCells,
       context.shape,
-      selection.parameters.targetCrossings,
+      parameters.targetCrossings,
       Math.imul(context.generationIndex + 1, 97) + attempt,
       {
         style: 'varied',
         crossingMode: 'maximum',
         startMode: 'any',
-        turnProbability: selection.parameters.turnProbability,
+        turnProbability: parameters.turnProbability,
         maxNodes: candidateNodeBudget,
       },
     );
@@ -95,13 +95,22 @@ export const runAlgorithm2 = (
     : fallbackPath;
   if (!selectedPath) return null;
 
-  const path = randomizeEditorPath(
+  return randomizeEditorPath(
     selectedPath,
     context.shape,
-    selection.parameters.targetCrossings,
+    parameters.targetCrossings,
     candidateSeed ^ 0xa511e9b3,
-    selection.parameters.turnProbability,
+    parameters.turnProbability,
   );
+};
+
+export const runAlgorithm2 = (
+  context: EditorAlgorithmContext,
+  selection: Algorithm2Selection,
+): EditorAlgorithmResult | null => {
+  const path = generateAlgorithm2Path(context, selection.parameters);
+  if (!path) return null;
+  const realtime = context.searchMode === 'realtime';
 
   const seed = Math.imul(context.generationIndex + 1, 104729)
     ^ Math.imul(context.rows + 1, 73856093)
