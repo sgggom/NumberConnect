@@ -105,16 +105,15 @@
           </button>
         </div>
         <div id="game-host" class="game-host" aria-label="数字连接棋盘"></div>
-        <aside id="touch-preview" class="touch-preview" aria-label="周围数字小窗">
-          <button id="touch-preview-drag-handle" class="touch-preview-handle" type="button" aria-label="拖动周围数字小窗">
-            <span><small>周围数字</small><b id="touch-preview-title">按住数字</b></span>
+        <aside id="touch-preview" class="touch-preview" aria-label="关卡小窗">
+          <button id="touch-preview-drag-handle" class="touch-preview-handle" type="button" aria-label="拖动关卡小窗">
+            <span><small>关卡小窗</small><b id="touch-preview-title">按住数字</b></span>
             <i aria-hidden="true">⠿</i>
           </button>
-          <div id="touch-preview-board" class="touch-preview-board" role="img" aria-label="按住棋盘数字查看周围">
+          <div id="touch-preview-board" class="touch-preview-board" role="img" aria-label="等待关卡载入">
             <svg id="touch-preview-lines" class="touch-preview-lines" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true" focusable="false">
               <g id="touch-preview-path-lines"></g>
               <line id="touch-preview-pointer-line" class="touch-preview-pointer-line" hidden></line>
-              <circle id="touch-preview-pointer-dot" class="touch-preview-pointer-dot" r="2.5" hidden></circle>
             </svg>
             <div id="touch-preview-cells" class="touch-preview-cells" aria-hidden="true"></div>
             <p id="touch-preview-hint" class="touch-preview-hint">按住棋盘中的数字</p>
@@ -203,7 +202,7 @@
           <label class="setting-row"><span><b>关卡列表</b><small>读取内置与本地编辑器关卡</small></span><select id="settings-level"></select></label>
           <label class="setting-row"><span><b>下一个数字提示</b><small>高亮下一处可见数字</small></span><input id="settings-next" class="switch" type="checkbox" checked /></label>
           <label class="setting-row"><span><b>游戏声音</b><small>连击、错误和胜利反馈</small></span><input id="settings-sound" class="switch" type="checkbox" checked /></label>
-          <label class="setting-row"><span><b>小窗跟手</b><small>让周围数字小窗始终显示在触摸位置上方</small></span><input id="settings-touch-preview-follow" class="switch" type="checkbox" /></label>
+          <label class="setting-row"><span><b>小窗跟手</b><small>让关卡小窗始终显示在触摸位置上方</small></span><input id="settings-touch-preview-follow" class="switch" type="checkbox" /></label>
           <button id="video-stats-button" class="setting-row setting-row--button" type="button"><span><b>视频统计</b><small>查看奖励视频的触发点位</small></span><strong id="video-stats-count">0 次 ›</strong></button>
         </div>
         <footer class="settings-actions"><button id="settings-lobby-button" class="button button--secondary" type="button">返回大厅</button><button id="settings-apply-button" class="button button--primary" type="button">应用设置</button></footer>

@@ -121,6 +121,34 @@ export const editorPathCrossingPoints = (
   return points;
 };
 
+/**
+ * Returns every path-cell index that touches a crossing segment. A geometric
+ * crossing sits between cells, so both endpoints of both crossing segments
+ * are treated as the crossing area for hidden-number selection.
+ */
+export const editorPathCrossingCellIndexes = (
+  path: ReadonlyArray<EditorCell>,
+  shape: EditorShape = 'square',
+): Set<number> => {
+  const projected = path.map((cell) => projectCell(cell, shape));
+  const indexes = new Set<number>();
+  for (let first = 0; first < projected.length - 1; first += 1) {
+    for (let second = first + 2; second < projected.length - 1; second += 1) {
+      if (!segmentsCross(
+        projected[first],
+        projected[first + 1],
+        projected[second],
+        projected[second + 1],
+      )) continue;
+      indexes.add(first);
+      indexes.add(first + 1);
+      indexes.add(second);
+      indexes.add(second + 1);
+    }
+  }
+  return indexes;
+};
+
 export const countEditorPathCrossings = (
   path: ReadonlyArray<EditorCell>,
   shape: EditorShape = 'square',

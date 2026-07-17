@@ -2,6 +2,7 @@ import type { LevelAlgorithmData } from '../../../game/types';
 import type { EditorShape } from '../types';
 import { createAlgorithm1Selection, runAlgorithm1 } from './algorithm1';
 import { createAlgorithm2Selection, runAlgorithm2 } from './algorithm2';
+import { createAlgorithm3Selection, runAlgorithm3 } from './algorithm3';
 import type {
   EditorAlgorithmContext,
   EditorAlgorithmDescriptor,
@@ -23,6 +24,11 @@ export const EDITOR_ALGORITHMS: readonly EditorAlgorithmDescriptor[] = [
     label: '算法2',
     description: '在不死局且交叉不超过上限的前提下随机选择方向和完整路径，并消除纯运气解。',
   },
+  {
+    id: 'algorithm-3',
+    label: '算法3',
+    description: '沿用算法2的路径生成，并按直线、拐弯和交叉位置的独立概率选择隐藏数字。',
+  },
 ];
 
 export const createEditorAlgorithm = (id: EditorAlgorithmId): EditorAlgorithmSelection => {
@@ -31,6 +37,8 @@ export const createEditorAlgorithm = (id: EditorAlgorithmId): EditorAlgorithmSel
       return createAlgorithm1Selection();
     case 'algorithm-2':
       return createAlgorithm2Selection();
+    case 'algorithm-3':
+      return createAlgorithm3Selection();
   }
 };
 
@@ -99,6 +107,58 @@ export const normalizeEditorAlgorithm = (
       },
     };
   }
+  if (value?.id === 'algorithm-3') {
+    const defaults = createAlgorithm3Selection();
+    return {
+      ...defaults,
+      parameters: {
+        topology: 'board-shape',
+        pathMode: 'single-stroke-no-luck-feature-hidden',
+        targetCrossings: normalizedInteger(
+          value.parameters?.targetCrossings,
+          defaults.parameters.targetCrossings,
+          0,
+          99,
+        ),
+        turnProbability: normalizedInteger(
+          value.parameters?.turnProbability,
+          defaults.parameters.turnProbability,
+          0,
+          100,
+        ),
+        straightHiddenProbability: normalizedInteger(
+          value.parameters?.straightHiddenProbability,
+          defaults.parameters.straightHiddenProbability,
+          0,
+          100,
+        ),
+        turnHiddenProbability: normalizedInteger(
+          value.parameters?.turnHiddenProbability,
+          defaults.parameters.turnHiddenProbability,
+          0,
+          100,
+        ),
+        crossingHiddenProbability: normalizedInteger(
+          value.parameters?.crossingHiddenProbability,
+          defaults.parameters.crossingHiddenProbability,
+          0,
+          100,
+        ),
+        hiddenPercent: normalizedInteger(
+          value.parameters?.hiddenPercent,
+          defaults.parameters.hiddenPercent,
+          0,
+          100,
+        ),
+        maxHiddenClusterSize: normalizedInteger(
+          value.parameters?.maxHiddenClusterSize ?? value.parameters?.maxHiddenRun,
+          defaults.parameters.maxHiddenClusterSize,
+          1,
+          8,
+        ),
+      },
+    };
+  }
   return createEditorAlgorithm(LEGACY_EDITOR_ALGORITHM_ID);
 };
 
@@ -121,6 +181,17 @@ export const resolveEditorAlgorithmForShape = (
             parameters: { ...selection.parameters, targetCrossings: 0 },
           }
         : selection;
+    case 'algorithm-3':
+      return shape === 'hex'
+        ? {
+            ...selection,
+            parameters: {
+              ...selection.parameters,
+              targetCrossings: 0,
+              crossingHiddenProbability: 0,
+            },
+          }
+        : selection;
   }
 };
 
@@ -134,6 +205,8 @@ export const runEditorAlgorithm = (
       return runAlgorithm1(context, resolved);
     case 'algorithm-2':
       return runAlgorithm2(context, resolved);
+    case 'algorithm-3':
+      return runAlgorithm3(context, resolved);
   }
 };
 

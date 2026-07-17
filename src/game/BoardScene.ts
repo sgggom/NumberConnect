@@ -115,6 +115,7 @@ export class BoardScene extends Phaser.Scene {
     this.transitioning = false;
     this.view = this.buildView(session, 0);
     this.refreshView();
+    this.emitNeighborhoodPreview();
   }
 
   public setPaused(paused: boolean): void {
@@ -128,12 +129,14 @@ export class BoardScene extends Phaser.Scene {
       this.stopHintPulse();
     } else {
       this.refreshView();
+      if (!this.locked) this.emitNeighborhoodPreview();
     }
   }
 
   public setSolutionReveal(revealed: boolean): void {
     this.solutionRevealed = revealed;
     this.refreshView();
+    if (!this.locked) this.emitNeighborhoodPreview(this.neighborhoodPreviewIndex ?? null);
   }
 
   public async transitionTo(session: BoardSessionInput): Promise<void> {
@@ -171,6 +174,7 @@ export class BoardScene extends Phaser.Scene {
     newView.root.y = 0;
     this.transitioning = false;
     this.locked = false;
+    this.emitNeighborhoodPreview();
   }
 
   public async showCompletion(): Promise<void> {
@@ -642,19 +646,26 @@ export class BoardScene extends Phaser.Scene {
     this.wrongFeedbackActive = false;
     this.connection?.endStroke();
     this.view?.pointerLine.clear();
-    this.clearNeighborhoodPreview();
     if (wasDrawing) this.refreshView();
+    if (!this.locked) this.emitNeighborhoodPreview();
   }
 
-  private emitNeighborhoodPreview(index: number, pointer: Phaser.Input.Pointer): void {
+  private emitNeighborhoodPreview(
+    index: number | null = null,
+    pointer?: Phaser.Input.Pointer,
+  ): void {
     if (!this.session || !this.connection || !this.view) return;
-    const centerCell = this.session.level.solutionPath[index];
+    const centerCell = index === null ? undefined : this.session.level.solutionPath[index];
     const centerView = centerCell ? this.view.cells.get(cellKey(centerCell)) : undefined;
-    const localX = pointer.x - this.view.root.x;
-    const localY = pointer.y - this.view.root.y;
-    const canvasBounds = this.sys.game.canvas.getBoundingClientRect();
-    const clientX = canvasBounds.left + (pointer.x / Math.max(1, this.scale.width)) * canvasBounds.width;
-    const clientY = canvasBounds.top + (pointer.y / Math.max(1, this.scale.height)) * canvasBounds.height;
+    const localX = pointer ? pointer.x - this.view.root.x : 0;
+    const localY = pointer ? pointer.y - this.view.root.y : 0;
+    const canvasBounds = pointer ? this.sys.game.canvas.getBoundingClientRect() : undefined;
+    const clientX = pointer && canvasBounds
+      ? canvasBounds.left + (pointer.x / Math.max(1, this.scale.width)) * canvasBounds.width
+      : 0;
+    const clientY = pointer && canvasBounds
+      ? canvasBounds.top + (pointer.y / Math.max(1, this.scale.height)) * canvasBounds.height
+      : 0;
     const preview = buildBoardNeighborhoodPreview(
       this.session.level,
       index,
@@ -664,7 +675,7 @@ export class BoardScene extends Phaser.Scene {
       clientY,
       {
         connectedNodePairs: this.connection.connectedNodePairs(),
-        pointer: centerView ? {
+        pointer: index !== null && centerView && pointer ? {
           fromIndex: this.connection.activeIndex ?? index,
           offsetX: (localX - centerView.x) / this.view.step,
           offsetY: (localY - centerView.y) / this.view.step,
@@ -672,7 +683,7 @@ export class BoardScene extends Phaser.Scene {
       },
     );
     if (!preview) return;
-    this.neighborhoodPreviewIndex = index;
+    this.neighborhoodPreviewIndex = index ?? undefined;
     this.session.onNeighborhoodPreview?.(preview);
   }
 

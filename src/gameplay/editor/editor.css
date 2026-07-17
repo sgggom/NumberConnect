@@ -22,8 +22,10 @@
 .editor-simulation-panel { min-width: 0; min-height: 0; padding: 15px; display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); gap: 10px; overflow: hidden; border: 1px solid var(--line); border-radius: 22px; background: linear-gradient(180deg, rgba(24,35,48,.98), rgba(14,24,36,.98)); }
 .editor-simulation-panel__header { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; }
 .editor-simulation-panel__header h3 { margin: 4px 0 0; font-size: 1.05rem; }
+.editor-simulation-controls { display: flex; align-items: center; justify-content: flex-end; gap: 7px; }
 .editor-simulation-panel__header .button { min-width: 76px; padding: 8px 9px; border-color: rgba(88,208,170,.32); color: var(--green); background: rgba(88,208,170,.08); font-size: .65rem; }
 .editor-simulation-panel__header .button.is-running { border-color: rgba(240,184,75,.45); color: var(--gold); background: rgba(240,184,75,.11); }
+.editor-simulation-panel__header .button:disabled { border-color: rgba(255,255,255,.08); color: rgba(174,193,210,.42); background: rgba(255,255,255,.025); }
 .editor-simulation-rule { margin: 0; color: var(--muted); font-size: .61rem; font-weight: 700; line-height: 1.5; }
 .editor-simulation-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
 .editor-simulation-summary[hidden] { display: none; }

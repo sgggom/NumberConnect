@@ -167,6 +167,7 @@ export class LevelEditorController {
     this.query('#editor-undo-delete-button').addEventListener('click', () => this.undoLastDeletion());
     this.query('#editor-generate-path-button').addEventListener('click', () => this.generatePath());
     this.query('#editor-simulate-button').addEventListener('click', () => this.simulatePlay());
+    this.query('#editor-simulation-next-button').addEventListener('click', () => this.advanceSimulationManually());
     this.query('#editor-playtest-button').addEventListener('click', () => this.playtest());
     this.query('#editor-save-button').addEventListener('click', () => this.save());
     this.query('#editor-level-add').addEventListener('click', () => this.save());
@@ -411,6 +412,16 @@ export class LevelEditorController {
       this.setStatus('请先生成覆盖全部格子的路径。', true);
       return;
     }
+    if (!this.initializeSimulation()) return;
+    this.isSimulationAnimating = true;
+    this.host.classList.add('is-simulation-animating');
+    this.renderSimulationPanel();
+    const run = ++this.simulationAnimationRun;
+    this.setStatus(`模拟开始：每 ${SIMULATION_STEP_INTERVAL_MS / 1000} 秒前进一格，共 ${this.simulationCellEvents.length} 次移动。`);
+    this.scheduleNextSimulationStep(run);
+  }
+
+  private initializeSimulation(): boolean {
     this.cancelSimulationAnimation();
     this.simulationResult = simulateLevelPlay({
       path: this.model.solutionPath,
@@ -424,17 +435,28 @@ export class LevelEditorController {
     this.simulationErrorAttempts = [];
     const startingCell = this.simulationResult.steps[0]?.attemptedCells[0];
     this.simulationSuccessfulCells = startingCell ? [{ ...startingCell }] : [];
-    this.isSimulationAnimating = this.simulationCellEvents.length > 0;
-    if (!this.isSimulationAnimating) this.simulationVisibleStepCount = this.simulationResult.totalSteps;
-    this.host.classList.toggle('is-simulation-animating', this.isSimulationAnimating);
+    const hasMovement = this.simulationCellEvents.length > 0;
+    if (!hasMovement) this.simulationVisibleStepCount = this.simulationResult.totalSteps;
     this.renderSimulationPanel();
-    if (!this.isSimulationAnimating) {
+    if (!hasMovement) {
       this.setStatus('模拟完成：当前关卡没有可播放的步骤。');
+      return false;
+    }
+    return true;
+  }
+
+  private advanceSimulationManually(): void {
+    if (this.isSimulationAnimating) return;
+    if (!this.model.hasGeneratedPath) {
+      this.setStatus('请先生成覆盖全部格子的路径。', true);
       return;
     }
-    const run = ++this.simulationAnimationRun;
-    this.setStatus(`模拟开始：每 ${SIMULATION_STEP_INTERVAL_MS / 1000} 秒前进一格，共 ${this.simulationCellEvents.length} 次移动。`);
-    this.scheduleNextSimulationStep(run);
+    if (!this.simulationResult && !this.initializeSimulation()) return;
+    if (this.simulationCellEventIndex >= this.simulationCellEvents.length) {
+      this.setStatus('本次模拟已经完成；点击“重新模拟”可生成一次新的玩家体验。');
+      return;
+    }
+    this.advanceSimulationCell();
   }
 
   private createSimulationCellEvents(result: SimulatedPlayResult): SimulationCellEvent[] {
@@ -460,8 +482,14 @@ export class LevelEditorController {
 
   private advanceSimulationAnimation(run: number): void {
     if (run !== this.simulationAnimationRun || !this.isSimulationAnimating || !this.simulationResult) return;
+    if (!this.advanceSimulationCell()) return;
+    if (this.isSimulationAnimating) this.scheduleNextSimulationStep(run);
+  }
+
+  private advanceSimulationCell(): boolean {
+    if (!this.simulationResult) return false;
     const event = this.simulationCellEvents[this.simulationCellEventIndex];
-    if (!event) return;
+    if (!event) return false;
     if (event.isError) {
       this.simulationErrorAttempts.push({ from: { ...event.from }, to: { ...event.to } });
     } else {
@@ -482,7 +510,7 @@ export class LevelEditorController {
     this.renderSimulationPanel();
     if (finished) {
       this.setStatus(`模拟完成：共 ${total} 步，错误 ${this.simulationResult.errorCount} 次。`);
-      return;
+      return true;
     }
     if (event.isError) {
       this.setStatus(`正在模拟第 ${event.stepIndex + 1}/${total} 步：猜错一格，已标红并排除该选项。`);
@@ -491,18 +519,24 @@ export class LevelEditorController {
     } else {
       this.setStatus(`正在模拟第 ${event.stepIndex + 1}/${total} 步：前进到第 ${this.simulationSuccessfulCells.length} 个格子。`);
     }
-    this.scheduleNextSimulationStep(run);
+    return true;
   }
 
   private renderSimulationPanel(): void {
     const button = this.query<HTMLButtonElement>('#editor-simulate-button');
+    const nextButton = this.query<HTMLButtonElement>('#editor-simulation-next-button');
     const summary = this.query<HTMLElement>('#editor-simulation-summary');
     const results = this.query<HTMLElement>('#editor-simulation-results');
-    button.disabled = !this.model.hasGeneratedPath || this.isPathAnimating || this.isImageRecognizing;
+    const controlsUnavailable = !this.model.hasGeneratedPath || this.isPathAnimating || this.isImageRecognizing;
+    const simulationFinished = this.simulationResult !== undefined
+      && this.simulationCellEventIndex >= this.simulationCellEvents.length;
+    button.disabled = controlsUnavailable;
     button.textContent = this.isSimulationAnimating
       ? '停止模拟'
       : this.simulationResult ? '重新模拟' : '开始模拟';
     button.classList.toggle('is-running', this.isSimulationAnimating);
+    nextButton.disabled = controlsUnavailable || this.isSimulationAnimating || simulationFinished;
+    nextButton.textContent = simulationFinished ? '已完成' : '下一步';
 
     if (!this.simulationResult) {
       summary.hidden = true;
@@ -563,7 +597,9 @@ export class LevelEditorController {
     if (cards.length === 0) {
       const pending = document.createElement('p');
       pending.className = 'editor-simulation-empty is-running';
-      pending.textContent = '已定位起点…0.5 秒后前进第 1 格。';
+      pending.textContent = this.isSimulationAnimating
+        ? '已定位起点…0.5 秒后前进第 1 格。'
+        : '已定位起点，点击“下一步”前进第 1 格。';
       results.replaceChildren(pending);
     } else {
       results.replaceChildren(...cards);
@@ -916,7 +952,7 @@ export class LevelEditorController {
       this.setStatus('当前算法无法生成覆盖全部格子的路径，请调整棋盘或更换算法。', true);
       return;
     }
-    const hiddenSummary = this.model.algorithmSelection.id === 'algorithm-2'
+    const hiddenSummary = this.model.algorithmSelection.id !== 'algorithm-1'
       ? `，隐藏 ${this.model.hiddenCellKeys.size}/${this.model.targetHiddenCount ?? this.model.hiddenCellKeys.size} 格，纯运气分叉 0`
       : '';
     this.animateGeneratedPath(`第 ${this.model.pathGenerationCount} 次路径生成成功：共 ${this.model.solutionPath.length} 个格子${hiddenSummary}。`);

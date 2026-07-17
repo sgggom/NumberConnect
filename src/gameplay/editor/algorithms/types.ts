@@ -37,7 +37,24 @@ export interface Algorithm2Selection {
   parameters: Algorithm2Parameters;
 }
 
-export type EditorAlgorithmSelection = Algorithm1Selection | Algorithm2Selection;
+export interface Algorithm3Parameters {
+  topology: 'board-shape';
+  pathMode: 'single-stroke-no-luck-feature-hidden';
+  targetCrossings: number;
+  turnProbability: number;
+  straightHiddenProbability: number;
+  turnHiddenProbability: number;
+  crossingHiddenProbability: number;
+  hiddenPercent: number;
+  maxHiddenClusterSize: number;
+}
+
+export interface Algorithm3Selection {
+  id: 'algorithm-3';
+  parameters: Algorithm3Parameters;
+}
+
+export type EditorAlgorithmSelection = Algorithm1Selection | Algorithm2Selection | Algorithm3Selection;
 export type EditorAlgorithmId = EditorAlgorithmSelection['id'];
 
 export interface EditorAlgorithmDescriptor {

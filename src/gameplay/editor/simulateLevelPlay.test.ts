@@ -143,7 +143,7 @@ describe('editor level play simulation', () => {
     });
   });
 
-  it('looks two cells ahead to reject a branch that becomes a dead end on the second prediction', () => {
+  it('rejects a branch that becomes a dead end before reaching the next visible number', () => {
     const path = [
       { x: 5, y: 5 },
       { x: 6, y: 5 },
@@ -183,7 +183,7 @@ describe('editor level play simulation', () => {
     expect(result.steps[0].forkCount).toBeGreaterThanOrEqual(1);
   });
 
-  it('looks two cells ahead to reject a branch that strands a remaining cell', () => {
+  it('rejects a branch that strands a remaining cell before reaching the next visible number', () => {
     const path = [
       { x: 6, y: 5 },
       { x: 7, y: 4 },
@@ -233,7 +233,7 @@ describe('editor level play simulation', () => {
     expect(result.steps[0].forkCount).toBeGreaterThanOrEqual(1);
   });
 
-  it('does not solve past the two-cell prediction horizon', () => {
+  it('predicts through the next visible number beyond the old two-cell horizon', () => {
     const path = [
       { x: 5, y: 5 },
       { x: 6, y: 5 },
@@ -265,10 +265,10 @@ describe('editor level play simulation', () => {
       random: () => 0.99,
     });
 
-    expect(result.errorCount).toBe(1);
+    expect(result.errorCount).toBe(0);
     expect(result.steps[0]).toMatchObject({
-      outcome: 'error',
-      attemptedCells: [path[0], path[13]],
+      outcome: 'complete',
+      attemptedCells: path,
     });
   });
 
