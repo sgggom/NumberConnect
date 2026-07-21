@@ -2,6 +2,7 @@ import {
   BoardShape,
   DEFAULT_SETTINGS,
   isTouchPreviewSize,
+  isUiTheme,
   type GameSettings,
   type LevelData,
 } from './types';
@@ -51,9 +52,11 @@ export const loadSettings = (): GameSettings => {
       : touchPreviewEnabled === false
         ? 'off'
         : DEFAULT_SETTINGS.touchPreviewSize;
+    const uiTheme = isUiTheme(stored.uiTheme) ? stored.uiTheme : DEFAULT_SETTINGS.uiTheme;
     return {
       ...DEFAULT_SETTINGS,
       ...currentSettings,
+      uiTheme,
       touchPreviewSize,
       shape: BoardShape.Level,
       squareSize: DEFAULT_SETTINGS.squareSize,
