@@ -1086,9 +1086,6 @@ export class LevelEditorController {
           apply();
         }
       });
-      item.addEventListener('mouseenter', (event) => this.showLevelPreview(level, event.clientX, event.clientY));
-      item.addEventListener('mousemove', (event) => this.moveLevelPreview(event.clientX, event.clientY));
-      item.addEventListener('mouseleave', () => this.hideLevelPreview());
       item.append(info, remove);
       return item;
     });
@@ -1096,7 +1093,6 @@ export class LevelEditorController {
   }
 
   private applyLevel(level: LevelData): void {
-    this.hideLevelPreview();
     this.selectedLevelId = level.levelId;
     this.model.applyLevel(level);
     this.render();
@@ -1113,48 +1109,6 @@ export class LevelEditorController {
     this.options.onLevelsChange(levels);
     this.render();
     this.setStatus(`关卡 ${levelId} 已删除，后续编号已顺延。`);
-  }
-
-  private showLevelPreview(level: LevelData, clientX: number, clientY: number): void {
-    const preview = this.query<HTMLElement>('#editor-level-preview');
-    const header = document.createElement('div');
-    header.className = 'editor-level-preview__header';
-    header.textContent = `#${level.levelId} · ${level.columns}×${level.rows}`;
-    const grid = document.createElement('div');
-    grid.className = 'editor-level-preview__grid';
-    grid.style.setProperty('--preview-cols', String(level.columns));
-    grid.style.setProperty('--preview-rows', String(level.rows));
-    const active = new Set(level.activeCells.map((cell) => `${cell.x},${cell.y}`));
-    const hidden = new Set(level.hiddenCells?.map((cell) => `${cell.x},${cell.y}`) ?? []);
-    const order = new Map(level.solutionPath.map((cell, index) => [`${cell.x},${cell.y}`, index + 1]));
-    const cells = Array.from({ length: level.rows * level.columns }, (_, index) => {
-      const x = index % level.columns;
-      const y = Math.floor(index / level.columns);
-      const cell = document.createElement('span');
-      const key = `${x},${y}`;
-      if (active.has(key)) cell.classList.add('is-active');
-      if (hidden.has(key)) cell.classList.add('is-hidden');
-      const value = order.get(key);
-      if (value) cell.textContent = String(value);
-      return cell;
-    });
-    grid.append(...cells);
-    preview.replaceChildren(header, grid);
-    preview.hidden = false;
-    this.moveLevelPreview(clientX, clientY);
-  }
-
-  private moveLevelPreview(clientX: number, clientY: number): void {
-    const preview = this.query<HTMLElement>('#editor-level-preview');
-    if (preview.hidden) return;
-    const width = preview.offsetWidth || 240;
-    const height = preview.offsetHeight || 240;
-    preview.style.left = `${Math.min(clientX + 14, window.innerWidth - width - 10)}px`;
-    preview.style.top = `${Math.min(clientY + 14, window.innerHeight - height - 10)}px`;
-  }
-
-  private hideLevelPreview(): void {
-    this.query<HTMLElement>('#editor-level-preview').hidden = true;
   }
 
   private async importLevels(event: Event): Promise<void> {

@@ -73,10 +73,30 @@ import {
 } from './gameplay/collection/collectionArtwork';
 import { generateEndlessLevel } from './gameplay/endless/generateEndlessLevel';
 
+const UI_DESIGN_WIDTH = 750;
+const UI_DESIGN_HEIGHT = 1334;
+const UI_LOGICAL_WIDTH = 430;
+const UI_LOGICAL_TO_DESIGN_SCALE = UI_DESIGN_WIDTH / UI_LOGICAL_WIDTH;
+
+const syncFixedUiScale = (): void => {
+  const designFitScale = Math.min(
+    window.innerWidth / UI_DESIGN_WIDTH,
+    window.innerHeight / UI_DESIGN_HEIGHT,
+  );
+  document.documentElement.style.setProperty(
+    '--ui-scale',
+    String(Math.max(0.01, designFitScale * UI_LOGICAL_TO_DESIGN_SCALE)),
+  );
+};
+
+syncFixedUiScale();
+window.addEventListener('resize', syncFixedUiScale);
+
 const nextFrame = (): Promise<void> => new Promise((resolve) => requestAnimationFrame(() => resolve()));
 const waitFor = (duration: number): Promise<void> => new Promise((resolve) => window.setTimeout(resolve, duration));
 const TOUCH_PREVIEW_ENTER_DURATION_MS = 240;
 const TOUCH_PREVIEW_EXIT_DURATION_MS = 170;
+const PRIMARY_ACTION_TRANSITION_DURATION_MS = 320;
 const COLLECTION_MIN_LEVELS = 7;
 const COLLECTION_PROGRESS_KEY = 'number-connect.collection-route.v1';
 const DAILY_COMPLETION_KEY = 'number-connect.daily-completed.v1';
@@ -225,10 +245,12 @@ interface TouchPreviewVisibilityAnimation {
 class NumberConnectApp {
   private readonly appShell = query<HTMLElement>('#app');
   private readonly screenRouter = new ScreenRouter();
+  private readonly primaryActionButton = query<HTMLButtonElement>('#primary-action-button');
+  private readonly primaryActionLabel = query<HTMLElement>('#primary-action-label');
   private readonly events = new EventBus<GameEventMap>();
   private readonly playScreen = query<HTMLElement>('#play-screen');
   private readonly gameHost = query<HTMLElement>('#game-host');
-  private readonly playBackButton = query<HTMLButtonElement>('#back-button');
+  private readonly playLevelButton = query<HTMLButtonElement>('#play-level-button');
   private readonly levelLabel = query<HTMLElement>('#play-level-label');
   private readonly progressLabel = query<HTMLElement>('#play-progress');
   private readonly livesLabel = query<HTMLElement>('#play-lives');
@@ -242,7 +264,6 @@ class NumberConnectApp {
   private readonly touchPreviewSizeControl = query<HTMLElement>('#touch-preview-size');
   private readonly uiThemeControl = query<HTMLElement>('#settings-theme');
   private readonly resultOverlay = query<HTMLElement>('#result-overlay');
-  private readonly resultKicker = query<HTMLElement>('#result-kicker');
   private readonly resultTitle = query<HTMLElement>('#result-title');
   private readonly resultMessage = query<HTMLElement>('#result-message');
   private readonly resultReward = query<HTMLElement>('#result-reward');
@@ -250,6 +271,8 @@ class NumberConnectApp {
   private readonly restartButton = query<HTMLButtonElement>('#restart-button');
   private readonly nextButton = query<HTMLButtonElement>('#next-button');
   private readonly resultLobbyButton = query<HTMLButtonElement>('#result-lobby-button');
+  private readonly levelPickerDialog = query<HTMLDialogElement>('#level-picker-dialog');
+  private readonly levelPickerGrid = query<HTMLElement>('#level-picker-grid');
   private readonly settingsDialog = query<HTMLDialogElement>('#settings-dialog');
   private readonly videoStatsDialog = query<HTMLDialogElement>('#video-stats-dialog');
   private readonly videoStatsCount = query<HTMLElement>('#video-stats-count');
@@ -266,7 +289,6 @@ class NumberConnectApp {
   private readonly beadStartButton = query<HTMLButtonElement>('#bead-start-button');
   private readonly beadGalleryButton = query<HTMLButtonElement>('#bead-gallery-button');
   private readonly beadGalleryCount = query<HTMLElement>('#bead-gallery-count');
-  private readonly collectionModeCount = query<HTMLElement>('#collection-mode-count');
   private readonly collectionScreen = query<HTMLElement>('#collection-screen');
   private readonly collectionRoute = query<HTMLElement>('#collection-route');
   private readonly collectionRouteLines = query<SVGSVGElement>('#collection-route-lines');
@@ -277,6 +299,10 @@ class NumberConnectApp {
   private readonly dailyCalendarGrid = query<HTMLElement>('#daily-calendar-grid');
   private readonly dailyMonthLabel = query<HTMLElement>('#daily-month-label');
   private readonly dailyCompleteCount = query<HTMLElement>('#daily-complete-count');
+  private readonly dailyMonthTotal = query<HTMLElement>('#daily-month-total');
+  private readonly dailyProgressTrack = query<HTMLElement>('#daily-progress-track');
+  private readonly dailyProgressFill = query<HTMLElement>('#daily-progress-fill');
+  private readonly dailyPlayButton = query<HTMLButtonElement>('#daily-play-button');
   private readonly dailyNextMonthButton = query<HTMLButtonElement>('#daily-next-month');
   private readonly endlessCurrentStage = query<HTMLElement>('#endless-current-stage');
   private readonly endlessCurrentLives = query<HTMLElement>('#endless-current-lives');
@@ -288,8 +314,6 @@ class NumberConnectApp {
   private readonly favoritesBeadPanel = query<HTMLElement>('#favorites-bead-panel');
   private readonly favoritesAlbumGrid = query<HTMLElement>('#favorites-album-grid');
   private readonly favoritesBeadGrid = query<HTMLElement>('#favorites-bead-grid');
-  private readonly favoritesHeaderCount = query<HTMLElement>('#favorites-header-count');
-  private readonly favoritesSummaryKicker = query<HTMLElement>('#favorites-summary-kicker');
   private readonly favoritesSummaryTitle = query<HTMLElement>('#favorites-summary-title');
   private readonly favoritesSummaryCount = query<HTMLElement>('#favorites-summary-count');
   private readonly beadGalleryDialog = query<HTMLDialogElement>('#bead-gallery-dialog');
@@ -312,6 +336,9 @@ class NumberConnectApp {
   private endlessSessionActive = initialEndlessRunState.active;
   private endlessLives = initialEndlessRunState.lives;
   private endlessHighScore = initialEndlessRunState.bestStage;
+  private currentScreen: ScreenName = 'lobby';
+  private primaryActionTransition?: Animation;
+  private primaryActionTransitionToken = 0;
   private currentLevel?: LevelData;
   private currentProgress = 0;
   private currentTotal = 0;
@@ -415,18 +442,29 @@ class NumberConnectApp {
     this.refreshLevelOptions();
     this.renderVideoStats();
     this.renderBeadScreen();
-    this.renderCollectionEntryProgress();
     this.renderDailyCalendar();
     this.renderEndlessHub();
     this.renderFavoritesScreen();
     this.renderTouchPreviewState();
   }
 
+  private uiVisualScale(): number {
+    if (this.appShell.classList.contains('is-editor-fullscreen')) return 1;
+    const logicalWidth = this.appShell.offsetWidth;
+    const visualWidth = this.appShell.getBoundingClientRect().width;
+    return logicalWidth > 0 && visualWidth > 0 ? visualWidth / logicalWidth : 1;
+  }
+
   private bindLobby(): void {
+    this.primaryActionButton.addEventListener('click', () => {
+      if (this.currentScreen === 'lobby') void this.startNormalMode();
+      else if (this.currentScreen === 'daily') void this.startDailyChallenge(this.dailyChallengeDateKey);
+      else if (this.currentScreen === 'endless') void this.startEndlessMode();
+    });
     query('#start-button').addEventListener('click', () => void this.startNormalMode());
     query('#endless-button').addEventListener('click', () => this.openEndlessHub());
     query('#bead-mode-button').addEventListener('click', () => this.openBeadMode());
-    query('#collection-mode-button').addEventListener('click', () => this.openCollectionMode());
+    query('#daily-challenge-entry-button').addEventListener('click', () => this.openDailyChallenge());
     query('#collection-back-button').addEventListener('click', () => this.backToLobby());
     query('#collection-gallery-button').addEventListener('click', () => this.openBeadGallery());
     this.beadBackButton.addEventListener('click', () => this.closeBeadMode());
@@ -442,21 +480,23 @@ class NumberConnectApp {
     query('#lobby-settings-button').addEventListener('click', () => this.openSettings('lobby'));
     query('#default-start-button').addEventListener('click', () => void this.startNormalMode());
     query('#default-bead-mode-button').addEventListener('click', () => this.openBeadMode());
-    query('#default-collection-mode-button').addEventListener('click', () => this.openCollectionMode());
+    query('#default-daily-challenge-button').addEventListener('click', () => this.openDailyChallenge());
     query('#default-editor-button').addEventListener('click', () => this.openEditor());
     query('#default-lobby-settings-button').addEventListener('click', () => this.openSettings('lobby'));
     query('#tab-lobby-button').addEventListener('click', () => this.backToLobby());
     query('#tab-challenge-button').addEventListener('click', () => this.openDailyChallenge());
     query('#tab-endless-button').addEventListener('click', () => this.openEndlessHub());
     query('#tab-favorites-button').addEventListener('click', () => this.openFavorites());
-    query('#daily-back-button').addEventListener('click', () => this.backToLobby());
     query('#daily-previous-month').addEventListener('click', () => this.shiftDailyCalendarMonth(-1));
     this.dailyNextMonthButton.addEventListener('click', () => this.shiftDailyCalendarMonth(1));
     query('#daily-today-button').addEventListener('click', () => {
       const today = new Date();
       this.dailyCalendarMonth = new Date(today.getFullYear(), today.getMonth(), 1, 12);
+      this.dailyChallengeDateKey = formatDailyDateKey(today);
       this.renderDailyCalendar();
     });
+    query('#daily-settings-button').addEventListener('click', () => this.openSettings('lobby'));
+    this.dailyPlayButton.addEventListener('click', () => void this.startDailyChallenge(this.dailyChallengeDateKey));
     query('#endless-settings-button').addEventListener('click', () => this.openSettings('lobby'));
     this.endlessStartButton.addEventListener('click', () => void this.startEndlessMode());
     this.favoritesAlbumTab.addEventListener('click', () => this.setFavoritesTab('album'));
@@ -464,7 +504,10 @@ class NumberConnectApp {
   }
 
   private bindPlayControls(): void {
-    this.playBackButton.addEventListener('click', () => this.leavePlayScreen());
+    this.playLevelButton.addEventListener('click', () => this.openLevelPicker());
+    this.levelPickerDialog.addEventListener('close', () => {
+      if (!this.playScreen.hidden) this.boardScene.setPaused(false);
+    });
     query('#play-settings-button').addEventListener('click', () => this.openSettings('play'));
     this.bindSingleTouchInput();
     this.bindTouchPreviewDrag();
@@ -508,10 +551,11 @@ class NumberConnectApp {
       event.preventDefault();
       event.stopPropagation();
       const bounds = this.touchPreview.getBoundingClientRect();
+      const scale = this.uiVisualScale();
       this.touchPreviewDrag = {
         pointerId: event.pointerId,
-        offsetX: event.clientX - bounds.left,
-        offsetY: event.clientY - bounds.top,
+        offsetX: (event.clientX - bounds.left) / scale,
+        offsetY: (event.clientY - bounds.top) / scale,
       };
       this.touchPreview.classList.add('is-dragging');
       this.touchPreview.setPointerCapture(event.pointerId);
@@ -521,9 +565,10 @@ class NumberConnectApp {
       event.preventDefault();
       event.stopPropagation();
       const playBounds = this.playScreen.getBoundingClientRect();
+      const scale = this.uiVisualScale();
       this.placeTouchPreview(
-        event.clientX - playBounds.left - this.touchPreviewDrag.offsetX,
-        event.clientY - playBounds.top - this.touchPreviewDrag.offsetY,
+        (event.clientX - playBounds.left) / scale - this.touchPreviewDrag.offsetX,
+        (event.clientY - playBounds.top) / scale - this.touchPreviewDrag.offsetY,
         true,
       );
     });
@@ -705,8 +750,9 @@ class NumberConnectApp {
 
   private setTouchPreviewAnimationOrigin(clientX: number, clientY: number): void {
     const bounds = this.touchPreview.getBoundingClientRect();
+    const scale = this.uiVisualScale();
     this.touchPreviewSurface.style.transformOrigin = (
-      `${clientX - bounds.left}px ${clientY - bounds.top}px`
+      `${(clientX - bounds.left) / scale}px ${(clientY - bounds.top) / scale}px`
     );
   }
 
@@ -917,18 +963,20 @@ class NumberConnectApp {
     }
     const playBounds = this.playScreen.getBoundingClientRect();
     const hostBounds = this.gameHost.getBoundingClientRect();
+    const scale = this.uiVisualScale();
     this.placeTouchPreview(
-      hostBounds.right - playBounds.left - this.touchPreview.offsetWidth - 10,
-      hostBounds.top - playBounds.top + 10,
+      (hostBounds.right - playBounds.left) / scale - this.touchPreview.offsetWidth - 10,
+      (hostBounds.top - playBounds.top) / scale + 10,
       true,
     );
   }
 
   private placeTouchPreviewAbove(clientX: number, clientY: number, smooth = true): void {
     const playBounds = this.playScreen.getBoundingClientRect();
+    const scale = this.uiVisualScale();
     this.placeTouchPreview(
-      clientX - playBounds.left - this.touchPreview.offsetWidth * 0.5,
-      clientY - playBounds.top - this.touchPreview.offsetHeight - 24,
+      (clientX - playBounds.left) / scale - this.touchPreview.offsetWidth * 0.5,
+      (clientY - playBounds.top) / scale - this.touchPreview.offsetHeight - 24,
       false,
       smooth,
     );
@@ -941,9 +989,10 @@ class NumberConnectApp {
     smooth = false,
   ): void {
     const playBounds = this.playScreen.getBoundingClientRect();
+    const scale = this.uiVisualScale();
     const margin = 8;
-    const maxLeft = Math.max(margin, playBounds.width - this.touchPreview.offsetWidth - margin);
-    const maxTop = Math.max(margin, playBounds.height - this.touchPreview.offsetHeight - margin);
+    const maxLeft = Math.max(margin, this.playScreen.clientWidth - this.touchPreview.offsetWidth - margin);
+    const maxTop = Math.max(margin, this.playScreen.clientHeight - this.touchPreview.offsetHeight - margin);
     const nextPosition = {
       left: Math.min(maxLeft, Math.max(margin, left)),
       top: Math.min(maxTop, Math.max(margin, top)),
@@ -954,8 +1003,8 @@ class NumberConnectApp {
       if (!this.touchPreviewRenderedPosition) {
         const bounds = this.touchPreview.getBoundingClientRect();
         this.touchPreviewRenderedPosition = {
-          left: bounds.left - playBounds.left,
-          top: bounds.top - playBounds.top,
+          left: (bounds.left - playBounds.left) / scale,
+          top: (bounds.top - playBounds.top) / scale,
         };
       }
       if (this.touchPreviewPositionFrame === undefined) {
@@ -1045,8 +1094,7 @@ class NumberConnectApp {
   }
 
   private bindSettings(): void {
-    query('#settings-apply-button').addEventListener('click', () => void this.applySettings());
-    this.touchPreviewSizeControl.addEventListener('change', () => this.refreshSettingsControls());
+    this.settingsDialog.addEventListener('change', () => this.applySettingsChange());
     query('#video-stats-button').addEventListener('click', () => this.openVideoStats());
     query('#video-stats-reset').addEventListener('click', () => this.resetVideoStats());
     query('#settings-lobby-button').addEventListener('click', () => {
@@ -1067,33 +1115,141 @@ class NumberConnectApp {
   }
 
   private showScreen(name: ScreenName): void {
+    const previousScreen = this.currentScreen;
+    this.cancelPrimaryActionTransition();
+    this.currentScreen = name;
     this.screenRouter.show(name);
+    this.transitionPrimaryAction(previousScreen, name);
+  }
+
+  private hasPrimaryAction(screen: ScreenName): boolean {
+    return screen === 'lobby' || screen === 'daily' || screen === 'endless';
+  }
+
+  private transitionPrimaryAction(previousScreen: ScreenName, nextScreen: ScreenName): void {
+    const previousHasAction = this.hasPrimaryAction(previousScreen);
+    const nextHasAction = this.hasPrimaryAction(nextScreen);
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    if (previousHasAction && nextHasAction) {
+      this.renderPrimaryAction();
+      return;
+    }
+
+    if (previousHasAction && nextScreen === 'favorites') {
+      this.renderPrimaryActionFor(previousScreen);
+      this.primaryActionButton.disabled = true;
+      if (reduceMotion) {
+        this.primaryActionButton.hidden = true;
+        return;
+      }
+      this.animatePrimaryAction([
+        { transform: 'translate3d(0, 0, 0)' },
+        { transform: `translate3d(-${this.appShell.clientWidth || UI_LOGICAL_WIDTH}px, 0, 0)` },
+      ], true);
+      return;
+    }
+
+    if (previousScreen === 'favorites' && nextHasAction) {
+      this.renderPrimaryActionFor(nextScreen);
+      if (reduceMotion) return;
+      this.animatePrimaryAction([
+        { transform: `translate3d(-${this.appShell.clientWidth || UI_LOGICAL_WIDTH}px, 0, 0)` },
+        { transform: 'translate3d(0, 0, 0)' },
+      ], false);
+      return;
+    }
+
+    this.renderPrimaryAction();
+  }
+
+  private animatePrimaryAction(keyframes: Keyframe[], hideOnComplete: boolean): void {
+    const animation = this.primaryActionButton.animate(keyframes, {
+      duration: PRIMARY_ACTION_TRANSITION_DURATION_MS,
+      easing: 'cubic-bezier(.22, 1, .36, 1)',
+      fill: 'both',
+    });
+    const transitionToken = ++this.primaryActionTransitionToken;
+    this.primaryActionTransition = animation;
+    void animation.finished.then(() => {
+      if (transitionToken !== this.primaryActionTransitionToken) return;
+      this.primaryActionTransition = undefined;
+      if (hideOnComplete) this.primaryActionButton.hidden = true;
+      animation.cancel();
+    }).catch(() => undefined);
+  }
+
+  private cancelPrimaryActionTransition(): void {
+    this.primaryActionTransitionToken += 1;
+    this.primaryActionTransition?.cancel();
+    this.primaryActionTransition = undefined;
+  }
+
+  private renderPrimaryAction(): void {
+    if (!this.hasPrimaryAction(this.currentScreen)) {
+      this.primaryActionButton.hidden = true;
+      this.primaryActionButton.disabled = true;
+      return;
+    }
+    this.renderPrimaryActionFor(this.currentScreen);
+  }
+
+  private renderPrimaryActionFor(screen: ScreenName): void {
+    if (!this.hasPrimaryAction(screen)) return;
+    this.primaryActionButton.hidden = false;
+    this.primaryActionButton.disabled = false;
+
+    if (screen === 'lobby') {
+      this.primaryActionButton.dataset.actionTheme = 'lobby';
+      const levelId = this.settings.selectedLevelId;
+      this.primaryActionLabel.textContent = `第 ${levelId} 关`;
+      this.primaryActionButton.setAttribute('aria-label', `开始第 ${levelId} 关`);
+      return;
+    }
+
+    if (screen === 'daily') {
+      this.primaryActionButton.dataset.actionTheme = 'challenge';
+      this.primaryActionLabel.textContent = this.dailyPlayButton.textContent?.trim() || '开始挑战';
+      this.primaryActionButton.setAttribute('aria-label', this.dailyPlayButton.getAttribute('aria-label') || '开始每日挑战');
+      return;
+    }
+
+    this.primaryActionButton.dataset.actionTheme = 'endless';
+    this.primaryActionLabel.textContent = this.endlessStartButton.textContent?.trim() || '开始游戏';
+    this.primaryActionButton.setAttribute('aria-label', '开始无尽模式');
   }
 
   private async showPlayScreen(): Promise<void> {
+    this.boardScene.setPaused(false);
     this.setSolutionReveal(false);
     this.showScreen('play');
     this.renderTouchPreviewState();
     this.resultOverlay.hidden = true;
     this.resultActionBusy = false;
     this.setResultActionsDisabled(false);
-    const backLabel = this.mode === 'endless'
-      ? '返回无尽模式'
-      : this.playContext === 'editor-playtest'
-        ? '返回关卡编辑器'
-        : this.playContext === 'bead'
-          ? '返回拼豆图纸'
-          : this.playContext === 'collection'
-            ? '返回收集路线'
-            : this.playContext === 'daily'
-              ? '返回每日挑战'
-              : '返回大厅';
-    this.playBackButton.setAttribute('aria-label', backLabel);
-    this.playBackButton.title = backLabel;
     await nextFrame();
     this.game.scale.resize(Math.max(320, this.gameHost.clientWidth), Math.max(420, this.gameHost.clientHeight));
     await nextFrame();
     this.game.scale.resize(Math.max(320, this.gameHost.clientWidth), Math.max(420, this.gameHost.clientHeight));
+  }
+
+  private openLevelPicker(): void {
+    if (this.playLevelButton.disabled || this.levelPickerDialog.open) return;
+    this.refreshLevelOptions();
+    this.boardScene.setPaused(true);
+    this.levelPickerDialog.showModal();
+  }
+
+  private selectLevelFromPicker(levelId: number): void {
+    const level = this.levels.find((candidate) => candidate.levelId === levelId);
+    if (!level) return;
+    const changed = this.currentLevel?.levelId !== levelId;
+    this.settings.shape = BoardShape.Level;
+    this.settings.selectedLevelId = levelId;
+    saveSettings(this.settings);
+    this.renderDefaultLobbyLevelNumber();
+    if (changed) this.setCurrentBoard(level);
+    this.levelPickerDialog.close();
   }
 
   private setSolutionReveal(revealed: boolean): void {
@@ -1247,6 +1403,10 @@ class NumberConnectApp {
   }
 
   private updateGameHeading(level: LevelData): void {
+    const canSelectLevel = this.playContext === 'normal' && this.mode === 'normal';
+    this.playLevelButton.disabled = !canSelectLevel;
+    this.playLevelButton.title = canSelectLevel ? '选择关卡' : '';
+
     if (this.playContext === 'daily') {
       const date = parseDailyDateKey(this.dailyChallengeDateKey);
       this.levelLabel.textContent = date
@@ -1301,13 +1461,18 @@ class NumberConnectApp {
 
   private renderEndlessHub(): void {
     this.endlessCurrentStage.textContent = String(this.stage);
-    this.endlessCurrentLives.textContent = String(this.endlessLives);
+    const endlessLives = Math.max(0, Math.floor(this.endlessLives));
+    this.endlessCurrentLives.textContent = endlessLives > 3
+      ? `♥ × ${endlessLives}`
+      : endlessLives > 0
+        ? '♥'.repeat(endlessLives)
+        : '♥ × 0';
+    this.endlessCurrentLives.setAttribute('aria-label', `当前生命 ${endlessLives}`);
     this.endlessBestStage.textContent = String(this.endlessHighScore);
-    const kicker = this.endlessStartButton.querySelector<HTMLElement>('small');
     const label = this.endlessStartButton.querySelector<HTMLElement>('strong');
     const canResume = this.endlessSessionActive && this.endlessLives > 0;
-    if (kicker) kicker.textContent = canResume ? 'ENDLESS RUN IN PROGRESS' : 'READY FOR THE NEXT RUN';
     if (label) label.textContent = canResume ? `继续第 ${this.stage} 阶段` : '开始游戏';
+    this.renderPrimaryAction();
   }
 
   private handleWrong(): void {
@@ -1321,7 +1486,6 @@ class NumberConnectApp {
     this.boardScene.setPaused(true);
     if (this.playContext === 'editor-playtest') {
       this.resultContext = 'editor-playtest-failed';
-      this.resultKicker.textContent = 'PLAYTEST PAUSED';
       this.resultTitle.textContent = '试玩结束';
       this.resultMessage.textContent = `当前数字进度 ${this.currentProgress} / ${this.currentTotal}`;
       this.resultReward.hidden = true;
@@ -1335,7 +1499,6 @@ class NumberConnectApp {
     }
 
     this.resultContext = 'life-depleted';
-    this.resultKicker.textContent = 'OUT OF HEARTS';
     this.resultTitle.textContent = '生命已耗尽';
     const progress = `当前数字进度 ${this.currentProgress} / ${this.currentTotal}`;
     this.resultMessage.textContent = this.mode === 'endless' ? `阶段 ${this.stage} · ${progress}` : progress;
@@ -1359,7 +1522,6 @@ class NumberConnectApp {
 
   private showEditorPlaytestResult(): void {
     this.resultContext = 'editor-playtest';
-    this.resultKicker.textContent = 'PLAYTEST COMPLETE';
     this.resultTitle.textContent = '试玩完成';
     this.resultMessage.textContent = '当前编辑器关卡可以完整通关。';
     this.resultReward.hidden = true;
@@ -1373,7 +1535,6 @@ class NumberConnectApp {
 
   private showNormalResult(): void {
     this.resultContext = 'normal';
-    this.resultKicker.textContent = 'PUZZLE COMPLETE';
     this.resultTitle.textContent = '漂亮的一笔！';
     this.resultMessage.textContent = '你已连接棋盘上的所有数字。';
     this.resultReward.hidden = true;
@@ -1390,7 +1551,6 @@ class NumberConnectApp {
     const total = this.collectionLevelCount();
     const hasNext = this.currentCollectionIndex + 1 < total;
     this.resultContext = 'collection';
-    this.resultKicker.textContent = 'ROUTE CLEARED';
     this.resultTitle.textContent = `图片 ${this.currentCollectionIndex + 1} 已收集`;
     this.resultMessage.textContent = hasNext
       ? `图片已放入路线节点，关卡 ${this.currentCollectionIndex + 2} 已解锁。`
@@ -1408,7 +1568,6 @@ class NumberConnectApp {
   private showDailyChallengeResult(): void {
     const date = parseDailyDateKey(this.dailyChallengeDateKey);
     this.resultContext = 'daily';
-    this.resultKicker.textContent = 'DAILY COMPLETE';
     this.resultTitle.textContent = '今日打卡完成！';
     this.resultMessage.textContent = date
       ? `${date.getFullYear()} 年 ${date.getMonth() + 1} 月 ${date.getDate()} 日已点亮。`
@@ -1424,7 +1583,6 @@ class NumberConnectApp {
 
   private showEndlessStageResult(): void {
     this.resultContext = 'endless-stage';
-    this.resultKicker.textContent = 'STAGE COMPLETE';
     this.resultTitle.textContent = `阶段 ${this.stage}`;
     this.resultMessage.textContent = '已完成';
     this.resultReward.textContent = '♥ +1';
@@ -1717,6 +1875,7 @@ class NumberConnectApp {
     this.renderVideoStats();
     const leaveButton = query<HTMLButtonElement>('#settings-lobby-button');
     leaveButton.hidden = context === 'lobby';
+    query<HTMLElement>('#settings-actions').hidden = context === 'lobby';
     leaveButton.textContent = this.mode === 'endless'
       ? '返回无尽模式'
       : this.playContext === 'editor-playtest'
@@ -1728,7 +1887,6 @@ class NumberConnectApp {
             : this.playContext === 'daily'
               ? '返回每日挑战'
               : '返回大厅';
-    query<HTMLElement>('#endless-settings-note').hidden = !(context === 'play' && this.mode === 'endless');
     query<HTMLElement>('#settings-solution-row').hidden = context !== 'play';
     this.settingsDialog.showModal();
   }
@@ -1764,7 +1922,6 @@ class NumberConnectApp {
   }
 
   private populateSettingsForm(): void {
-    query<HTMLSelectElement>('#settings-level').value = String(this.settings.selectedLevelId);
     query<HTMLInputElement>('#settings-next').checked = this.settings.showNextNumber;
     query<HTMLInputElement>('#settings-sound').checked = this.settings.soundEnabled;
     this.setUiThemeControl(this.settings.uiTheme);
@@ -1775,32 +1932,33 @@ class NumberConnectApp {
   }
 
   private refreshLevelOptions(): void {
-    const select = query<HTMLSelectElement>('#settings-level');
-    select.replaceChildren(...this.levels.map((level) => {
-      const option = document.createElement('option');
-      option.value = String(level.levelId);
-      option.textContent = `${level.custom ? '自制关卡' : '关卡'} ${level.levelId}`;
+    const options = this.levels.map((level) => {
+      const option = document.createElement('button');
+      const selected = level.levelId === this.settings.selectedLevelId;
+      option.type = 'button';
+      option.className = 'level-picker-option';
+      option.dataset.levelId = String(level.levelId);
+      option.setAttribute('role', 'listitem');
+      option.classList.toggle('is-selected', selected);
+      if (selected) option.setAttribute('aria-current', 'true');
+      option.innerHTML = `<strong>${level.levelId}</strong><small>${level.custom ? '自制关卡' : '关卡'}</small>`;
+      option.addEventListener('click', () => this.selectLevelFromPicker(level.levelId));
       return option;
-    }));
-    select.value = String(this.settings.selectedLevelId);
+    });
+    this.levelPickerGrid.replaceChildren(...options);
     this.renderDefaultLobbyLevelNumber();
   }
 
   private renderDefaultLobbyLevelNumber(): void {
     query<HTMLElement>('#default-level-number').textContent = String(this.settings.selectedLevelId);
+    this.renderPrimaryAction();
   }
 
   private refreshSettingsControls(): void {
-    const levelLocked = this.settingsContext === 'play'
-      && (this.mode === 'endless' || this.playContext === 'editor-playtest' || this.playContext === 'bead' || this.playContext === 'collection' || this.playContext === 'daily');
-    query<HTMLSelectElement>('#settings-level').disabled = levelLocked;
     query<HTMLInputElement>('#settings-touch-preview-follow').disabled = this.selectedTouchPreviewSize() === 'off';
   }
 
-  private async applySettings(): Promise<void> {
-    const revealSolution = this.settingsContext === 'play' && this.solutionToggle.checked;
-    this.settings.shape = BoardShape.Level;
-    this.settings.selectedLevelId = Number(query<HTMLSelectElement>('#settings-level').value) || this.settings.selectedLevelId;
+  private applySettingsChange(): void {
     this.settings.showNextNumber = query<HTMLInputElement>('#settings-next').checked;
     this.settings.soundEnabled = query<HTMLInputElement>('#settings-sound').checked;
     this.settings.uiTheme = this.selectedUiTheme();
@@ -1809,23 +1967,16 @@ class NumberConnectApp {
     applyUiTheme(this.settings.uiTheme);
     saveSettings(this.settings);
     this.renderDefaultLobbyLevelNumber();
+    this.refreshSettingsControls();
     this.renderTouchPreviewState();
-    this.settingsDialog.close();
+    this.boardScene.setRuntimePreferences({
+      showNextNumber: this.settings.showNextNumber,
+      soundEnabled: this.settings.soundEnabled,
+      touchPreviewRingDepth: this.settings.touchPreviewSize === 'large' ? 2 : 1,
+    });
 
     if (this.settingsContext === 'play') {
-      if (this.mode === 'endless') {
-        const profile = getEndlessStageSettings(this.stage);
-        this.setCurrentBoard(this.createEndlessLevel(this.stage, profile), profile);
-      } else if ((this.playContext === 'editor-playtest' || this.playContext === 'bead' || this.playContext === 'collection' || this.playContext === 'daily') && this.currentLevel) {
-        this.setCurrentBoard(
-          this.currentLevel,
-          this.playContext === 'daily' ? this.dailyChallengeProfile : undefined,
-        );
-      } else {
-        this.setCurrentBoard(this.createNormalLevel());
-      }
-      this.setSolutionReveal(revealSolution);
-      await nextFrame();
+      this.setSolutionReveal(this.solutionToggle.checked);
     }
   }
 
@@ -1839,6 +1990,7 @@ class NumberConnectApp {
     const today = new Date();
     this.playContext = 'normal';
     this.dailyCalendarMonth = new Date(today.getFullYear(), today.getMonth(), 1, 12);
+    this.dailyChallengeDateKey = formatDailyDateKey(today);
     this.showScreen('daily');
     this.renderDailyCalendar();
     this.dailyScreen.querySelector<HTMLElement>('.daily-screen-stage')?.scrollTo({ top: 0 });
@@ -1855,6 +2007,9 @@ class NumberConnectApp {
     const currentMonth = new Date(today.getFullYear(), today.getMonth(), 1, 12);
     if (candidate.getTime() > currentMonth.getTime()) return;
     this.dailyCalendarMonth = candidate;
+    const isCurrentMonth = candidate.getTime() === currentMonth.getTime();
+    const selectedDay = isCurrentMonth ? today.getDate() : daysInMonth(candidate.getFullYear(), candidate.getMonth());
+    this.dailyChallengeDateKey = formatDailyDateKey(new Date(candidate.getFullYear(), candidate.getMonth(), selectedDay, 12));
     this.renderDailyCalendar();
   }
 
@@ -1866,8 +2021,14 @@ class NumberConnectApp {
     const currentMonth = new Date(today.getFullYear(), today.getMonth(), 1, 12);
     const monthPrefix = `${year}-${String(month + 1).padStart(2, '0')}-`;
     const completedThisMonth = [...this.completedDailyChallenges].filter((key) => key.startsWith(monthPrefix)).length;
+    const monthDayCount = daysInMonth(year, month);
     const completedCount = this.dailyCompleteCount.querySelector<HTMLElement>('b');
     if (completedCount) completedCount.textContent = String(completedThisMonth);
+    this.dailyCompleteCount.setAttribute('aria-label', `本月已完成 ${completedThisMonth} 天`);
+    this.dailyMonthTotal.textContent = String(monthDayCount);
+    this.dailyProgressFill.style.width = `${(completedThisMonth / monthDayCount) * 100}%`;
+    this.dailyProgressTrack.setAttribute('aria-valuemax', String(monthDayCount));
+    this.dailyProgressTrack.setAttribute('aria-valuenow', String(completedThisMonth));
 
     this.dailyMonthLabel.textContent = new Intl.DateTimeFormat('zh-CN', {
       year: 'numeric',
@@ -1881,21 +2042,25 @@ class NumberConnectApp {
       empty.setAttribute('aria-hidden', 'true');
       return empty;
     });
-    const dayCells = Array.from({ length: daysInMonth(year, month) }, (_, index) => {
+    const dayCells = Array.from({ length: monthDayCount }, (_, index) => {
       const day = index + 1;
       const date = new Date(year, month, day, 12);
       const dateKey = formatDailyDateKey(date);
       const isFuture = dateKey > todayKey;
       const isToday = dateKey === todayKey;
       const isCompleted = this.completedDailyChallenges.has(dateKey);
+      const isSelected = dateKey === this.dailyChallengeDateKey;
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'daily-calendar-day';
       button.classList.toggle('is-future', isFuture);
       button.classList.toggle('is-today', isToday);
       button.classList.toggle('is-completed', isCompleted);
+      button.classList.toggle('is-selected', isSelected);
       button.disabled = isFuture;
       button.setAttribute('role', 'gridcell');
+      button.setAttribute('aria-selected', String(isSelected));
+      if (isToday) button.setAttribute('aria-current', 'date');
       button.setAttribute(
         'aria-label',
         `${year}年${month + 1}月${day}日${isFuture ? '，尚未开放' : isCompleted ? '，已完成' : '，开始挑战'}`,
@@ -1909,10 +2074,20 @@ class NumberConnectApp {
         check.setAttribute('aria-hidden', 'true');
         button.append(check);
       }
-      if (!isFuture) button.addEventListener('click', () => void this.startDailyChallenge(dateKey));
+      if (!isFuture) button.addEventListener('click', () => {
+        this.dailyChallengeDateKey = dateKey;
+        this.renderDailyCalendar();
+      });
       return button;
     });
     this.dailyCalendarGrid.replaceChildren(...emptyCells, ...dayCells);
+    const selectedDate = parseDailyDateKey(this.dailyChallengeDateKey);
+    const selectedLabel = selectedDate
+      ? `${selectedDate.getMonth() + 1}月${selectedDate.getDate()}日`
+      : '所选日期';
+    this.dailyPlayButton.textContent = this.completedDailyChallenges.has(this.dailyChallengeDateKey) ? '再次挑战' : '开始挑战';
+    this.dailyPlayButton.setAttribute('aria-label', `${selectedLabel}，${this.dailyPlayButton.textContent}`);
+    this.renderPrimaryAction();
   }
 
   private openEndlessHub(): void {
@@ -1945,12 +2120,10 @@ class NumberConnectApp {
     const albumCompleted = Math.min(this.collectionCompletedCount, albumTotal);
     const beadCompleted = this.beadPatterns.filter((pattern) => this.completedBeadPatternIds.has(pattern.id)).length;
     const current = albumActive
-      ? { completed: albumCompleted, total: albumTotal, kicker: 'ALBUM COLLECTION', title: '旅途画册' }
-      : { completed: beadCompleted, total: this.beadPatterns.length, kicker: 'BEAD COLLECTION', title: '拼豆图鉴' };
+      ? { completed: albumCompleted, total: albumTotal, title: '旅途画册' }
+      : { completed: beadCompleted, total: this.beadPatterns.length, title: '拼豆图鉴' };
     const count = `${current.completed} / ${current.total}`;
-    this.favoritesHeaderCount.textContent = count;
     this.favoritesSummaryCount.textContent = count;
-    this.favoritesSummaryKicker.textContent = current.kicker;
     this.favoritesSummaryTitle.textContent = current.title;
     this.renderFavoriteAlbumGrid(albumTotal, albumCompleted);
     this.renderFavoriteBeadGrid();
@@ -2107,13 +2280,6 @@ class NumberConnectApp {
       Math.max(this.collectionCompletedCount, this.currentCollectionIndex + 1),
     );
     saveCollectionCompletedCount(this.collectionCompletedCount);
-    this.renderCollectionEntryProgress();
-  }
-
-  private renderCollectionEntryProgress(): void {
-    const total = this.collectionLevelCount();
-    const completed = Math.min(this.collectionCompletedCount, total);
-    this.collectionModeCount.textContent = `${completed} / ${total}`;
   }
 
   private renderCollectionMap(): void {
@@ -2121,7 +2287,6 @@ class NumberConnectApp {
     const completed = Math.min(this.collectionCompletedCount, total);
     this.collectionCompletedCount = completed;
     this.collectionRouteProgress.textContent = `${completed} / ${total}`;
-    this.renderCollectionEntryProgress();
     const rows = total <= 3 ? 1 : 1 + Math.ceil((total - 3) / 2);
     this.collectionRoute.style.setProperty('--collection-route-rows', String(rows));
 
@@ -2183,16 +2348,20 @@ class NumberConnectApp {
   private renderCollectionPath(): void {
     if (this.collectionScreen.hidden) return;
     const routeBounds = this.collectionRoute.getBoundingClientRect();
+    const scale = this.uiVisualScale();
     const nodes = Array.from(this.collectionRoute.querySelectorAll<HTMLElement>('.collection-level-node'));
     if (routeBounds.width <= 0 || routeBounds.height <= 0 || nodes.length === 0) return;
     const points = nodes.map((node) => {
       const bounds = node.getBoundingClientRect();
       return {
-        x: bounds.left - routeBounds.left + bounds.width * 0.5,
-        y: bounds.top - routeBounds.top + bounds.height * 0.5 - 10,
+        x: (bounds.left - routeBounds.left + bounds.width * 0.5) / scale,
+        y: (bounds.top - routeBounds.top + bounds.height * 0.5) / scale - 10,
       };
     });
-    this.collectionRouteLines.setAttribute('viewBox', `0 0 ${routeBounds.width} ${routeBounds.height}`);
+    this.collectionRouteLines.setAttribute(
+      'viewBox',
+      `0 0 ${routeBounds.width / scale} ${routeBounds.height / scale}`,
+    );
     this.collectionRouteBase.setAttribute('d', roundedRoutePath(points));
     const availableCount = Math.min(points.length, this.collectionCompletedCount + 1);
     this.collectionRouteComplete.setAttribute('d', roundedRoutePath(points.slice(0, availableCount)));
@@ -2308,6 +2477,7 @@ class NumberConnectApp {
 
     const timing = beadRewardTiming(reward.length, reducedMotion);
     const appRect = this.appShell.getBoundingClientRect();
+    const scale = this.uiVisualScale();
     const totalBeads = orderedBeads(pattern).length;
     let landed = 0;
 
@@ -2321,11 +2491,11 @@ class NumberConnectApp {
       const startX = Number.parseFloat(gem.style.left);
       const startY = Number.parseFloat(gem.style.top);
       const targetRect = target.getBoundingClientRect();
-      const targetX = targetRect.left - appRect.left + targetRect.width * 0.5;
-      const targetY = targetRect.top - appRect.top + targetRect.height * 0.5;
+      const targetX = (targetRect.left - appRect.left + targetRect.width * 0.5) / scale;
+      const targetY = (targetRect.top - appRect.top + targetRect.height * 0.5) / scale;
       const deltaX = targetX - startX;
       const deltaY = targetY - startY;
-      const landingScale = Math.max(0.24, Math.min(0.78, targetRect.width / 26));
+      const landingScale = Math.max(0.24, Math.min(0.78, targetRect.width / scale / 26));
       const flightDistance = Math.hypot(deltaX, deltaY);
       const curveDirection = index % 2 === 0 ? -1 : 1;
       const curveOffset = curveDirection * Math.min(38, 18 + flightDistance * 0.04);
