@@ -9,8 +9,15 @@ export enum BoardShape {
 export const TOUCH_PREVIEW_SIZES = ['off', 'small', 'medium', 'large'] as const;
 export type TouchPreviewSize = typeof TOUCH_PREVIEW_SIZES[number];
 
+export const UI_THEMES = ['default', 'night'] as const;
+export type UiTheme = typeof UI_THEMES[number];
+
 export const isTouchPreviewSize = (value: unknown): value is TouchPreviewSize => (
   typeof value === 'string' && (TOUCH_PREVIEW_SIZES as readonly string[]).includes(value)
+);
+
+export const isUiTheme = (value: unknown): value is UiTheme => (
+  typeof value === 'string' && (UI_THEMES as readonly string[]).includes(value)
 );
 
 export interface Cell {
@@ -51,6 +58,7 @@ export interface GameSettings {
   targetCrossings: number;
   showNextNumber: boolean;
   soundEnabled: boolean;
+  uiTheme: UiTheme;
   touchPreviewSize: TouchPreviewSize;
   touchPreviewFollowsPointer: boolean;
 }
@@ -131,6 +139,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   targetCrossings: 5,
   showNextNumber: true,
   soundEnabled: true,
+  uiTheme: 'default',
   touchPreviewSize: 'small',
   touchPreviewFollowsPointer: false,
 };

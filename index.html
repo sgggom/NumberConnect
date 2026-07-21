@@ -1,20 +1,49 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="default">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#111823" />
+    <meta name="theme-color" content="#fff4e3" />
     <meta name="description" content="Number Connect — 一笔连接所有数字的浏览器益智游戏" />
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
     <title>Number Connect</title>
   </head>
   <body>
     <main id="app" class="app-shell">
-      <section id="lobby-screen" class="screen lobby-screen" aria-labelledby="lobby-title">
-        <div class="brand-lockup">
+      <section id="lobby-screen" class="screen lobby-screen" aria-label="Number Connect 大厅">
+        <div class="lobby-theme-panel lobby-theme-panel--default">
+          <button id="default-lobby-settings-button" class="default-settings-button" type="button" aria-label="打开设置">
+            <img src="./theme-default/settings.png" alt="" />
+          </button>
+
+          <div class="default-feature-grid" aria-label="特色玩法">
+            <button id="default-collection-mode-button" class="default-feature-card" type="button" aria-label="打开收集玩法">
+              <img src="./theme-default/activity-collect.png" alt="" />
+            </button>
+            <button id="default-bead-mode-button" class="default-feature-card" type="button" aria-label="进入拼豆模式">
+              <img src="./theme-default/activity-beads.png" alt="" />
+            </button>
+          </div>
+
+          <button id="default-editor-button" class="default-brand-lockup" type="button" aria-label="打开关卡编辑器">
+            <img src="./theme-default/logo.png" alt="" />
+          </button>
+
+          <button id="default-start-button" class="default-start-button" type="button">
+            <svg viewBox="0 0 58 42" aria-hidden="true">
+              <path d="M7 34C16 33 12 9 24 9s9 24 20 24" />
+              <circle cx="7" cy="34" r="5"/><circle cx="24" cy="9" r="5"/><circle cx="44" cy="33" r="5"/>
+            </svg>
+            <span>第 <b id="default-level-number">1</b> 关</span>
+          </button>
+
+        </div>
+
+        <div class="lobby-theme-panel lobby-theme-panel--night">
+        <button id="night-editor-button" class="brand-lockup" type="button" aria-label="打开关卡编辑器">
           <span class="brand-mark" aria-hidden="true"><i>1</i><i>2</i><i>3</i></span>
           <h1 id="lobby-title">Number Connect</h1>
-        </div>
+        </button>
 
         <div class="lobby-ambient-field" aria-hidden="true">
           <svg viewBox="0 0 430 760" preserveAspectRatio="xMidYMid slice" role="presentation">
@@ -87,15 +116,17 @@
             <span class="menu-icon">▶</span><span><strong>开始游戏</strong><small>从关卡列表继续</small></span>
           </button>
           <button id="endless-button" class="menu-button menu-button--endless">
-            <span class="menu-icon">∞</span><span><strong>无尽模式</strong><small>难度随阶段提升</small></span>
+            <span class="menu-icon">∞</span><span><strong>无尽模式</strong><small>查看阶段、生命与历史记录</small></span>
           </button>
-          <button id="editor-button" class="menu-button menu-button--editor">
-            <span class="menu-icon">✦</span><span><strong>关卡编辑器</strong><small>绘制并保存你的关卡</small></span>
+          <button id="challenge-button" class="menu-button menu-button--editor">
+            <span class="menu-icon">▦</span><span><strong>每日挑战</strong><small>从日历选择今天的棋盘</small></span>
           </button>
           <button id="lobby-settings-button" class="menu-button menu-button--quiet">
             <span class="menu-icon">⚙</span><span><strong>游戏设置</strong><small>棋盘、提示与声音</small></span>
           </button>
         </nav>
+
+        </div>
 
       </section>
 
@@ -163,6 +194,77 @@
         </div>
       </section>
 
+      <section id="daily-screen" class="screen daily-screen" hidden aria-labelledby="daily-screen-title">
+        <header class="daily-screen-header">
+          <button id="daily-back-button" class="icon-button" type="button" aria-label="返回大厅">←</button>
+          <div>
+            <p>DAILY CHALLENGE</p>
+            <h2 id="daily-screen-title">每日挑战</h2>
+          </div>
+          <button id="daily-today-button" class="daily-today-button" type="button">今天</button>
+        </header>
+
+        <div class="daily-screen-stage">
+          <section class="daily-challenge-intro" aria-label="每日挑战说明">
+            <span class="daily-calendar-emblem" aria-hidden="true"><i></i><b>✓</b></span>
+            <div><small>ONE PUZZLE A DAY</small><h3>今天也来连一局</h3><p>完成每日棋盘，点亮你的挑战日历。</p></div>
+            <strong id="daily-complete-count"><b>0</b><small>本月完成</small></strong>
+          </section>
+
+          <section class="daily-calendar-card" aria-label="每日挑战日历">
+            <header class="daily-calendar-toolbar">
+              <button id="daily-previous-month" type="button" aria-label="上个月">‹</button>
+              <h3 id="daily-month-label">2026 年 7 月</h3>
+              <button id="daily-next-month" type="button" aria-label="下个月">›</button>
+            </header>
+            <div class="daily-weekdays" aria-hidden="true"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
+            <div id="daily-calendar-grid" class="daily-calendar-grid" role="grid" aria-labelledby="daily-month-label"></div>
+            <footer class="daily-calendar-legend"><span><i class="is-today"></i>今天</span><span><i class="is-completed">✓</i>已完成</span><span><i class="is-locked">•</i>未来</span></footer>
+          </section>
+
+          <p class="daily-screen-hint">点击今天或任意过往日期开始挑战</p>
+        </div>
+      </section>
+
+      <section id="endless-screen" class="screen endless-hub-screen" hidden aria-labelledby="endless-screen-title">
+        <header class="hub-screen-header">
+          <span class="hub-header-mark" aria-hidden="true">∞</span>
+          <div><p>ENDLESS MODE</p><h2 id="endless-screen-title">无尽模式</h2></div>
+          <button id="endless-settings-button" class="icon-button" type="button" aria-label="打开设置">⚙</button>
+        </header>
+        <div class="endless-hub-stage">
+          <section class="endless-hero">
+            <span class="endless-orbit" aria-hidden="true"><i>∞</i><b></b><b></b><b></b></span>
+            <p>每完成一个阶段，棋盘都会继续成长</p>
+            <h3>无限连线之旅</h3>
+          </section>
+          <div class="endless-stat-grid" aria-label="无尽模式记录">
+            <article class="endless-stat endless-stat--stage"><span aria-hidden="true">◆</span><small>当前阶段</small><strong id="endless-current-stage">1</strong></article>
+            <article class="endless-stat endless-stat--lives"><span aria-hidden="true">♥</span><small>当前生命</small><strong id="endless-current-lives">3</strong></article>
+            <article class="endless-stat endless-stat--best"><span aria-hidden="true">♛</span><small>历史最高阶段</small><strong id="endless-best-stage">1</strong></article>
+          </div>
+          <button id="endless-start-button" class="endless-start-button" type="button"><span><small>READY FOR THE NEXT RUN</small><strong>开始游戏</strong></span><i aria-hidden="true">›</i></button>
+          <p class="endless-hub-hint">每完成一个阶段恢复 1 颗生命，难度随阶段提升</p>
+        </div>
+      </section>
+
+      <section id="favorites-screen" class="screen favorites-screen" hidden aria-labelledby="favorites-screen-title">
+        <header class="hub-screen-header favorites-screen-header">
+          <span class="hub-header-mark hub-header-mark--star" aria-hidden="true">☆</span>
+          <div><p>MY COLLECTION</p><h2 id="favorites-screen-title">收藏</h2></div>
+          <strong id="favorites-header-count">0 / 0</strong>
+        </header>
+        <div class="favorites-stage">
+          <div class="favorites-tabs" role="tablist" aria-label="收藏类型">
+            <button id="favorites-album-tab" class="is-active" type="button" role="tab" aria-selected="true" aria-controls="favorites-album-panel"><span aria-hidden="true">▣</span>画册收集</button>
+            <button id="favorites-bead-tab" type="button" role="tab" aria-selected="false" aria-controls="favorites-bead-panel"><span aria-hidden="true">◆</span>拼豆收集</button>
+          </div>
+          <div class="favorites-summary"><div><small id="favorites-summary-kicker">ALBUM COLLECTION</small><h3 id="favorites-summary-title">旅途画册</h3></div><strong id="favorites-summary-count">0 / 0</strong></div>
+          <div id="favorites-album-panel" class="favorites-panel" role="tabpanel" aria-labelledby="favorites-album-tab"><div id="favorites-album-grid" class="favorites-grid" role="list"></div></div>
+          <div id="favorites-bead-panel" class="favorites-panel" role="tabpanel" aria-labelledby="favorites-bead-tab" hidden><div id="favorites-bead-grid" class="favorites-grid" role="list"></div></div>
+        </div>
+      </section>
+
       <section id="bead-screen" class="screen bead-screen" hidden aria-labelledby="bead-screen-title">
         <header class="bead-screen-header">
           <button id="bead-back-button" class="icon-button" type="button" aria-label="返回大厅">←</button>
@@ -185,6 +287,21 @@
           <button id="bead-start-button" class="button bead-start-button" type="button">进入普通关卡</button>
         </div>
       </section>
+
+      <nav id="primary-tab-bar" class="primary-tab-bar" aria-label="主页面导航">
+        <button id="tab-lobby-button" class="primary-tab-button is-active" type="button" data-tab="lobby" aria-current="page">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3.5 10 8.5-7 8.5 7v10H15v-6H9v6H3.5V10Z" /></svg><span>大厅</span><i aria-hidden="true"></i>
+        </button>
+        <button id="tab-challenge-button" class="primary-tab-button" type="button" data-tab="challenge">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4h10v5a5 5 0 0 1-10 0V4Zm0 2H3v2a4 4 0 0 0 4 4m10-6h4v2a4 4 0 0 1-4 4M12 14v5m-4 2h8" /></svg><span>挑战</span><i aria-hidden="true"></i>
+        </button>
+        <button id="tab-endless-button" class="primary-tab-button" type="button" data-tab="endless">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.2 8.5c-3.8 0-5.2 7-1.2 7 3.1 0 6.8-7 9.7-7 4.1 0 3.7 7-.4 7-2.6 0-4.8-3.6-6.2-5.4" /></svg><span>无尽</span><i aria-hidden="true"></i>
+        </button>
+        <button id="tab-favorites-button" class="primary-tab-button" type="button" data-tab="favorites">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.7 5.5 6 .9-4.4 4.2 1 6-5.3-2.8-5.3 2.8 1-6-4.4-4.2 6-.9L12 3Z" /></svg><span>收藏</span><i aria-hidden="true"></i>
+        </button>
+      </nav>
     </main>
 
     <dialog id="bead-gallery-dialog" class="bead-gallery-dialog" aria-labelledby="bead-gallery-title">
@@ -222,6 +339,7 @@
           <label class="setting-row"><span><b>关卡列表</b><small>读取内置与本地编辑器关卡</small></span><select id="settings-level"></select></label>
           <label class="setting-row"><span><b>下一个数字提示</b><small>高亮下一处可见数字</small></span><input id="settings-next" class="switch" type="checkbox" checked /></label>
           <label class="setting-row"><span><b>游戏声音</b><small>连击、错误和胜利反馈</small></span><input id="settings-sound" class="switch" type="checkbox" checked /></label>
+          <div class="setting-row setting-row--theme"><span><b>大厅主题</b><small>默认明亮风格或原版夜间风格</small></span><div id="settings-theme" class="setting-segmented setting-theme-control" role="radiogroup" aria-label="大厅主题"><label><input type="radio" name="ui-theme" value="default" checked /><span>默认</span></label><label><input type="radio" name="ui-theme" value="night" /><span>夜间</span></label></div></div>
           <label id="settings-solution-row" class="setting-row" hidden><span><b>显示答案</b><small>显示隐藏数字和完整连线</small></span><input id="solution-toggle" class="switch" type="checkbox" /></label>
           <div class="setting-row setting-row--preview-size"><span><b>关卡小窗</b><small>选择关闭、窗口大小或扩展显示范围</small></span><div id="touch-preview-size" class="setting-segmented" role="radiogroup" aria-label="关卡小窗大小"><label><input type="radio" name="touch-preview-size" value="off" /><span>关闭</span></label><label><input type="radio" name="touch-preview-size" value="small" checked /><span>小</span></label><label><input type="radio" name="touch-preview-size" value="medium" /><span>中</span></label><label><input type="radio" name="touch-preview-size" value="large" /><span>大</span></label></div></div>
           <label class="setting-row"><span><b>小窗跟手</b><small>让关卡小窗始终显示在触摸位置上方</small></span><input id="settings-touch-preview-follow" class="switch" type="checkbox" /></label>

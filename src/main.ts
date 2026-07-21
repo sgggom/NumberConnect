@@ -6,6 +6,15 @@ import { ScreenRouter, type ScreenName } from './app/ScreenRouter';
 import { query } from './app/dom';
 import { EventBus } from './core/events/EventBus';
 import { BoardScene } from './game/BoardScene';
+import {
+  dailyChallengeSeed,
+  dailyChallengeStage,
+  daysInMonth,
+  formatDailyDateKey,
+  isDailyDateKey,
+  mondayFirstOffset,
+  parseDailyDateKey,
+} from './game/dailyChallenge';
 import { getEndlessStageSettings } from './game/difficulty';
 import { selectHiddenCells } from './game/hidden';
 import { formatLives } from './game/lives';
@@ -22,6 +31,7 @@ import {
   BoardShape,
   cellKey,
   isTouchPreviewSize,
+  isUiTheme,
   type BoardNeighborhoodPreview,
   type BoardSessionInput,
   type EndlessStageSettings,
@@ -29,6 +39,7 @@ import {
   type GameSettings,
   type LevelData,
   type TouchPreviewSize,
+  type UiTheme,
 } from './game/types';
 import {
   createVideoView,
@@ -56,6 +67,7 @@ import {
   type BeadProgress,
 } from './gameplay/beads';
 import {
+  collectionArtworkName,
   collectionArtworkResourcePath,
   collectionArtworkUrl,
 } from './gameplay/collection/collectionArtwork';
@@ -67,6 +79,16 @@ const TOUCH_PREVIEW_ENTER_DURATION_MS = 240;
 const TOUCH_PREVIEW_EXIT_DURATION_MS = 170;
 const COLLECTION_MIN_LEVELS = 7;
 const COLLECTION_PROGRESS_KEY = 'number-connect.collection-route.v1';
+const DAILY_COMPLETION_KEY = 'number-connect.daily-completed.v1';
+const ENDLESS_RUN_KEY = 'number-connect.endless-run.v1';
+
+const applyUiTheme = (theme: UiTheme): void => {
+  document.documentElement.dataset.theme = theme;
+  document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.setAttribute(
+    'content',
+    theme === 'default' ? '#fff4e3' : '#111823',
+  );
+};
 
 const loadCollectionCompletedCount = (): number => {
   try {
@@ -84,6 +106,76 @@ const saveCollectionCompletedCount = (count: number): void => {
     // Collection progress remains available for the current session when storage is unavailable.
   }
 };
+
+const loadCompletedDailyChallenges = (): Set<string> => {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(DAILY_COMPLETION_KEY) ?? '[]') as unknown;
+    return new Set(Array.isArray(stored) ? stored.filter(isDailyDateKey) : []);
+  } catch {
+    return new Set();
+  }
+};
+
+const saveCompletedDailyChallenges = (dates: ReadonlySet<string>): void => {
+  try {
+    window.localStorage.setItem(DAILY_COMPLETION_KEY, JSON.stringify([...dates].sort()));
+  } catch {
+    // Daily completion remains available for the current session when storage is unavailable.
+  }
+};
+
+interface EndlessRunState {
+  active: boolean;
+  stage: number;
+  lives: number;
+  seed: number;
+  bestStage: number;
+}
+
+const defaultEndlessRunState = (): EndlessRunState => ({
+  active: false,
+  stage: 1,
+  lives: 3,
+  seed: 1,
+  bestStage: 1,
+});
+
+const loadEndlessRunState = (): EndlessRunState => {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(ENDLESS_RUN_KEY) ?? '{}') as Partial<EndlessRunState>;
+    const stage = Number.isFinite(Number(stored.stage)) ? Math.max(1, Math.floor(Number(stored.stage))) : 1;
+    const lives = Number.isFinite(Number(stored.lives)) ? Math.max(0, Math.floor(Number(stored.lives))) : 3;
+    const seed = Number.isFinite(Number(stored.seed)) ? Math.max(1, Math.floor(Number(stored.seed))) : 1;
+    const bestStage = Number.isFinite(Number(stored.bestStage))
+      ? Math.max(stage, Math.floor(Number(stored.bestStage)))
+      : stage;
+    return { active: stored.active === true, stage, lives, seed, bestStage };
+  } catch {
+    return defaultEndlessRunState();
+  }
+};
+
+const saveEndlessRunState = (state: EndlessRunState): void => {
+  try {
+    window.localStorage.setItem(ENDLESS_RUN_KEY, JSON.stringify(state));
+  } catch {
+    // Endless progress remains available for the current session when storage is unavailable.
+  }
+};
+
+const initialEndlessRunState = loadEndlessRunState();
+
+const COLLECTION_ARTWORK_LABELS: Record<string, string> = {
+  apple: '苹果乐园',
+  banana: '香蕉派对',
+  orange: '橙子星球',
+  grapes: '葡萄庄园',
+  basket: '丰收画篮',
+  pineapple: '菠萝海岸',
+};
+
+const collectionArtworkLabel = (index: number): string =>
+  COLLECTION_ARTWORK_LABELS[collectionArtworkName(index)] ?? `画册 ${index + 1}`;
 
 interface RoutePoint { x: number; y: number }
 
@@ -112,8 +204,8 @@ const roundedRoutePath = (points: RoutePoint[], radius = 20): string => {
   return `${path} L ${last.x} ${last.y}`;
 };
 
-type ResultContext = 'normal' | 'collection' | 'endless-stage' | 'life-depleted' | 'editor-playtest' | 'editor-playtest-failed';
-type PlayContext = 'normal' | 'collection' | 'editor-playtest' | 'bead';
+type ResultContext = 'normal' | 'collection' | 'daily' | 'endless-stage' | 'life-depleted' | 'editor-playtest' | 'editor-playtest-failed';
+type PlayContext = 'normal' | 'collection' | 'daily' | 'editor-playtest' | 'bead';
 
 interface BeadFlightCluster {
   layer: HTMLElement;
@@ -148,6 +240,7 @@ class NumberConnectApp {
   private readonly touchPreviewPathLines = query<SVGGElement>('#touch-preview-path-lines');
   private readonly touchPreviewPointerLine = query<SVGLineElement>('#touch-preview-pointer-line');
   private readonly touchPreviewSizeControl = query<HTMLElement>('#touch-preview-size');
+  private readonly uiThemeControl = query<HTMLElement>('#settings-theme');
   private readonly resultOverlay = query<HTMLElement>('#result-overlay');
   private readonly resultKicker = query<HTMLElement>('#result-kicker');
   private readonly resultTitle = query<HTMLElement>('#result-title');
@@ -180,6 +273,25 @@ class NumberConnectApp {
   private readonly collectionRouteBase = query<SVGPathElement>('#collection-route-base');
   private readonly collectionRouteComplete = query<SVGPathElement>('#collection-route-complete');
   private readonly collectionRouteProgress = query<HTMLElement>('#collection-route-progress');
+  private readonly dailyScreen = query<HTMLElement>('#daily-screen');
+  private readonly dailyCalendarGrid = query<HTMLElement>('#daily-calendar-grid');
+  private readonly dailyMonthLabel = query<HTMLElement>('#daily-month-label');
+  private readonly dailyCompleteCount = query<HTMLElement>('#daily-complete-count');
+  private readonly dailyNextMonthButton = query<HTMLButtonElement>('#daily-next-month');
+  private readonly endlessCurrentStage = query<HTMLElement>('#endless-current-stage');
+  private readonly endlessCurrentLives = query<HTMLElement>('#endless-current-lives');
+  private readonly endlessBestStage = query<HTMLElement>('#endless-best-stage');
+  private readonly endlessStartButton = query<HTMLButtonElement>('#endless-start-button');
+  private readonly favoritesAlbumTab = query<HTMLButtonElement>('#favorites-album-tab');
+  private readonly favoritesBeadTab = query<HTMLButtonElement>('#favorites-bead-tab');
+  private readonly favoritesAlbumPanel = query<HTMLElement>('#favorites-album-panel');
+  private readonly favoritesBeadPanel = query<HTMLElement>('#favorites-bead-panel');
+  private readonly favoritesAlbumGrid = query<HTMLElement>('#favorites-album-grid');
+  private readonly favoritesBeadGrid = query<HTMLElement>('#favorites-bead-grid');
+  private readonly favoritesHeaderCount = query<HTMLElement>('#favorites-header-count');
+  private readonly favoritesSummaryKicker = query<HTMLElement>('#favorites-summary-kicker');
+  private readonly favoritesSummaryTitle = query<HTMLElement>('#favorites-summary-title');
+  private readonly favoritesSummaryCount = query<HTMLElement>('#favorites-summary-count');
   private readonly beadGalleryDialog = query<HTMLDialogElement>('#bead-gallery-dialog');
   private readonly beadGalleryTotal = query<HTMLElement>('#bead-gallery-total');
   private readonly beadGalleryEmpty = query<HTMLElement>('#bead-gallery-empty');
@@ -194,9 +306,12 @@ class NumberConnectApp {
   private levels: LevelData[] = [];
   private settings: GameSettings = loadSettings();
   private mode: GameMode = 'normal';
-  private stage = 1;
+  private stage = initialEndlessRunState.stage;
   private lives = 3;
-  private endlessSeed = 1;
+  private endlessSeed = initialEndlessRunState.seed;
+  private endlessSessionActive = initialEndlessRunState.active;
+  private endlessLives = initialEndlessRunState.lives;
+  private endlessHighScore = initialEndlessRunState.bestStage;
   private currentLevel?: LevelData;
   private currentProgress = 0;
   private currentTotal = 0;
@@ -214,6 +329,11 @@ class NumberConnectApp {
   private beadRewardAnimating = false;
   private collectionCompletedCount = loadCollectionCompletedCount();
   private currentCollectionIndex = 0;
+  private dailyCalendarMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1, 12);
+  private dailyChallengeDateKey = formatDailyDateKey(new Date());
+  private completedDailyChallenges = loadCompletedDailyChallenges();
+  private dailyChallengeProfile?: EndlessStageSettings;
+  private favoritesTab: 'album' | 'beads' = 'album';
   private activeNeighborhoodPreview: BoardNeighborhoodPreview | null = null;
   private manualTouchPreviewPosition?: { left: number; top: number };
   private touchPreviewDrag?: { pointerId: number; offsetX: number; offsetY: number };
@@ -236,6 +356,7 @@ class NumberConnectApp {
   private readonly editor: LevelEditorController;
 
   public constructor() {
+    applyUiTheme(this.settings.uiTheme);
     startLobbyAmbientNetwork();
     this.game = new Phaser.Game({
       type: Phaser.CANVAS,
@@ -295,12 +416,15 @@ class NumberConnectApp {
     this.renderVideoStats();
     this.renderBeadScreen();
     this.renderCollectionEntryProgress();
+    this.renderDailyCalendar();
+    this.renderEndlessHub();
+    this.renderFavoritesScreen();
     this.renderTouchPreviewState();
   }
 
   private bindLobby(): void {
     query('#start-button').addEventListener('click', () => void this.startNormalMode());
-    query('#endless-button').addEventListener('click', () => void this.startEndlessMode());
+    query('#endless-button').addEventListener('click', () => this.openEndlessHub());
     query('#bead-mode-button').addEventListener('click', () => this.openBeadMode());
     query('#collection-mode-button').addEventListener('click', () => this.openCollectionMode());
     query('#collection-back-button').addEventListener('click', () => this.backToLobby());
@@ -313,8 +437,30 @@ class NumberConnectApp {
     this.beadGalleryDialog.addEventListener('click', (event) => {
       if (event.target === this.beadGalleryDialog) this.beadGalleryDialog.close();
     });
-    query('#editor-button').addEventListener('click', () => this.openEditor());
+    query('#challenge-button').addEventListener('click', () => this.openDailyChallenge());
+    query('#night-editor-button').addEventListener('click', () => this.openEditor());
     query('#lobby-settings-button').addEventListener('click', () => this.openSettings('lobby'));
+    query('#default-start-button').addEventListener('click', () => void this.startNormalMode());
+    query('#default-bead-mode-button').addEventListener('click', () => this.openBeadMode());
+    query('#default-collection-mode-button').addEventListener('click', () => this.openCollectionMode());
+    query('#default-editor-button').addEventListener('click', () => this.openEditor());
+    query('#default-lobby-settings-button').addEventListener('click', () => this.openSettings('lobby'));
+    query('#tab-lobby-button').addEventListener('click', () => this.backToLobby());
+    query('#tab-challenge-button').addEventListener('click', () => this.openDailyChallenge());
+    query('#tab-endless-button').addEventListener('click', () => this.openEndlessHub());
+    query('#tab-favorites-button').addEventListener('click', () => this.openFavorites());
+    query('#daily-back-button').addEventListener('click', () => this.backToLobby());
+    query('#daily-previous-month').addEventListener('click', () => this.shiftDailyCalendarMonth(-1));
+    this.dailyNextMonthButton.addEventListener('click', () => this.shiftDailyCalendarMonth(1));
+    query('#daily-today-button').addEventListener('click', () => {
+      const today = new Date();
+      this.dailyCalendarMonth = new Date(today.getFullYear(), today.getMonth(), 1, 12);
+      this.renderDailyCalendar();
+    });
+    query('#endless-settings-button').addEventListener('click', () => this.openSettings('lobby'));
+    this.endlessStartButton.addEventListener('click', () => void this.startEndlessMode());
+    this.favoritesAlbumTab.addEventListener('click', () => this.setFavoritesTab('album'));
+    this.favoritesBeadTab.addEventListener('click', () => this.setFavoritesTab('beads'));
   }
 
   private bindPlayControls(): void {
@@ -885,6 +1031,19 @@ class NumberConnectApp {
     });
   }
 
+  private selectedUiTheme(): UiTheme {
+    const value = this.uiThemeControl.querySelector<HTMLInputElement>(
+      'input[name="ui-theme"]:checked',
+    )?.value;
+    return isUiTheme(value) ? value : 'default';
+  }
+
+  private setUiThemeControl(theme: UiTheme): void {
+    this.uiThemeControl.querySelectorAll<HTMLInputElement>('input[name="ui-theme"]').forEach((input) => {
+      input.checked = input.value === theme;
+    });
+  }
+
   private bindSettings(): void {
     query('#settings-apply-button').addEventListener('click', () => void this.applySettings());
     this.touchPreviewSizeControl.addEventListener('change', () => this.refreshSettingsControls());
@@ -918,13 +1077,17 @@ class NumberConnectApp {
     this.resultOverlay.hidden = true;
     this.resultActionBusy = false;
     this.setResultActionsDisabled(false);
-    const backLabel = this.playContext === 'editor-playtest'
-      ? '返回关卡编辑器'
-      : this.playContext === 'bead'
-        ? '返回拼豆图纸'
-        : this.playContext === 'collection'
-          ? '返回收集路线'
-        : '返回大厅';
+    const backLabel = this.mode === 'endless'
+      ? '返回无尽模式'
+      : this.playContext === 'editor-playtest'
+        ? '返回关卡编辑器'
+        : this.playContext === 'bead'
+          ? '返回拼豆图纸'
+          : this.playContext === 'collection'
+            ? '返回收集路线'
+            : this.playContext === 'daily'
+              ? '返回每日挑战'
+              : '返回大厅';
     this.playBackButton.setAttribute('aria-label', backLabel);
     this.playBackButton.title = backLabel;
     await nextFrame();
@@ -949,16 +1112,38 @@ class NumberConnectApp {
   }
 
   private async startEndlessMode(): Promise<void> {
+    const canResume = this.endlessSessionActive && this.endlessLives > 0;
+    if (!canResume) {
+      this.endlessSessionActive = true;
+      this.stage = 1;
+      this.endlessLives = 3;
+      this.endlessSeed = Date.now() & 0x7fffffff;
+    }
     this.playContext = 'normal';
     this.mode = 'endless';
-    this.stage = 1;
-    this.lives = 3;
+    this.lives = this.endlessLives;
     this.renderLives();
-    this.endlessSeed = Date.now() & 0x7fffffff;
     await this.showPlayScreen();
     const profile = getEndlessStageSettings(this.stage);
     const level = this.createEndlessLevel(this.stage, profile);
     this.setCurrentBoard(level, profile);
+  }
+
+  private async startDailyChallenge(dateKey: string): Promise<void> {
+    if (!parseDailyDateKey(dateKey) || dateKey > formatDailyDateKey(new Date())) return;
+    this.dailyChallengeDateKey = dateKey;
+    const profile = getEndlessStageSettings(dailyChallengeStage(dateKey));
+    this.dailyChallengeProfile = profile;
+    this.playContext = 'daily';
+    this.mode = 'normal';
+    this.lives = 3;
+    this.renderLives();
+    await this.showPlayScreen();
+    const generated = generateEndlessLevel(profile, dailyChallengeSeed(dateKey));
+    this.setCurrentBoard({
+      ...generated,
+      levelId: Number(dateKey.replaceAll('-', '')),
+    }, profile);
   }
 
   private async startBeadLevel(): Promise<void> {
@@ -1062,6 +1247,13 @@ class NumberConnectApp {
   }
 
   private updateGameHeading(level: LevelData): void {
+    if (this.playContext === 'daily') {
+      const date = parseDailyDateKey(this.dailyChallengeDateKey);
+      this.levelLabel.textContent = date
+        ? `每日挑战 · ${date.getMonth() + 1}月${date.getDate()}日`
+        : '每日挑战';
+      return;
+    }
     if (this.playContext === 'collection') {
       this.levelLabel.textContent = `收集关卡 ${this.currentCollectionIndex + 1}`;
       return;
@@ -1086,9 +1278,36 @@ class NumberConnectApp {
   }
 
   private renderLives(): void {
+    if (this.mode === 'endless' && this.endlessSessionActive) {
+      this.endlessLives = this.lives;
+      this.recordEndlessProgress();
+    }
     this.livesLabel.hidden = false;
     this.livesLabel.textContent = formatLives(this.lives);
     this.livesLabel.setAttribute('aria-label', `生命值 ${this.lives}`);
+  }
+
+  private recordEndlessProgress(): void {
+    if (this.endlessSessionActive) this.endlessHighScore = Math.max(this.endlessHighScore, this.stage);
+    saveEndlessRunState({
+      active: this.endlessSessionActive,
+      stage: this.stage,
+      lives: this.endlessLives,
+      seed: this.endlessSeed,
+      bestStage: this.endlessHighScore,
+    });
+    this.renderEndlessHub();
+  }
+
+  private renderEndlessHub(): void {
+    this.endlessCurrentStage.textContent = String(this.stage);
+    this.endlessCurrentLives.textContent = String(this.endlessLives);
+    this.endlessBestStage.textContent = String(this.endlessHighScore);
+    const kicker = this.endlessStartButton.querySelector<HTMLElement>('small');
+    const label = this.endlessStartButton.querySelector<HTMLElement>('strong');
+    const canResume = this.endlessSessionActive && this.endlessLives > 0;
+    if (kicker) kicker.textContent = canResume ? 'ENDLESS RUN IN PROGRESS' : 'READY FOR THE NEXT RUN';
+    if (label) label.textContent = canResume ? `继续第 ${this.stage} 阶段` : '开始游戏';
   }
 
   private handleWrong(): void {
@@ -1124,11 +1343,15 @@ class NumberConnectApp {
     this.restartButton.textContent = '重新开始';
     this.nextButton.textContent = '观看视频获取 1♥';
     this.nextButton.hidden = false;
-    this.resultLobbyButton.textContent = this.playContext === 'bead'
-      ? '返回拼豆图纸'
-      : this.playContext === 'collection'
-        ? '返回收集路线'
-        : '放弃';
+    this.resultLobbyButton.textContent = this.mode === 'endless'
+      ? '返回无尽模式'
+      : this.playContext === 'bead'
+        ? '返回拼豆图纸'
+        : this.playContext === 'collection'
+          ? '返回收集路线'
+          : this.playContext === 'daily'
+            ? '返回每日挑战'
+            : '放弃';
     this.resultActions.classList.remove('is-single');
     this.setResultActionsDisabled(false);
     this.resultOverlay.hidden = false;
@@ -1182,6 +1405,23 @@ class NumberConnectApp {
     this.resultOverlay.hidden = false;
   }
 
+  private showDailyChallengeResult(): void {
+    const date = parseDailyDateKey(this.dailyChallengeDateKey);
+    this.resultContext = 'daily';
+    this.resultKicker.textContent = 'DAILY COMPLETE';
+    this.resultTitle.textContent = '今日打卡完成！';
+    this.resultMessage.textContent = date
+      ? `${date.getFullYear()} 年 ${date.getMonth() + 1} 月 ${date.getDate()} 日已点亮。`
+      : '这一天的挑战已经点亮。';
+    this.resultReward.hidden = true;
+    this.restartButton.textContent = '再挑战一次';
+    this.nextButton.hidden = true;
+    this.resultLobbyButton.textContent = '返回每日挑战';
+    this.resultActions.classList.add('is-single');
+    this.setResultActionsDisabled(false);
+    this.resultOverlay.hidden = false;
+  }
+
   private showEndlessStageResult(): void {
     this.resultContext = 'endless-stage';
     this.resultKicker.textContent = 'STAGE COMPLETE';
@@ -1192,7 +1432,7 @@ class NumberConnectApp {
     this.restartButton.textContent = '下一阶段';
     this.nextButton.textContent = '观看视频 · 额外 +1♥';
     this.nextButton.hidden = false;
-    this.resultLobbyButton.textContent = '返回大厅';
+    this.resultLobbyButton.textContent = '返回无尽模式';
     this.resultActions.classList.remove('is-single');
     this.setResultActionsDisabled(false);
     this.resultOverlay.hidden = false;
@@ -1310,6 +1550,15 @@ class NumberConnectApp {
       if (this.playContext === 'editor-playtest') this.showEditorPlaytestResult();
       return;
     }
+    if (this.playContext === 'daily') {
+      await this.boardScene.showCompletion();
+      if (this.playContext !== 'daily') return;
+      this.completedDailyChallenges.add(this.dailyChallengeDateKey);
+      saveCompletedDailyChallenges(this.completedDailyChallenges);
+      this.renderDailyCalendar();
+      this.showDailyChallengeResult();
+      return;
+    }
     if (this.mode === 'endless') {
       this.lives += 1;
       this.renderLives();
@@ -1343,6 +1592,7 @@ class NumberConnectApp {
 
     this.resultOverlay.hidden = true;
     this.stage += 1;
+    this.recordEndlessProgress();
     const profile = getEndlessStageSettings(this.stage);
     const next = this.createEndlessLevel(this.stage, profile);
     this.currentLevel = next;
@@ -1383,7 +1633,10 @@ class NumberConnectApp {
       const profile = getEndlessStageSettings(this.stage);
       this.setCurrentBoard(this.createEndlessLevel(this.stage, profile), profile);
     } else if (this.currentLevel) {
-      this.setCurrentBoard(this.currentLevel);
+      this.setCurrentBoard(
+        this.currentLevel,
+        this.playContext === 'daily' ? this.dailyChallengeProfile : undefined,
+      );
     }
   }
 
@@ -1415,6 +1668,7 @@ class NumberConnectApp {
     const nextIndex = (Math.max(0, index) + 1) % this.levels.length;
     this.settings.selectedLevelId = this.levels[nextIndex].levelId;
     saveSettings(this.settings);
+    this.renderDefaultLobbyLevelNumber();
   }
 
   private backToLobby(): void {
@@ -1443,6 +1697,16 @@ class NumberConnectApp {
       this.renderCollectionMap();
       return;
     }
+    if (this.playContext === 'daily') {
+      this.showScreen('daily');
+      this.renderDailyCalendar();
+      return;
+    }
+    if (this.mode === 'endless') {
+      this.showScreen('endless');
+      this.renderEndlessHub();
+      return;
+    }
     this.backToLobby();
   }
 
@@ -1453,13 +1717,17 @@ class NumberConnectApp {
     this.renderVideoStats();
     const leaveButton = query<HTMLButtonElement>('#settings-lobby-button');
     leaveButton.hidden = context === 'lobby';
-    leaveButton.textContent = this.playContext === 'editor-playtest'
-      ? '返回编辑器'
-      : this.playContext === 'bead'
-        ? '返回拼豆图纸'
-        : this.playContext === 'collection'
-          ? '返回收集路线'
-        : '返回大厅';
+    leaveButton.textContent = this.mode === 'endless'
+      ? '返回无尽模式'
+      : this.playContext === 'editor-playtest'
+        ? '返回编辑器'
+        : this.playContext === 'bead'
+          ? '返回拼豆图纸'
+          : this.playContext === 'collection'
+            ? '返回收集路线'
+            : this.playContext === 'daily'
+              ? '返回每日挑战'
+              : '返回大厅';
     query<HTMLElement>('#endless-settings-note').hidden = !(context === 'play' && this.mode === 'endless');
     query<HTMLElement>('#settings-solution-row').hidden = context !== 'play';
     this.settingsDialog.showModal();
@@ -1499,6 +1767,7 @@ class NumberConnectApp {
     query<HTMLSelectElement>('#settings-level').value = String(this.settings.selectedLevelId);
     query<HTMLInputElement>('#settings-next').checked = this.settings.showNextNumber;
     query<HTMLInputElement>('#settings-sound').checked = this.settings.soundEnabled;
+    this.setUiThemeControl(this.settings.uiTheme);
     this.solutionToggle.checked = this.solutionRevealed;
     this.setTouchPreviewSizeControl(this.settings.touchPreviewSize);
     query<HTMLInputElement>('#settings-touch-preview-follow').checked = this.settings.touchPreviewFollowsPointer;
@@ -1514,11 +1783,16 @@ class NumberConnectApp {
       return option;
     }));
     select.value = String(this.settings.selectedLevelId);
+    this.renderDefaultLobbyLevelNumber();
+  }
+
+  private renderDefaultLobbyLevelNumber(): void {
+    query<HTMLElement>('#default-level-number').textContent = String(this.settings.selectedLevelId);
   }
 
   private refreshSettingsControls(): void {
     const levelLocked = this.settingsContext === 'play'
-      && (this.mode === 'endless' || this.playContext === 'editor-playtest' || this.playContext === 'bead' || this.playContext === 'collection');
+      && (this.mode === 'endless' || this.playContext === 'editor-playtest' || this.playContext === 'bead' || this.playContext === 'collection' || this.playContext === 'daily');
     query<HTMLSelectElement>('#settings-level').disabled = levelLocked;
     query<HTMLInputElement>('#settings-touch-preview-follow').disabled = this.selectedTouchPreviewSize() === 'off';
   }
@@ -1529,9 +1803,12 @@ class NumberConnectApp {
     this.settings.selectedLevelId = Number(query<HTMLSelectElement>('#settings-level').value) || this.settings.selectedLevelId;
     this.settings.showNextNumber = query<HTMLInputElement>('#settings-next').checked;
     this.settings.soundEnabled = query<HTMLInputElement>('#settings-sound').checked;
+    this.settings.uiTheme = this.selectedUiTheme();
     this.settings.touchPreviewSize = this.selectedTouchPreviewSize();
     this.settings.touchPreviewFollowsPointer = query<HTMLInputElement>('#settings-touch-preview-follow').checked;
+    applyUiTheme(this.settings.uiTheme);
     saveSettings(this.settings);
+    this.renderDefaultLobbyLevelNumber();
     this.renderTouchPreviewState();
     this.settingsDialog.close();
 
@@ -1539,8 +1816,11 @@ class NumberConnectApp {
       if (this.mode === 'endless') {
         const profile = getEndlessStageSettings(this.stage);
         this.setCurrentBoard(this.createEndlessLevel(this.stage, profile), profile);
-      } else if ((this.playContext === 'editor-playtest' || this.playContext === 'bead' || this.playContext === 'collection') && this.currentLevel) {
-        this.setCurrentBoard(this.currentLevel);
+      } else if ((this.playContext === 'editor-playtest' || this.playContext === 'bead' || this.playContext === 'collection' || this.playContext === 'daily') && this.currentLevel) {
+        this.setCurrentBoard(
+          this.currentLevel,
+          this.playContext === 'daily' ? this.dailyChallengeProfile : undefined,
+        );
       } else {
         this.setCurrentBoard(this.createNormalLevel());
       }
@@ -1553,6 +1833,234 @@ class NumberConnectApp {
     this.playContext = 'normal';
     this.showScreen('editor');
     this.editor.open();
+  }
+
+  private openDailyChallenge(): void {
+    const today = new Date();
+    this.playContext = 'normal';
+    this.dailyCalendarMonth = new Date(today.getFullYear(), today.getMonth(), 1, 12);
+    this.showScreen('daily');
+    this.renderDailyCalendar();
+    this.dailyScreen.querySelector<HTMLElement>('.daily-screen-stage')?.scrollTo({ top: 0 });
+  }
+
+  private shiftDailyCalendarMonth(offset: number): void {
+    const candidate = new Date(
+      this.dailyCalendarMonth.getFullYear(),
+      this.dailyCalendarMonth.getMonth() + offset,
+      1,
+      12,
+    );
+    const today = new Date();
+    const currentMonth = new Date(today.getFullYear(), today.getMonth(), 1, 12);
+    if (candidate.getTime() > currentMonth.getTime()) return;
+    this.dailyCalendarMonth = candidate;
+    this.renderDailyCalendar();
+  }
+
+  private renderDailyCalendar(): void {
+    const year = this.dailyCalendarMonth.getFullYear();
+    const month = this.dailyCalendarMonth.getMonth();
+    const today = new Date();
+    const todayKey = formatDailyDateKey(today);
+    const currentMonth = new Date(today.getFullYear(), today.getMonth(), 1, 12);
+    const monthPrefix = `${year}-${String(month + 1).padStart(2, '0')}-`;
+    const completedThisMonth = [...this.completedDailyChallenges].filter((key) => key.startsWith(monthPrefix)).length;
+    const completedCount = this.dailyCompleteCount.querySelector<HTMLElement>('b');
+    if (completedCount) completedCount.textContent = String(completedThisMonth);
+
+    this.dailyMonthLabel.textContent = new Intl.DateTimeFormat('zh-CN', {
+      year: 'numeric',
+      month: 'long',
+    }).format(this.dailyCalendarMonth);
+    this.dailyNextMonthButton.disabled = this.dailyCalendarMonth.getTime() >= currentMonth.getTime();
+
+    const emptyCells = Array.from({ length: mondayFirstOffset(year, month) }, () => {
+      const empty = document.createElement('span');
+      empty.className = 'daily-calendar-empty';
+      empty.setAttribute('aria-hidden', 'true');
+      return empty;
+    });
+    const dayCells = Array.from({ length: daysInMonth(year, month) }, (_, index) => {
+      const day = index + 1;
+      const date = new Date(year, month, day, 12);
+      const dateKey = formatDailyDateKey(date);
+      const isFuture = dateKey > todayKey;
+      const isToday = dateKey === todayKey;
+      const isCompleted = this.completedDailyChallenges.has(dateKey);
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'daily-calendar-day';
+      button.classList.toggle('is-future', isFuture);
+      button.classList.toggle('is-today', isToday);
+      button.classList.toggle('is-completed', isCompleted);
+      button.disabled = isFuture;
+      button.setAttribute('role', 'gridcell');
+      button.setAttribute(
+        'aria-label',
+        `${year}年${month + 1}月${day}日${isFuture ? '，尚未开放' : isCompleted ? '，已完成' : '，开始挑战'}`,
+      );
+      const number = document.createElement('span');
+      number.textContent = String(day);
+      button.append(number);
+      if (isCompleted) {
+        const check = document.createElement('i');
+        check.textContent = '✓';
+        check.setAttribute('aria-hidden', 'true');
+        button.append(check);
+      }
+      if (!isFuture) button.addEventListener('click', () => void this.startDailyChallenge(dateKey));
+      return button;
+    });
+    this.dailyCalendarGrid.replaceChildren(...emptyCells, ...dayCells);
+  }
+
+  private openEndlessHub(): void {
+    this.boardScene.setPaused(true);
+    this.showScreen('endless');
+    this.renderEndlessHub();
+  }
+
+  private openFavorites(): void {
+    this.boardScene.setPaused(true);
+    this.showScreen('favorites');
+    this.renderFavoritesScreen();
+  }
+
+  private setFavoritesTab(tab: 'album' | 'beads'): void {
+    this.favoritesTab = tab;
+    this.renderFavoritesScreen();
+  }
+
+  private renderFavoritesScreen(): void {
+    const albumActive = this.favoritesTab === 'album';
+    this.favoritesAlbumTab.classList.toggle('is-active', albumActive);
+    this.favoritesBeadTab.classList.toggle('is-active', !albumActive);
+    this.favoritesAlbumTab.setAttribute('aria-selected', String(albumActive));
+    this.favoritesBeadTab.setAttribute('aria-selected', String(!albumActive));
+    this.favoritesAlbumPanel.hidden = !albumActive;
+    this.favoritesBeadPanel.hidden = albumActive;
+
+    const albumTotal = this.collectionLevelCount();
+    const albumCompleted = Math.min(this.collectionCompletedCount, albumTotal);
+    const beadCompleted = this.beadPatterns.filter((pattern) => this.completedBeadPatternIds.has(pattern.id)).length;
+    const current = albumActive
+      ? { completed: albumCompleted, total: albumTotal, kicker: 'ALBUM COLLECTION', title: '旅途画册' }
+      : { completed: beadCompleted, total: this.beadPatterns.length, kicker: 'BEAD COLLECTION', title: '拼豆图鉴' };
+    const count = `${current.completed} / ${current.total}`;
+    this.favoritesHeaderCount.textContent = count;
+    this.favoritesSummaryCount.textContent = count;
+    this.favoritesSummaryKicker.textContent = current.kicker;
+    this.favoritesSummaryTitle.textContent = current.title;
+    this.renderFavoriteAlbumGrid(albumTotal, albumCompleted);
+    this.renderFavoriteBeadGrid();
+  }
+
+  private renderFavoriteAlbumGrid(total: number, completed: number): void {
+    const cards = Array.from({ length: total }, (_, index) => {
+      const collected = index < completed;
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'favorite-card favorite-card--album';
+      card.classList.toggle('is-locked', !collected);
+      card.disabled = !collected;
+      card.setAttribute('role', 'listitem');
+      card.setAttribute('aria-label', collected
+        ? `${collectionArtworkLabel(index)}，已收集，打开收集路线`
+        : `${collectionArtworkLabel(index)}，尚未解锁`);
+
+      const art = document.createElement('span');
+      art.className = 'favorite-card__art';
+      const image = document.createElement('img');
+      image.src = collectionArtworkUrl(index);
+      image.alt = '';
+      image.loading = 'lazy';
+      art.append(image);
+      if (!collected) {
+        const lock = document.createElement('b');
+        lock.className = 'favorite-card__lock';
+        lock.textContent = '锁';
+        art.append(lock);
+      }
+
+      const copy = document.createElement('span');
+      copy.className = 'favorite-card__copy';
+      const labels = document.createElement('span');
+      const name = document.createElement('strong');
+      name.textContent = collectionArtworkLabel(index);
+      const number = document.createElement('small');
+      number.textContent = `画册 ${index + 1}`;
+      labels.append(name, number);
+      const status = document.createElement('i');
+      status.textContent = collected ? '已收集' : '未解锁';
+      copy.append(labels, status);
+      card.append(art, copy);
+      if (collected) card.addEventListener('click', () => this.openCollectionMode());
+      return card;
+    });
+    this.favoritesAlbumGrid.replaceChildren(...cards);
+  }
+
+  private renderFavoriteBeadGrid(): void {
+    const cards = this.beadPatterns.map((pattern) => {
+      const completed = this.completedBeadPatternIds.has(pattern.id);
+      const current = this.beadPattern?.id === pattern.id;
+      const total = orderedBeads(pattern).length;
+      const collected = current ? this.beadProgress?.collected ?? 0 : 0;
+      const locked = !completed && !current;
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'favorite-card favorite-card--bead';
+      card.classList.toggle('is-locked', locked);
+      card.disabled = locked;
+      card.setAttribute('role', 'listitem');
+      card.setAttribute('aria-label', completed
+        ? `${pattern.name}，已完成`
+        : current
+          ? `${pattern.name}，已收集 ${collected} / ${total} 颗拼豆`
+          : `${pattern.name}，尚未解锁`);
+
+      const art = document.createElement('span');
+      art.className = 'favorite-card__art';
+      const image = document.createElement('img');
+      image.src = `./bead-patterns/${pattern.id}.svg`;
+      image.alt = '';
+      image.loading = 'lazy';
+      art.append(image);
+      if (locked) {
+        const lock = document.createElement('b');
+        lock.className = 'favorite-card__lock';
+        lock.textContent = '锁';
+        art.append(lock);
+      }
+
+      const copy = document.createElement('span');
+      copy.className = 'favorite-card__copy';
+      const labels = document.createElement('span');
+      const name = document.createElement('strong');
+      name.textContent = pattern.name;
+      const size = document.createElement('small');
+      size.textContent = completed
+        ? `${pattern.width} × ${pattern.height}`
+        : current
+          ? `${collected} / ${total} 颗`
+          : `${pattern.width} × ${pattern.height}`;
+      labels.append(name, size);
+      const status = document.createElement('i');
+      status.textContent = completed ? '已完成' : current ? '进行中' : '未解锁';
+      copy.append(labels, status);
+      card.append(art, copy);
+      if (completed) {
+        card.addEventListener('click', () => {
+          this.beadGalleryDialog.showModal();
+          this.showBeadGalleryDetail(pattern);
+        });
+      } else if (current) {
+        card.addEventListener('click', () => this.openBeadMode());
+      }
+      return card;
+    });
+    this.favoritesBeadGrid.replaceChildren(...cards);
   }
 
   private openCollectionMode(): void {
