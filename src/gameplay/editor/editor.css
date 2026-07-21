@@ -50,7 +50,7 @@
 .editor-board-pane { min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 12px; }
 .editor-resizer { position: relative; min-width: 16px; height: 100%; cursor: col-resize; touch-action: none; outline: 0; }
 .editor-resizer::before { content: ""; position: absolute; top: 14px; bottom: 14px; left: 50%; width: 3px; border-radius: 999px; background: rgba(126, 201, 255, .25); transform: translateX(-50%); transition: width .16s ease, background .16s ease, box-shadow .16s ease; }
-.editor-resizer:hover::before, .editor-resizer:focus-visible::before, .editor-layout.is-resizing .editor-resizer::before { width: 5px; background: var(--green); box-shadow: 0 0 14px rgba(88, 208, 170, .42); }
+.editor-resizer:focus-visible::before, .editor-layout.is-resizing .editor-resizer::before { width: 5px; background: var(--green); box-shadow: 0 0 14px rgba(88, 208, 170, .42); }
 .editor-workspace { position: relative; min-height: 0; display: grid; place-items: center; padding: 22px; overflow: hidden; border: 1px solid var(--line); border-radius: 24px; background: rgba(4, 10, 18, .4); }
 .editor-preview { position: absolute; inset: 22px; opacity: .08; background-position: center; background-size: contain; background-repeat: no-repeat; filter: saturate(.8); }
 .editor-path-lines { position: absolute; inset: 0; z-index: 3; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
@@ -148,20 +148,13 @@
 .editor-level-actions .button { min-width: 0; padding: 9px 7px; font-size: .72rem; }
 .editor-level-list { min-height: 0; display: flex; flex-direction: column; gap: 7px; overflow-y: auto; overscroll-behavior: contain; padding-right: 2px; }
 .editor-level-item { min-height: 54px; padding: 8px 8px 8px 11px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; border: 1px solid rgba(255,255,255,.09); border-radius: 11px; background: rgba(255,255,255,.045); cursor: pointer; transition: background .16s ease, border-color .16s ease, transform .16s ease; }
-.editor-level-item:hover, .editor-level-item:focus-visible { border-color: rgba(126,201,255,.45); background: rgba(126,201,255,.09); outline: 0; transform: translateY(-1px); }
+.editor-level-item:focus-visible { border-color: rgba(126,201,255,.45); background: rgba(126,201,255,.09); outline: 0; transform: translateY(-1px); }
 .editor-level-item.is-selected { border-color: rgba(88,208,170,.65); background: rgba(88,208,170,.11); }
 .editor-level-item__info { min-width: 0; display: grid; gap: 3px; }
 .editor-level-item__info b { color: var(--gold); font-size: .82rem; }
 .editor-level-item__info span { overflow: hidden; color: var(--muted); font-size: .66rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .editor-level-delete { min-width: 48px; height: 32px; padding: 0 8px; border: 1px solid rgba(233,76,93,.24); border-radius: 8px; color: #ff9eaa; background: rgba(233,76,93,.08); font-size: .67rem; font-weight: 800; }
-.editor-level-delete:hover { border-color: rgba(233,76,93,.62); background: rgba(233,76,93,.18); }
 .editor-level-empty { margin: 0; padding: 12px 4px; color: var(--muted); font-size: .72rem; line-height: 1.6; }
-.editor-level-preview { position: fixed; z-index: 1000; width: min(260px, calc(100vw - 20px)); padding: 11px; border: 1px solid rgba(126,201,255,.38); border-radius: 13px; background: rgba(9,17,27,.96); box-shadow: 0 16px 40px rgba(0,0,0,.4); pointer-events: none; }
-.editor-level-preview__header { margin-bottom: 8px; color: var(--ink); font-size: .72rem; font-weight: 900; }
-.editor-level-preview__grid { --preview-cols: 6; --preview-rows: 6; width: 100%; aspect-ratio: var(--preview-cols) / var(--preview-rows); display: grid; grid-template-columns: repeat(var(--preview-cols), 1fr); grid-template-rows: repeat(var(--preview-rows), 1fr); gap: 2px; }
-.editor-level-preview__grid span { min-width: 0; display: grid; place-items: center; border-radius: 22%; color: transparent; background: rgba(255,255,255,.025); font-size: clamp(5px, .55vw, 8px); font-weight: 900; }
-.editor-level-preview__grid span.is-active { color: #eaf4ff; background: #357fc2; }
-.editor-level-preview__grid span.is-hidden { color: #d9c6e8; background: #684d91; font-style: italic; }
 .editor-screen.is-path-animating .editor-grid,
 .editor-screen.is-path-animating .editor-sidebar,
 .editor-screen.is-path-animating .editor-level-panel,

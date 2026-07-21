@@ -254,6 +254,10 @@ export class BoardScene extends Phaser.Scene {
   private hintCell?: CellView;
   private neighborhoodPreviewIndex?: number;
   private pointerLineTarget?: { x: number; y: number };
+  private paused = true;
+  private entranceAnimating = false;
+  private entranceAnimationToken = 0;
+  private entranceTweens: Phaser.Tweens.Tween[] = [];
 
   public constructor() {
     super('board');
@@ -300,6 +304,7 @@ export class BoardScene extends Phaser.Scene {
   };
 
   public setBoard(session: BoardSessionInput): void {
+    this.cancelBoardEntrance();
     this.clearNeighborhoodPreview();
     this.stopHintPulse();
     this.view?.root.destroy(true);
@@ -310,14 +315,15 @@ export class BoardScene extends Phaser.Scene {
     this.drawingNativePointerId = undefined;
     this.pointerLineTarget = undefined;
     this.wrongFeedbackActive = false;
-    this.locked = false;
     this.transitioning = false;
     this.view = this.buildView(session, 0);
     this.refreshView();
+    this.playBoardEntrance(this.view);
   }
 
   public setPaused(paused: boolean): void {
-    this.locked = paused || this.transitioning || this.connection?.complete === true;
+    this.paused = paused;
+    this.locked = paused || this.transitioning || this.entranceAnimating || this.connection?.complete === true;
     if (paused) {
       this.clearNeighborhoodPreview();
       this.isDrawing = false;
@@ -328,17 +334,139 @@ export class BoardScene extends Phaser.Scene {
       this.wrongFeedbackActive = false;
       this.view?.pointerLine.clear();
       this.stopHintPulse();
-    } else {
+    } else if (!this.entranceAnimating) {
       this.refreshView();
     }
   }
 
   public setSolutionReveal(revealed: boolean): void {
     this.solutionRevealed = revealed;
-    this.refreshView();
+    if (this.entranceAnimating && this.view) {
+      const view = this.view;
+      this.cancelBoardEntrance();
+      this.finishBoardEntrance(view, this.entranceAnimationToken);
+    } else {
+      this.refreshView();
+    }
     if (!this.locked && this.isDrawing && this.neighborhoodPreviewIndex !== undefined) {
       this.emitNeighborhoodPreview(this.neighborhoodPreviewIndex);
     }
+  }
+
+  public setRuntimePreferences(preferences: Pick<BoardSessionInput, 'showNextNumber' | 'soundEnabled' | 'touchPreviewRingDepth'>): void {
+    if (!this.session) return;
+    this.session.showNextNumber = preferences.showNextNumber;
+    this.session.soundEnabled = preferences.soundEnabled;
+    this.session.touchPreviewRingDepth = preferences.touchPreviewRingDepth;
+    if (!this.entranceAnimating) this.refreshView();
+    if (!this.locked && this.neighborhoodPreviewIndex !== undefined) {
+      this.emitNeighborhoodPreview(this.neighborhoodPreviewIndex);
+    }
+  }
+
+  private playBoardEntrance(view: BoardView): void {
+    const token = this.entranceAnimationToken;
+    const cells = [...view.cells.values()];
+    const outlineOrder = [...cells].sort((left, right) => {
+      const diagonalOffset = (left.x + left.y) - (right.x + right.y);
+      return Math.abs(diagonalOffset) > 0.5 ? diagonalOffset : left.y - right.y || left.x - right.x;
+    });
+    const visibleCells = cells
+      .filter((cell) => this.solutionRevealed || this.connection?.isVisible(cell.index) === true)
+      .sort((left, right) => left.index - right.index);
+
+    this.entranceAnimating = true;
+    this.locked = true;
+    this.stopHintPulse();
+    cells.forEach((cell) => {
+      cell.liquidRing.setAlpha(0).setScale(1);
+      cell.circle.setAlpha(0).setScale(0.16);
+      cell.hollowRing.setVisible(true).setAlpha(0).setScale(0.72);
+      cell.glow.setAlpha(0).setScale(1);
+      cell.label.setVisible(false).setAlpha(0).setScale(0.16);
+    });
+
+    if (cells.length === 0 || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      this.finishBoardEntrance(view, token);
+      return;
+    }
+
+    const outlineStagger = Math.min(28, Math.max(7, 520 / outlineOrder.length));
+    const outlineTween = this.tweens.add({
+      targets: outlineOrder.map((cell) => cell.hollowRing),
+      alpha: 1,
+      scaleX: 1,
+      scaleY: 1,
+      delay: this.tweens.stagger(outlineStagger, {}),
+      duration: 120,
+      ease: 'Cubic.easeOut',
+      onComplete: () => this.playNumberEntrance(view, visibleCells, token),
+    });
+    this.entranceTweens.push(outlineTween);
+  }
+
+  private playNumberEntrance(view: BoardView, visibleCells: CellView[], token: number): void {
+    if (token !== this.entranceAnimationToken || this.view !== view) return;
+    if (visibleCells.length === 0) {
+      this.finishBoardEntrance(view, token);
+      return;
+    }
+
+    visibleCells.forEach((cell) => cell.label.setVisible(true));
+    const numberStagger = Math.min(64, Math.max(22, 380 / visibleCells.length));
+    const delay = this.tweens.stagger(numberStagger, {});
+    const ringTween = this.tweens.add({
+      targets: visibleCells.map((cell) => cell.hollowRing),
+      alpha: 0,
+      delay,
+      duration: 105,
+      ease: 'Sine.easeOut',
+    });
+    const labelTween = this.tweens.add({
+      targets: visibleCells.map((cell) => cell.label),
+      alpha: 1,
+      scaleX: 1,
+      scaleY: 1,
+      delay,
+      duration: 240,
+      ease: 'Back.easeOut',
+      easeParams: [2.35],
+    });
+    const circleTween = this.tweens.add({
+      targets: visibleCells.map((cell) => cell.circle),
+      alpha: 1,
+      scaleX: 1,
+      scaleY: 1,
+      delay,
+      duration: 270,
+      ease: 'Back.easeOut',
+      easeParams: [2.35],
+      onComplete: () => this.finishBoardEntrance(view, token),
+    });
+    this.entranceTweens.push(ringTween, labelTween, circleTween);
+  }
+
+  private finishBoardEntrance(view: BoardView, token: number): void {
+    if (token !== this.entranceAnimationToken || this.view !== view) return;
+    this.entranceTweens = [];
+    view.cells.forEach((cell) => {
+      cell.liquidRing.setAlpha(1).setScale(1);
+      cell.circle.setAlpha(1).setScale(1);
+      cell.hollowRing.setAlpha(1).setScale(1);
+      cell.glow.setAlpha(1).setScale(1);
+      cell.label.setAlpha(1).setScale(1);
+    });
+    this.entranceAnimating = false;
+    this.locked = this.paused || this.transitioning || this.connection?.complete === true;
+    this.refreshView();
+    if (this.locked) this.stopHintPulse();
+  }
+
+  private cancelBoardEntrance(): void {
+    this.entranceAnimationToken += 1;
+    this.entranceTweens.forEach((tween) => tween.stop());
+    this.entranceTweens = [];
+    this.entranceAnimating = false;
   }
 
   public async transitionTo(session: BoardSessionInput): Promise<void> {
@@ -347,6 +475,7 @@ export class BoardScene extends Phaser.Scene {
       return;
     }
 
+    this.cancelBoardEntrance();
     this.locked = true;
     this.transitioning = true;
     this.clearNeighborhoodPreview();
@@ -379,7 +508,7 @@ export class BoardScene extends Phaser.Scene {
     oldView.root.destroy(true);
     newView.root.y = 0;
     this.transitioning = false;
-    this.locked = false;
+    this.locked = this.paused || this.connection?.complete === true;
   }
 
   public async showCompletion({ revealImage = false }: { revealImage?: boolean } = {}): Promise<void> {
@@ -1139,9 +1268,11 @@ export class BoardScene extends Phaser.Scene {
 
   private handleResize(): void {
     if (!this.session || this.transitioning) return;
+    this.cancelBoardEntrance();
     this.stopHintPulse();
     this.view?.root.destroy(true);
     this.view = this.buildView(this.session, 0);
     this.refreshView();
+    this.locked = this.paused || this.connection?.complete === true;
   }
 }

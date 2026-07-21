@@ -15,7 +15,6 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
     <header class="editor-header">
       <button id="editor-back-button" class="icon-button" aria-label="返回大厅">←</button>
       <div>
-        <p class="eyebrow">LEVEL WORKSHOP</p>
         <h2 id="editor-title">关卡编辑器</h2>
       </div>
       <div id="editor-save-id" class="save-chip">下次保存：6</div>
@@ -25,7 +24,6 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
       <div class="editor-insights-column">
         <aside class="editor-info-panel" aria-labelledby="editor-info-title">
           <div class="editor-info-panel__header">
-            <p class="eyebrow">LEVEL INSIGHTS</p>
             <h3 id="editor-info-title">关卡信息</h3>
           </div>
           <div class="editor-info-size">
@@ -56,7 +54,6 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
         <section class="editor-simulation-panel" aria-labelledby="editor-simulation-title">
           <div class="editor-simulation-panel__header">
             <div>
-              <p class="eyebrow">PLAYER MODEL</p>
               <h3 id="editor-simulation-title">模拟关卡</h3>
             </div>
             <div class="editor-simulation-controls">
@@ -91,7 +88,6 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
       <aside class="editor-sidebar" aria-label="关卡配置">
         <div class="editor-sidebar__heading">
           <div>
-            <p class="eyebrow">LEVEL CONFIG</p>
             <h3>关卡配置</h3>
           </div>
           <label class="editor-algorithm-select">算法
@@ -169,7 +165,6 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
       <aside class="editor-level-panel" aria-label="关卡列表">
         <div class="editor-level-panel__header">
           <div>
-            <p class="eyebrow">LEVEL LIBRARY</p>
             <h3>关卡列表</h3>
           </div>
           <span id="editor-level-count" class="editor-level-count">0 关</span>
@@ -184,6 +179,5 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
       </aside>
     </div>
 
-    <div id="editor-level-preview" class="editor-level-preview" role="tooltip" hidden></div>
   `;
 };
