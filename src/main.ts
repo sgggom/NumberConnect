@@ -38,6 +38,7 @@ import {
   isInputMode,
   isTouchPreviewSize,
   isUiTheme,
+  usesClickInput,
   type BoardNeighborhoodPreview,
   type BoardSessionInput,
   type Cell,
@@ -319,6 +320,7 @@ class NumberConnectApp {
   private readonly touchPreviewCells = query<HTMLElement>('#touch-preview-cells');
   private readonly touchPreviewPathLines = query<SVGGElement>('#touch-preview-path-lines');
   private readonly touchPreviewPointerLine = query<SVGLineElement>('#touch-preview-pointer-line');
+  private readonly touchPreviewViewport = query<HTMLElement>('#touch-preview-viewport');
   private readonly touchPreviewSizeControl = query<HTMLElement>('#touch-preview-size');
   private readonly inputModeControl = query<HTMLElement>('#settings-input-mode');
   private readonly uiThemeControl = query<HTMLElement>('#settings-theme');
@@ -427,6 +429,15 @@ class NumberConnectApp {
   private activeNeighborhoodPreview: BoardNeighborhoodPreview | null = null;
   private manualTouchPreviewPosition?: { left: number; top: number };
   private touchPreviewDrag?: { pointerId: number; offsetX: number; offsetY: number };
+  private touchPreviewViewportDrag?: { pointerId: number; offsetX: number; offsetY: number };
+  private touchPreviewViewportGeometry?: {
+    contentLeft: number;
+    contentTop: number;
+    contentWidth: number;
+    contentHeight: number;
+    frameWidth: number;
+    frameHeight: number;
+  };
   private activeGameTouchPointerId?: number;
   private touchPreviewVisibilityAnimation?: TouchPreviewVisibilityAnimation;
   private touchPreviewVisibilityFrame?: number;
@@ -580,6 +591,7 @@ class NumberConnectApp {
     this.paintBucketButton.addEventListener('click', () => this.togglePaintBucket());
     this.bindSingleTouchInput();
     this.bindTouchPreviewDrag();
+    this.bindTouchPreviewViewportDrag();
     this.restartButton.addEventListener('click', () => this.handleResultPrimary());
     this.nextButton.addEventListener('click', () => this.handleResultSecondary());
     this.resultLobbyButton.addEventListener('click', () => this.leavePlayScreen());
@@ -611,6 +623,7 @@ class NumberConnectApp {
     this.touchPreview.addEventListener('pointerdown', (event) => {
       if (
         !this.isTouchPreviewEnabled()
+        || this.isTouchPreviewZoomMode()
         || !this.activeNeighborhoodPreview
         || this.settings.touchPreviewFollowsPointer
         || this.touchPreviewHiding
@@ -656,12 +669,72 @@ class NumberConnectApp {
     }
   }
 
+  private bindTouchPreviewViewportDrag(): void {
+    this.touchPreviewViewport.addEventListener('pointerdown', (event) => {
+      if (
+        !this.isTouchPreviewZoomMode()
+        || this.touchPreviewViewport.hidden
+        || !this.touchPreviewViewportGeometry
+        || event.button !== 0
+      ) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const boardBounds = this.touchPreviewBoard.getBoundingClientRect();
+      const frameBounds = this.touchPreviewViewport.getBoundingClientRect();
+      this.touchPreviewViewportDrag = {
+        pointerId: event.pointerId,
+        offsetX: (event.clientX - frameBounds.left) / Math.max(1, boardBounds.width),
+        offsetY: (event.clientY - frameBounds.top) / Math.max(1, boardBounds.height),
+      };
+      this.touchPreviewViewport.classList.add('is-dragging');
+      this.touchPreviewViewport.setPointerCapture(event.pointerId);
+    });
+    this.touchPreviewViewport.addEventListener('pointermove', (event) => {
+      if (this.touchPreviewViewportDrag?.pointerId !== event.pointerId) return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.moveBoardViewportFromPreview(event.clientX, event.clientY);
+    });
+    const finishViewportDrag = (event: PointerEvent): void => {
+      if (this.touchPreviewViewportDrag?.pointerId !== event.pointerId) return;
+      this.touchPreviewViewportDrag = undefined;
+      this.touchPreviewViewport.classList.remove('is-dragging');
+      if (this.touchPreviewViewport.hasPointerCapture(event.pointerId)) {
+        this.touchPreviewViewport.releasePointerCapture(event.pointerId);
+      }
+    };
+    this.touchPreviewViewport.addEventListener('pointerup', finishViewportDrag);
+    this.touchPreviewViewport.addEventListener('pointercancel', finishViewportDrag);
+    this.touchPreviewViewport.addEventListener('lostpointercapture', finishViewportDrag);
+  }
+
+  private moveBoardViewportFromPreview(clientX: number, clientY: number): void {
+    const drag = this.touchPreviewViewportDrag;
+    const geometry = this.touchPreviewViewportGeometry;
+    if (!drag || !geometry) return;
+    const boardBounds = this.touchPreviewBoard.getBoundingClientRect();
+    const pointerX = (clientX - boardBounds.left) / Math.max(1, boardBounds.width);
+    const pointerY = (clientY - boardBounds.top) / Math.max(1, boardBounds.height);
+    const frameLeft = pointerX - drag.offsetX;
+    const frameTop = pointerY - drag.offsetY;
+    const horizontalTravel = Math.max(0, geometry.contentWidth - geometry.frameWidth);
+    const verticalTravel = Math.max(0, geometry.contentHeight - geometry.frameHeight);
+    const scrollX = horizontalTravel <= 0
+      ? 0.5
+      : (frameLeft - geometry.contentLeft) / horizontalTravel;
+    const scrollY = verticalTravel <= 0
+      ? 0.5
+      : (frameTop - geometry.contentTop) / verticalTravel;
+    this.boardScene.setBoardViewportPosition(scrollX, scrollY);
+  }
+
   private handleNeighborhoodPreview(preview: BoardNeighborhoodPreview | null): void {
     const previousPreview = this.activeNeighborhoodPreview;
+    const zoomMode = this.isTouchPreviewZoomMode();
     const focusIndex = preview?.cells.find((cell) => cell.center)?.index;
-    const activePreview = focusIndex === undefined ? null : preview;
+    const activePreview = zoomMode ? preview : focusIndex === undefined ? null : preview;
     this.activeNeighborhoodPreview = activePreview;
-    if (!this.isTouchPreviewEnabled() || !activePreview) {
+    if (!this.isTouchPreviewEnabled() || !activePreview || this.currentScreen !== 'play') {
       this.hideTouchPreview(previousPreview);
       return;
     }
@@ -673,6 +746,13 @@ class NumberConnectApp {
     };
     this.touchPreview.hidden = false;
     this.renderNeighborhoodPreview(activePreview);
+    if (zoomMode) {
+      this.cancelTouchPreviewVisibilityAnimation();
+      this.touchPreviewHiding = false;
+      this.applyTouchPreviewVisibility(1, 1);
+      this.repositionTouchPreview();
+      return;
+    }
     if (activePreview.pointer && this.settings.touchPreviewFollowsPointer && !this.touchPreviewDrag) {
       this.placeTouchPreviewAbove(activePreview.clientX, activePreview.clientY, !shouldAnimateIn);
     } else if (shouldAnimateIn) {
@@ -684,19 +764,23 @@ class NumberConnectApp {
   private renderTouchPreviewState(): void {
     const previewSize = this.settings.touchPreviewSize;
     const enabled = previewSize !== 'off';
-    const followsPointer = enabled && this.settings.touchPreviewFollowsPointer;
+    const zoomMode = previewSize === 'zoom';
+    const followsPointer = enabled && !zoomMode && this.settings.touchPreviewFollowsPointer;
     this.touchPreview.dataset.size = previewSize;
     if (!enabled || !followsPointer) this.cancelTouchPreviewPositionAnimation();
     this.touchPreview.classList.toggle('is-following', followsPointer);
+    this.touchPreview.classList.toggle('is-zoom-mode', zoomMode);
     this.touchPreview.setAttribute(
       'aria-label',
-      followsPointer
+      zoomMode
+        ? '完整关卡缩略图，可拖动红色视口框移动放大棋盘'
+        : followsPointer
         ? '正在跟随触摸位置的关卡小窗'
         : '关卡小窗，可按住任意位置拖动',
     );
-    if (!enabled) {
+    if (!enabled || this.currentScreen !== 'play') {
       const previousPreview = this.activeNeighborhoodPreview;
-      this.activeNeighborhoodPreview = null;
+      if (!enabled) this.activeNeighborhoodPreview = null;
       this.hideTouchPreview(previousPreview);
       return;
     }
@@ -707,6 +791,13 @@ class NumberConnectApp {
     const shouldAnimateIn = this.touchPreview.hidden || this.touchPreviewHiding;
     this.touchPreview.hidden = false;
     this.renderNeighborhoodPreview(this.activeNeighborhoodPreview);
+    if (zoomMode) {
+      this.cancelTouchPreviewVisibilityAnimation();
+      this.touchPreviewHiding = false;
+      this.applyTouchPreviewVisibility(1, 1);
+      this.repositionTouchPreview();
+      return;
+    }
     if (this.settings.touchPreviewFollowsPointer && this.activeNeighborhoodPreview.pointer) {
       this.placeTouchPreviewAbove(
         this.activeNeighborhoodPreview.clientX,
@@ -752,6 +843,12 @@ class NumberConnectApp {
     this.touchPreview.classList.remove('is-dragging');
     if (drag && this.touchPreview.hasPointerCapture(drag.pointerId)) {
       this.touchPreview.releasePointerCapture(drag.pointerId);
+    }
+    const viewportDrag = this.touchPreviewViewportDrag;
+    this.touchPreviewViewportDrag = undefined;
+    this.touchPreviewViewport.classList.remove('is-dragging');
+    if (viewportDrag && this.touchPreviewViewport.hasPointerCapture(viewportDrag.pointerId)) {
+      this.touchPreviewViewport.releasePointerCapture(viewportDrag.pointerId);
     }
 
     const origin = preview
@@ -842,6 +939,7 @@ class NumberConnectApp {
   }
 
   private renderNeighborhoodPreview(preview: BoardNeighborhoodPreview | null): void {
+    const zoomMode = this.isTouchPreviewZoomMode();
     this.touchPreviewBoard.style.setProperty(
       '--level-ball-color',
       levelBallColorCss(this.currentLevel?.levelId ?? 1),
@@ -854,6 +952,8 @@ class NumberConnectApp {
       this.touchPreviewPathLines.replaceChildren();
       this.touchPreviewPathLineNodes.clear();
       this.touchPreviewPointerLine.toggleAttribute('hidden', true);
+      this.touchPreviewViewport.hidden = true;
+      this.touchPreviewViewportGeometry = undefined;
       this.touchPreviewBoard.setAttribute('aria-label', '等待关卡载入');
       return;
     }
@@ -865,9 +965,6 @@ class NumberConnectApp {
       0.5,
       ...preview.cells.flatMap((cell) => [Math.abs(cell.offsetX), Math.abs(cell.offsetY)]),
     );
-    const offsetPercent = (offset: number): number => (
-      50 + (Math.max(-maxOffset, Math.min(maxOffset, offset)) / maxOffset) * 42
-    );
     const boardSize = Math.max(
       1,
       Math.min(
@@ -875,12 +972,33 @@ class NumberConnectApp {
         this.touchPreviewBoard.clientHeight || this.touchPreviewBoard.clientWidth || 144,
       ),
     );
-    const gridUnitSize = (boardSize * 0.84) / Math.max(1, maxOffset * 2);
+    const defaultGridUnitSize = (boardSize * 0.84) / Math.max(1, maxOffset * 2);
+    const cellDiameterToStep = preview.viewport?.cellDiameterToStep ?? 0.62;
+    const zoomContentWidth = (
+      Math.max(...preview.cells.map((cell) => cell.offsetX))
+      - Math.min(...preview.cells.map((cell) => cell.offsetX))
+      + cellDiameterToStep
+    );
+    const zoomContentHeight = (
+      Math.max(...preview.cells.map((cell) => cell.offsetY))
+      - Math.min(...preview.cells.map((cell) => cell.offsetY))
+      + cellDiameterToStep
+    );
+    const gridUnitSize = zoomMode
+      ? (boardSize * 0.84) / Math.max(cellDiameterToStep, zoomContentWidth, zoomContentHeight)
+      : defaultGridUnitSize;
+    const offsetPercent = (offset: number): number => (
+      50 + (offset * gridUnitSize / boardSize) * 100
+    );
     const contentScale = this.settings.touchPreviewSize === 'large' ? 0.6 : 1;
     const targetGridUnitSize = boardSize * 0.31 * contentScale;
-    const cameraScale = Math.max(0.25, Math.min(12, targetGridUnitSize / gridUnitSize));
+    const cameraScale = zoomMode
+      ? 1
+      : Math.max(0.25, Math.min(12, targetGridUnitSize / gridUnitSize));
     const targetCellSize = boardSize * 0.2 * contentScale;
-    const cellSize = targetCellSize / cameraScale;
+    const cellSize = zoomMode
+      ? gridUnitSize * cellDiameterToStep
+      : targetCellSize / cameraScale;
     this.touchPreviewBoard.style.setProperty('--touch-preview-cell-size', `${cellSize.toFixed(2)}px`);
     this.touchPreviewBoard.style.setProperty(
       '--touch-preview-line-width',
@@ -913,8 +1031,15 @@ class NumberConnectApp {
       if (cell.style.getPropertyValue('--preview-y') !== y) cell.style.setProperty('--preview-y', y);
       const text = previewCell.value === null ? '' : String(previewCell.value);
       if (cell.textContent !== text) cell.textContent = text;
-      const fontScale = text.length >= 3 ? 0.37 : text.length === 2 ? 0.48 : 0.6;
-      const fontSize = `${Math.max(3.5 / cameraScale, cellSize * fontScale).toFixed(2)}px`;
+      const fontScale = zoomMode
+        ? preview.viewport?.numberFontToCellDiameter ?? 0.6
+        : text.length >= 3 ? 0.37 : text.length === 2 ? 0.48 : 0.6;
+      const fontSize = `${
+        (zoomMode
+          ? Math.max(1.7, cellSize * fontScale)
+          : Math.max(3.5 / cameraScale, cellSize * fontScale)
+        ).toFixed(2)
+      }px`;
       if (cell.style.getPropertyValue('--touch-preview-font-size') !== fontSize) {
         cell.style.setProperty('--touch-preview-font-size', fontSize);
       }
@@ -928,7 +1053,11 @@ class NumberConnectApp {
     });
 
     const focusPosition = center ? positions.get(center.index) : undefined;
-    if (focusPosition) {
+    if (zoomMode) {
+      this.touchPreviewBoard.style.setProperty('--preview-camera-x', '0px');
+      this.touchPreviewBoard.style.setProperty('--preview-camera-y', '0px');
+      this.touchPreviewBoard.style.setProperty('--preview-camera-scale', '1');
+    } else if (focusPosition) {
       const cameraX = boardSize * 0.5 - (focusPosition.x / 100) * boardSize * cameraScale;
       const cameraY = boardSize * 0.5 - (focusPosition.y / 100) * boardSize * cameraScale;
       const cameraProperties = {
@@ -1005,16 +1134,63 @@ class NumberConnectApp {
       this.touchPreviewPointerLine.toggleAttribute('hidden', true);
     }
 
+    this.renderTouchPreviewViewport(preview, positions, cellSize, boardSize);
     this.touchPreviewBoard.setAttribute(
       'aria-label',
-      center === undefined
+      zoomMode
+        ? '完整关卡缩略图，红框表示当前放大区域'
+        : center === undefined
         ? `按住棋盘数字查看当前格周围${this.settings.touchPreviewSize === 'large' ? '两圈' : '一圈'}`
         : `完整关卡网格，当前格${center.value === null ? '为隐藏数字' : `数字为 ${center.value}`}`,
     );
   }
 
+  private renderTouchPreviewViewport(
+    preview: BoardNeighborhoodPreview,
+    positions: ReadonlyMap<number, { x: number; y: number }>,
+    cellSize: number,
+    boardSize: number,
+  ): void {
+    if (!this.isTouchPreviewZoomMode() || !preview.viewport || positions.size === 0) {
+      this.touchPreviewViewport.hidden = true;
+      this.touchPreviewViewportGeometry = undefined;
+      return;
+    }
+
+    const positionValues = [...positions.values()];
+    const cellRadius = (cellSize / Math.max(1, boardSize)) * 0.5;
+    const contentLeft = Math.max(0.01, Math.min(...positionValues.map(({ x }) => x / 100)) - cellRadius);
+    const contentTop = Math.max(0.01, Math.min(...positionValues.map(({ y }) => y / 100)) - cellRadius);
+    const contentRight = Math.min(0.99, Math.max(...positionValues.map(({ x }) => x / 100)) + cellRadius);
+    const contentBottom = Math.min(0.99, Math.max(...positionValues.map(({ y }) => y / 100)) + cellRadius);
+    const contentWidth = Math.max(0.01, contentRight - contentLeft);
+    const contentHeight = Math.max(0.01, contentBottom - contentTop);
+    const frameWidth = contentWidth * preview.viewport.viewportWidthRatio;
+    const frameHeight = contentHeight * preview.viewport.viewportHeightRatio;
+    const frameLeft = contentLeft + (contentWidth - frameWidth) * preview.viewport.scrollX;
+    const frameTop = contentTop + (contentHeight - frameHeight) * preview.viewport.scrollY;
+
+    this.touchPreviewViewportGeometry = {
+      contentLeft,
+      contentTop,
+      contentWidth,
+      contentHeight,
+      frameWidth,
+      frameHeight,
+    };
+    this.touchPreviewViewport.style.left = `${(frameLeft * 100).toFixed(3)}%`;
+    this.touchPreviewViewport.style.top = `${(frameTop * 100).toFixed(3)}%`;
+    this.touchPreviewViewport.style.width = `${(frameWidth * 100).toFixed(3)}%`;
+    this.touchPreviewViewport.style.height = `${(frameHeight * 100).toFixed(3)}%`;
+    this.touchPreviewViewport.hidden = false;
+  }
+
   private repositionTouchPreview(): void {
     if (!this.isTouchPreviewEnabled() || this.touchPreview.hidden || this.touchPreviewDrag) return;
+    if (this.isTouchPreviewZoomMode()) {
+      this.placeTouchPreview(10, 10, false);
+      return;
+    }
     if (this.settings.touchPreviewFollowsPointer && this.activeNeighborhoodPreview?.pointer) {
       this.placeTouchPreviewAbove(
         this.activeNeighborhoodPreview.clientX,
@@ -1134,6 +1310,10 @@ class NumberConnectApp {
     return this.settings.touchPreviewSize !== 'off';
   }
 
+  private isTouchPreviewZoomMode(): boolean {
+    return this.settings.touchPreviewSize === 'zoom';
+  }
+
   private selectedTouchPreviewSize(): TouchPreviewSize {
     const value = this.touchPreviewSizeControl.querySelector<HTMLInputElement>(
       'input[name="touch-preview-size"]:checked',
@@ -1163,7 +1343,7 @@ class NumberConnectApp {
   }
 
   private renderInputMode(): void {
-    this.playScreen.classList.toggle('is-click-input', this.settings.inputMode === 'click');
+    this.playScreen.classList.toggle('is-click-input', usesClickInput(this.settings.inputMode));
   }
 
   private selectedUiTheme(): UiTheme {
@@ -1458,6 +1638,7 @@ class NumberConnectApp {
       soundEnabled: this.settings.soundEnabled,
       inputMode: this.settings.inputMode,
       touchPreviewRingDepth: this.settings.touchPreviewSize === 'large' ? 2 : 1,
+      boardZoomEnabled: this.isTouchPreviewZoomMode(),
       mode: this.mode,
       onProgress: (current, total) => {
         this.currentProgress = current;
@@ -2395,8 +2576,11 @@ class NumberConnectApp {
   }
 
   private refreshSettingsControls(): void {
-    query<HTMLInputElement>('#settings-touch-preview-follow').disabled = this.selectedTouchPreviewSize() === 'off';
-    query<HTMLInputElement>('#settings-next').disabled = this.selectedInputMode() === 'click';
+    const previewSize = this.selectedTouchPreviewSize();
+    query<HTMLInputElement>('#settings-touch-preview-follow').disabled = (
+      previewSize === 'off' || previewSize === 'zoom'
+    );
+    query<HTMLInputElement>('#settings-next').disabled = usesClickInput(this.selectedInputMode());
   }
 
   private applySettingsChange(): void {
@@ -2417,6 +2601,7 @@ class NumberConnectApp {
       soundEnabled: this.settings.soundEnabled,
       inputMode: this.settings.inputMode,
       touchPreviewRingDepth: this.settings.touchPreviewSize === 'large' ? 2 : 1,
+      boardZoomEnabled: this.isTouchPreviewZoomMode(),
     });
 
     if (this.settingsContext === 'play') {

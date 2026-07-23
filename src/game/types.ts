@@ -6,13 +6,13 @@ export enum BoardShape {
   Hex = 4,
 }
 
-export const TOUCH_PREVIEW_SIZES = ['off', 'small', 'medium', 'large'] as const;
+export const TOUCH_PREVIEW_SIZES = ['off', 'small', 'medium', 'large', 'zoom'] as const;
 export type TouchPreviewSize = typeof TOUCH_PREVIEW_SIZES[number];
 
 export const UI_THEMES = ['default', 'night'] as const;
 export type UiTheme = typeof UI_THEMES[number];
 
-export const INPUT_MODES = ['drag', 'click'] as const;
+export const INPUT_MODES = ['drag', 'click', 'auto-click'] as const;
 export type InputMode = typeof INPUT_MODES[number];
 
 export const isTouchPreviewSize = (value: unknown): value is TouchPreviewSize => (
@@ -26,6 +26,8 @@ export const isUiTheme = (value: unknown): value is UiTheme => (
 export const isInputMode = (value: unknown): value is InputMode => (
   typeof value === 'string' && (INPUT_MODES as readonly string[]).includes(value)
 );
+
+export const usesClickInput = (mode: InputMode): boolean => mode !== 'drag';
 
 export interface Cell {
   x: number;
@@ -91,6 +93,16 @@ export interface BoardNeighborhoodPreviewPointer {
   offsetY: number;
 }
 
+export interface BoardViewportPreview {
+  zoom: number;
+  scrollX: number;
+  scrollY: number;
+  viewportWidthRatio: number;
+  viewportHeightRatio: number;
+  cellDiameterToStep: number;
+  numberFontToCellDiameter: number;
+}
+
 export interface BoardNeighborhoodPreview {
   clientX: number;
   clientY: number;
@@ -99,6 +111,7 @@ export interface BoardNeighborhoodPreview {
   cells: BoardNeighborhoodPreviewCell[];
   lines: BoardNeighborhoodPreviewLine[];
   pointer: BoardNeighborhoodPreviewPointer | null;
+  viewport?: BoardViewportPreview;
 }
 
 export interface EndlessStageSettings {
@@ -120,6 +133,7 @@ export interface BoardSessionInput {
   soundEnabled: boolean;
   inputMode: InputMode;
   touchPreviewRingDepth: 1 | 2;
+  boardZoomEnabled: boolean;
   mode: GameMode;
   onProgress: (current: number, total: number) => void;
   onWrong: (message: string) => void;

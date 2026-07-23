@@ -2,10 +2,18 @@ import Phaser from 'phaser';
 import { beadClusterPose, beadRewardTiming } from '../gameplay/beads/beadRewardAnimation';
 import { COLLECTION_ARTWORK_NAMES } from '../gameplay/collection/collectionArtwork';
 import { buildBoardNeighborhoodPreview } from './boardNeighborhood';
+import { calculateBoardViewportLayout } from './boardViewport';
 import { ConnectionProgress, type ConnectionAction, type ConnectionFailure } from './connectionProgress';
 import { findSwappableHiddenPairs } from './hiddenSwap';
 import { areNeighborCells, projectCell } from './topology';
-import { BoardShape, backgroundUrl, cellKey, type BoardSessionInput, type Cell } from './types';
+import {
+  BoardShape,
+  backgroundUrl,
+  cellKey,
+  usesClickInput,
+  type BoardSessionInput,
+  type Cell,
+} from './types';
 import { levelBallColor } from './levelTheme';
 
 type CellShape = Phaser.GameObjects.Arc | Phaser.GameObjects.Polygon;
@@ -31,6 +39,7 @@ interface BoardView {
   cells: Map<string, CellView>;
   radius: number;
   step: number;
+  numberFontSize: number;
   centerX: number;
   centerY: number;
   panelWidth: number;
@@ -65,6 +74,9 @@ const HIDDEN_CELL_RING_WIDTH_SCALE = 0.2;
 const BOARD_HORIZONTAL_PADDING = 5;
 const BOARD_VERTICAL_PADDING = 10;
 const MAX_CELL_STEP = 86;
+const AUTO_CLICK_STEP_DELAY_MS = 400;
+const BOARD_ZOOM_SCALE = 1.5;
+const BOARD_ZOOM_EDGE_INSET = 16;
 
 const baseCellRadiusForStep = (step: number, isHex: boolean): number => (isHex
   ? Math.max(16, Math.min(44, step * 0.56))
@@ -261,6 +273,8 @@ export class BoardScene extends Phaser.Scene {
   private entranceAnimationToken = 0;
   private entranceTweens: Phaser.Tweens.Tween[] = [];
   private cellSelectionHandler?: (cell: Cell) => void;
+  private autoClickTimer?: Phaser.Time.TimerEvent;
+  private boardViewportScroll = { x: 0.5, y: 0.5 };
 
   public constructor() {
     super('board');
@@ -307,6 +321,7 @@ export class BoardScene extends Phaser.Scene {
   };
 
   public setBoard(session: BoardSessionInput): void {
+    this.cancelAutoClickSequence();
     this.cancelBoardEntrance();
     this.clearNeighborhoodPreview();
     this.stopHintPulse();
@@ -320,7 +335,9 @@ export class BoardScene extends Phaser.Scene {
     this.wrongFeedbackActive = false;
     this.cellSelectionHandler = undefined;
     this.transitioning = false;
+    this.boardViewportScroll = { x: 0.5, y: 0.5 };
     this.view = this.buildView(session, 0);
+    this.applyBoardViewport();
     this.refreshView();
     this.playBoardEntrance(this.view);
   }
@@ -329,6 +346,7 @@ export class BoardScene extends Phaser.Scene {
     this.paused = paused;
     this.locked = paused || this.transitioning || this.entranceAnimating || this.connection?.complete === true;
     if (paused) {
+      this.cancelAutoClickSequence();
       this.clearNeighborhoodPreview();
       this.isDrawing = false;
       this.drawingPointerId = undefined;
@@ -351,6 +369,7 @@ export class BoardScene extends Phaser.Scene {
       && !this.paused
       && !this.transitioning
       && !this.entranceAnimating
+      && !this.autoClickTimer
       && !this.connection.complete,
     );
   }
@@ -370,12 +389,19 @@ export class BoardScene extends Phaser.Scene {
     const cellView = this.view.cells.get(cellKey(cell));
     if (!cellView) return undefined;
     const canvasBounds = this.sys.game.canvas.getBoundingClientRect();
-    const gameX = this.view.root.x + cellView.x;
-    const gameY = this.view.root.y + cellView.y;
+    const gameX = this.view.root.x + cellView.x * this.view.root.scaleX;
+    const gameY = this.view.root.y + cellView.y * this.view.root.scaleY;
     return {
       x: canvasBounds.left + (gameX / Math.max(1, this.scale.width)) * canvasBounds.width,
       y: canvasBounds.top + (gameY / Math.max(1, this.scale.height)) * canvasBounds.height,
     };
+  }
+
+  public setBoardViewportPosition(scrollX: number, scrollY: number): void {
+    if (!this.session?.boardZoomEnabled || !this.view) return;
+    this.boardViewportScroll = { x: scrollX, y: scrollY };
+    this.applyBoardViewport();
+    this.emitNeighborhoodPreview(null);
   }
 
   public setCellSelectionHandler(handler?: (cell: Cell) => void): boolean {
@@ -424,19 +450,32 @@ export class BoardScene extends Phaser.Scene {
   }
 
   public setRuntimePreferences(
-    preferences: Pick<BoardSessionInput, 'showNextNumber' | 'soundEnabled' | 'inputMode' | 'touchPreviewRingDepth'>,
+    preferences: Pick<
+      BoardSessionInput,
+      'showNextNumber' | 'soundEnabled' | 'inputMode' | 'touchPreviewRingDepth' | 'boardZoomEnabled'
+    >,
   ): void {
     if (!this.session) return;
+    const boardZoomChanged = this.session.boardZoomEnabled !== preferences.boardZoomEnabled;
     if (this.session.inputMode !== preferences.inputMode) {
+      this.cancelAutoClickSequence();
       this.finishPointerInteraction();
       this.connection?.endStroke();
-      if (preferences.inputMode === 'click') this.connection?.enableClickMode();
+      if (usesClickInput(preferences.inputMode)) this.connection?.enableClickMode();
     }
     this.session.showNextNumber = preferences.showNextNumber;
     this.session.soundEnabled = preferences.soundEnabled;
     this.session.inputMode = preferences.inputMode;
     this.session.touchPreviewRingDepth = preferences.touchPreviewRingDepth;
+    this.session.boardZoomEnabled = preferences.boardZoomEnabled;
+    if (boardZoomChanged) {
+      this.boardViewportScroll = { x: 0.5, y: 0.5 };
+      this.applyBoardViewport();
+    }
     if (!this.entranceAnimating) this.refreshView();
+    if (boardZoomChanged && !this.session.boardZoomEnabled) {
+      this.session.onNeighborhoodPreview?.(null);
+    }
     if (!this.locked && this.neighborhoodPreviewIndex !== undefined) {
       this.emitNeighborhoodPreview(this.neighborhoodPreviewIndex);
     }
@@ -553,6 +592,7 @@ export class BoardScene extends Phaser.Scene {
       return;
     }
 
+    this.cancelAutoClickSequence();
     this.cancelBoardEntrance();
     this.locked = true;
     this.transitioning = true;
@@ -560,10 +600,15 @@ export class BoardScene extends Phaser.Scene {
     this.stopHintPulse();
     this.disableViewInput(this.view);
     const oldView = this.view;
-    const distance = Math.max(this.scale.height, 720) + oldView.panelHeight * 0.5 + 100;
+    const distance = (
+      Math.max(this.scale.height, 720)
+      + oldView.panelHeight * Math.abs(oldView.root.scaleY) * 0.5
+      + 100
+    );
 
     this.session = session;
     this.connection = this.createConnectionProgress(session);
+    this.boardViewportScroll = { x: 0.5, y: 0.5 };
     this.isDrawing = false;
     this.drawingPointerId = undefined;
     this.drawingNativePointerId = undefined;
@@ -572,6 +617,7 @@ export class BoardScene extends Phaser.Scene {
     this.cellSelectionHandler = undefined;
     const newView = this.buildView(session, distance);
     this.view = newView;
+    this.applyBoardViewport(newView, distance);
     this.refreshView();
 
     await new Promise<void>((resolve) => {
@@ -585,7 +631,7 @@ export class BoardScene extends Phaser.Scene {
     });
 
     oldView.root.destroy(true);
-    newView.root.y = 0;
+    this.applyBoardViewport(newView);
     this.transitioning = false;
     this.locked = this.paused || this.connection?.complete === true;
   }
@@ -851,8 +897,32 @@ export class BoardScene extends Phaser.Scene {
       visibleIndices,
       swappableHiddenPairs,
     );
-    if (session.inputMode === 'click') connection.enableClickMode();
+    if (usesClickInput(session.inputMode)) connection.enableClickMode();
     return connection;
+  }
+
+  private boardViewportLayout(view: BoardView) {
+    return calculateBoardViewportLayout({
+      viewportWidth: Math.max(1, this.scale.width),
+      viewportHeight: Math.max(1, this.scale.height),
+      contentLeft: view.centerX - view.panelWidth * 0.5,
+      contentTop: view.centerY - view.panelHeight * 0.5,
+      contentWidth: view.panelWidth,
+      contentHeight: view.panelHeight,
+      zoom: this.session?.boardZoomEnabled ? BOARD_ZOOM_SCALE : 1,
+      scrollX: this.boardViewportScroll.x,
+      scrollY: this.boardViewportScroll.y,
+      edgeInset: this.session?.boardZoomEnabled ? BOARD_ZOOM_EDGE_INSET : 0,
+    });
+  }
+
+  private applyBoardViewport(view = this.view, offsetY = 0): void {
+    if (!view) return;
+    const layout = this.boardViewportLayout(view);
+    const zoom = this.session?.boardZoomEnabled ? BOARD_ZOOM_SCALE : 1;
+    this.boardViewportScroll = { x: layout.scrollX, y: layout.scrollY };
+    view.root.setScale(zoom);
+    view.root.setPosition(layout.rootX, layout.rootY + offsetY);
   }
 
   private buildView(session: BoardSessionInput, offsetY: number): BoardView {
@@ -981,6 +1051,7 @@ export class BoardScene extends Phaser.Scene {
       cells,
       radius,
       step,
+      numberFontSize,
       centerX,
       centerY,
       panelWidth,
@@ -1009,10 +1080,11 @@ export class BoardScene extends Phaser.Scene {
     this.drawConnectedBridges();
     if (!this.isDrawing) this.view.pointerLine.clear();
 
-    const nextHint = this.session.showNextNumber && this.session.inputMode !== 'click' && !selectingCell
+    const clickInput = usesClickInput(this.session.inputMode);
+    const nextHint = this.session.showNextNumber && !clickInput && !selectingCell
       ? this.connection?.suggestedNextHint()
       : undefined;
-    const currentClickIndex = this.session.inputMode === 'click' && !selectingCell
+    const currentClickIndex = clickInput && !selectingCell
       ? this.connection?.currentClickIndex
       : undefined;
     let activeHintCell: CellView | undefined;
@@ -1058,6 +1130,9 @@ export class BoardScene extends Phaser.Scene {
     });
 
     this.startHintPulse(activeHintCell);
+    if (this.session.boardZoomEnabled && this.neighborhoodPreviewIndex === undefined) {
+      this.emitNeighborhoodPreview(null);
+    }
   }
 
   private drawConnectedBridges(): void {
@@ -1132,18 +1207,24 @@ export class BoardScene extends Phaser.Scene {
   }
 
   private handleCellDown(index: number, pointer: Phaser.Input.Pointer): void {
-    if (this.locked || this.transitioning || !this.connection) return;
+    if (this.locked || this.transitioning || this.autoClickTimer || !this.connection) return;
     if (this.drawingPointerId !== undefined && this.drawingPointerId !== pointer.id) return;
     if (this.cellSelectionHandler && this.session) {
       const cell = this.session.level.solutionPath[index];
       if (cell) this.cellSelectionHandler({ ...cell });
       return;
     }
-    if (this.session?.inputMode === 'click') {
+    if (this.session && usesClickInput(this.session.inputMode)) {
       const actions = this.connection.clickForward(index);
       actions.forEach((action, actionIndex) => {
         this.handleConnectionAction(action, actionIndex === actions.length - 1);
       });
+      if (
+        this.session.inputMode === 'auto-click'
+        && actions.some((action) => action.type === 'advanced' && action.index === index)
+      ) {
+        this.scheduleAutoClickStep();
+      }
       return;
     }
     this.isDrawing = true;
@@ -1152,7 +1233,10 @@ export class BoardScene extends Phaser.Scene {
     this.handleConnectionAction(this.connection.begin(index, this.solutionRevealed));
     this.emitNeighborhoodPreview(index, pointer);
     if (this.view) {
-      this.drawPointerLine(pointer.x - this.view.root.x, pointer.y - this.view.root.y);
+      this.drawPointerLine(
+        (pointer.x - this.view.root.x) / Math.max(0.01, Math.abs(this.view.root.scaleX)),
+        (pointer.y - this.view.root.y) / Math.max(0.01, Math.abs(this.view.root.scaleY)),
+      );
     }
   }
 
@@ -1166,8 +1250,12 @@ export class BoardScene extends Phaser.Scene {
       || !this.connection
       || !this.session
     ) return;
-    const localX = pointer.x - this.view.root.x;
-    const localY = pointer.y - this.view.root.y;
+    const localX = (
+      (pointer.x - this.view.root.x) / Math.max(0.01, Math.abs(this.view.root.scaleX))
+    );
+    const localY = (
+      (pointer.y - this.view.root.y) / Math.max(0.01, Math.abs(this.view.root.scaleY))
+    );
     const activeIndex = this.connection.activeIndex;
     const activeCell = activeIndex === undefined
       ? undefined
@@ -1206,10 +1294,53 @@ export class BoardScene extends Phaser.Scene {
     this.drawingNativePointerId = undefined;
     this.pointerLineTarget = undefined;
     this.wrongFeedbackActive = false;
-    if (this.session?.inputMode !== 'click') this.connection?.endStroke();
+    if (!this.session || !usesClickInput(this.session.inputMode)) this.connection?.endStroke();
     this.view?.pointerLine.clear();
     if (wasDrawing) this.refreshView();
     this.clearNeighborhoodPreview();
+  }
+
+  private scheduleAutoClickStep(): void {
+    if (
+      !this.session
+      || this.session.inputMode !== 'auto-click'
+      || !this.connection
+      || this.connection.complete
+      || this.locked
+      || this.paused
+      || this.transitioning
+      || this.entranceAnimating
+    ) return;
+    const nextIndex = this.connection.nextVisibleClickIndex();
+    if (nextIndex === undefined) return;
+
+    this.cancelAutoClickSequence();
+    this.autoClickTimer = this.time.delayedCall(AUTO_CLICK_STEP_DELAY_MS, () => {
+      this.autoClickTimer = undefined;
+      if (
+        !this.session
+        || this.session.inputMode !== 'auto-click'
+        || !this.connection
+        || this.connection.complete
+        || this.locked
+        || this.paused
+        || this.transitioning
+        || this.entranceAnimating
+      ) return;
+
+      const actions = this.connection.clickForward(nextIndex);
+      actions.forEach((action, actionIndex) => {
+        this.handleConnectionAction(action, actionIndex === actions.length - 1);
+      });
+      if (actions.some((action) => action.type === 'advanced' && action.index === nextIndex)) {
+        this.scheduleAutoClickStep();
+      }
+    });
+  }
+
+  private cancelAutoClickSequence(): void {
+    this.autoClickTimer?.remove(false);
+    this.autoClickTimer = undefined;
   }
 
   private emitNeighborhoodPreview(
@@ -1219,8 +1350,10 @@ export class BoardScene extends Phaser.Scene {
     if (!this.session || !this.connection || !this.view) return;
     const centerCell = index === null ? undefined : this.session.level.solutionPath[index];
     const centerView = centerCell ? this.view.cells.get(cellKey(centerCell)) : undefined;
-    const localX = pointer ? pointer.x - this.view.root.x : 0;
-    const localY = pointer ? pointer.y - this.view.root.y : 0;
+    const rootScaleX = Math.max(0.01, Math.abs(this.view.root.scaleX));
+    const rootScaleY = Math.max(0.01, Math.abs(this.view.root.scaleY));
+    const localX = pointer ? (pointer.x - this.view.root.x) / rootScaleX : 0;
+    const localY = pointer ? (pointer.y - this.view.root.y) / rootScaleY : 0;
     const canvasBounds = pointer ? this.sys.game.canvas.getBoundingClientRect() : undefined;
     const clientX = pointer && canvasBounds
       ? canvasBounds.left + (pointer.x / Math.max(1, this.scale.width)) * canvasBounds.width
@@ -1228,15 +1361,19 @@ export class BoardScene extends Phaser.Scene {
     const clientY = pointer && canvasBounds
       ? canvasBounds.top + (pointer.y / Math.max(1, this.scale.height)) * canvasBounds.height
       : 0;
-    const originGameX = centerView ? this.view.root.x + centerView.x : pointer?.x ?? 0;
-    const originGameY = centerView ? this.view.root.y + centerView.y : pointer?.y ?? 0;
+    const originGameX = centerView
+      ? this.view.root.x + centerView.x * rootScaleX
+      : pointer?.x ?? 0;
+    const originGameY = centerView
+      ? this.view.root.y + centerView.y * rootScaleY
+      : pointer?.y ?? 0;
     const originClientX = canvasBounds
       ? canvasBounds.left + (originGameX / Math.max(1, this.scale.width)) * canvasBounds.width
       : clientX;
     const originClientY = canvasBounds
       ? canvasBounds.top + (originGameY / Math.max(1, this.scale.height)) * canvasBounds.height
       : clientY;
-    const preview = buildBoardNeighborhoodPreview(
+    const basePreview = buildBoardNeighborhoodPreview(
       this.session.level,
       index,
       (candidateIndex) => this.solutionRevealed || this.connection?.isVisible(candidateIndex) === true,
@@ -1255,14 +1392,35 @@ export class BoardScene extends Phaser.Scene {
         } : null,
       },
     );
-    if (!preview) return;
+    if (!basePreview) return;
+    const viewportLayout = this.session.boardZoomEnabled
+      ? this.boardViewportLayout(this.view)
+      : undefined;
+    const preview = viewportLayout
+      ? {
+          ...basePreview,
+          viewport: {
+            zoom: BOARD_ZOOM_SCALE,
+            scrollX: viewportLayout.scrollX,
+            scrollY: viewportLayout.scrollY,
+            viewportWidthRatio: viewportLayout.viewportWidthRatio,
+            viewportHeightRatio: viewportLayout.viewportHeightRatio,
+            cellDiameterToStep: (this.view.radius * 2) / Math.max(0.01, this.view.step),
+            numberFontToCellDiameter: this.view.numberFontSize / Math.max(1, this.view.radius * 2),
+          },
+        }
+      : basePreview;
     this.neighborhoodPreviewIndex = index ?? undefined;
     this.session.onNeighborhoodPreview?.(preview);
   }
 
   private clearNeighborhoodPreview(): void {
     this.neighborhoodPreviewIndex = undefined;
-    this.session?.onNeighborhoodPreview?.(null);
+    if (this.session?.boardZoomEnabled && this.connection && this.view) {
+      this.emitNeighborhoodPreview(null);
+    } else {
+      this.session?.onNeighborhoodPreview?.(null);
+    }
   }
 
   private drawPointerLine(localX: number, localY: number): void {
@@ -1423,6 +1581,7 @@ export class BoardScene extends Phaser.Scene {
     this.stopHintPulse();
     this.view?.root.destroy(true);
     this.view = this.buildView(this.session, 0);
+    this.applyBoardViewport();
     this.refreshView();
     this.locked = this.paused || this.connection?.complete === true;
   }

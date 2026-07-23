@@ -154,6 +154,11 @@ export class ConnectionProgress {
     return actions.length > 0 ? actions : [{ type: 'ignored' }];
   }
 
+  public nextVisibleClickIndex(): number | undefined {
+    const nextIndex = this.nextClickIndex();
+    return nextIndex !== undefined && this.visibleIndices.has(nextIndex) ? nextIndex : undefined;
+  }
+
   public enableClickMode(): void {
     const firstIndex = this.orderedIndices()[0];
     if (firstIndex !== undefined) this.visibleIndices.add(firstIndex);
@@ -226,6 +231,14 @@ export class ConnectionProgress {
 
   private inBounds(index: number): boolean {
     return Number.isInteger(index) && index >= 0 && index < this.totalNodes;
+  }
+
+  private nextClickIndex(): number | undefined {
+    const orderedIndices = this.orderedIndices();
+    this.syncClickAnchor(orderedIndices);
+    const anchor = this.clickAnchor ?? orderedIndices[0];
+    const anchorPosition = anchor === undefined ? -1 : orderedIndices.indexOf(anchor);
+    return anchorPosition < 0 ? undefined : orderedIndices[anchorPosition + 1];
   }
 
   private syncClickAnchor(orderedIndices: ReadonlyArray<number>): void {

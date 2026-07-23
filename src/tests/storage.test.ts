@@ -68,13 +68,26 @@ describe('game settings migration', () => {
     }
   });
 
+  it('loads the persistent zoomed board preview mode', () => {
+    const getItem = vi.fn(() => JSON.stringify({ touchPreviewSize: 'zoom' }));
+    vi.stubGlobal('window', { localStorage: { getItem } });
+
+    try {
+      expect(loadSettings().touchPreviewSize).toBe('zoom');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('loads a valid input mode and falls back from an invalid one', () => {
     const getItem = vi.fn()
+      .mockReturnValueOnce(JSON.stringify({ inputMode: 'auto-click' }))
       .mockReturnValueOnce(JSON.stringify({ inputMode: 'click' }))
       .mockReturnValueOnce(JSON.stringify({ inputMode: 'keyboard' }));
     vi.stubGlobal('window', { localStorage: { getItem } });
 
     try {
+      expect(loadSettings().inputMode).toBe('auto-click');
       expect(loadSettings().inputMode).toBe('click');
       expect(loadSettings().inputMode).toBe('drag');
     } finally {
