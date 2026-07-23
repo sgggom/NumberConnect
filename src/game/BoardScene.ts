@@ -2,6 +2,15 @@ import Phaser from 'phaser';
 import { beadClusterPose, beadRewardTiming } from '../gameplay/beads/beadRewardAnimation';
 import { COLLECTION_ARTWORK_NAMES } from '../gameplay/collection/collectionArtwork';
 import { buildBoardNeighborhoodPreview } from './boardNeighborhood';
+import {
+  baseCellRadiusForStep,
+  CELL_GLOW_RADIUS_MARGIN,
+  CELL_GLOW_STROKE_WIDTH,
+  CELL_HINT_MAX_SCALE,
+  CELL_RADIUS_SCALE,
+  maximumStepForExtent,
+  numberFontSizeForBoard,
+} from './boardSizing';
 import { calculateBoardViewportLayout } from './boardViewport';
 import { ConnectionProgress, type ConnectionAction, type ConnectionFailure } from './connectionProgress';
 import {
@@ -75,12 +84,9 @@ const colorNumber = (hexColor: string): number => Number.parseInt(hexColor.slice
 const METABALL_BLEND = 0.5;
 const METABALL_HANDLE_LENGTH_RATE = 2.4;
 const METABALL_CURVE_SAMPLES = 12;
-const CELL_RADIUS_SCALE = 0.9;
-const CELL_NUMBER_SCALE = 1.5;
 const HIDDEN_CELL_RING_WIDTH_SCALE = 0.2;
 const BOARD_HORIZONTAL_PADDING = 5;
 const BOARD_VERTICAL_PADDING = 10;
-const MAX_CELL_STEP = 86;
 const AUTO_CLICK_STEP_DELAY_MS = 400;
 const BOARD_ZOOM_SCALE = 1.5;
 const BOARD_ZOOM_EDGE_INSET = 16;
@@ -91,27 +97,6 @@ const HIDDEN_QUESTION_HIDE_DURATION_MS = 120;
 
 const colorHex = (color: number): string =>
   `#${(color & 0xffffff).toString(16).padStart(6, '0')}`;
-
-const baseCellRadiusForStep = (step: number, isHex: boolean): number => (isHex
-  ? Math.max(16, Math.min(44, step * 0.56))
-  : Math.max(13, Math.min(32, step * 0.34)));
-
-const maximumStepForExtent = (
-  projectedRange: number,
-  availableExtent: number,
-  isHex: boolean,
-): number => {
-  let lower = 0;
-  let upper = MAX_CELL_STEP;
-  for (let iteration = 0; iteration < 24; iteration += 1) {
-    const candidate = (lower + upper) * 0.5;
-    const radius = baseCellRadiusForStep(candidate, isHex) * CELL_RADIUS_SCALE;
-    const extent = projectedRange * candidate + radius * 2;
-    if (extent <= availableExtent) lower = candidate;
-    else upper = candidate;
-  }
-  return lower;
-};
 
 const liquidBallRadius = (radius: number): number => radius + Math.max(1.5, radius * 0.055);
 
@@ -974,8 +959,9 @@ export class BoardScene extends Phaser.Scene {
     const step = Math.min(horizontalStep, verticalStep);
     const baseRadius = baseCellRadiusForStep(step, isHex);
     const radius = baseRadius * CELL_RADIUS_SCALE;
-    const numberFontSize = Math.round(
-      Math.max(12, Math.round(baseRadius * 0.72)) * CELL_NUMBER_SCALE,
+    const numberFontSize = numberFontSizeForBoard(
+      baseRadius,
+      session.level.solutionPath.length,
     );
 
     raw.forEach((entry) => {
@@ -1004,11 +990,11 @@ export class BoardScene extends Phaser.Scene {
     session.level.solutionPath.forEach((cell, index) => {
       const position = positions.get(cellKey(cell));
       if (!position) return;
-      const glowRadius = radius + 6;
+      const glowRadius = radius + CELL_GLOW_RADIUS_MARGIN;
       const glow: CellShape = isHex
         ? this.add.polygon(position.x, position.y, hexagonPoints(glowRadius), COLORS.hint, 0)
         : this.add.circle(position.x, position.y, glowRadius, COLORS.hint, 0);
-      glow.setStrokeStyle(4, COLORS.hint, 0);
+      glow.setStrokeStyle(CELL_GLOW_STROKE_WIDTH, COLORS.hint, 0);
       const liquidRingRadius = liquidBallRadius(radius);
       const liquidRing: CellShape = isHex
         ? this.add.polygon(position.x, position.y, hexagonPoints(liquidRingRadius), ballColor, 0)
@@ -1175,7 +1161,7 @@ export class BoardScene extends Phaser.Scene {
         selectingCell ? 0.13 : clickCurrent ? 0.12 : hint ? 0.2 : 0,
       );
       cellView.glow.setStrokeStyle(
-        4,
+        CELL_GLOW_STROKE_WIDTH,
         glowColor,
         selectingCell ? 0.72 : clickCurrent ? 0.92 : hint ? 0.9 : 0,
       );
@@ -1297,7 +1283,7 @@ export class BoardScene extends Phaser.Scene {
     cell.glow.setScale(0.94).setAlpha(0.64);
     this.hintTween = this.tweens.add({
       targets: cell.glow,
-      scale: 1.13,
+      scale: CELL_HINT_MAX_SCALE,
       alpha: 1,
       duration: 880,
       ease: 'Sine.easeInOut',
