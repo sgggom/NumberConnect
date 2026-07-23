@@ -21,6 +21,34 @@ const COLORS = [
 ];
 
 const keyOf = ({ x, y }) => `${x},${y}`;
+const decodeLevel = (level, index) => {
+  if (!level || typeof level !== 'object' || !Array.isArray(level.data) || level.data.length === 0) {
+    throw new Error(`Invalid compact level ${index + 1}`);
+  }
+  const rows = level.data.length;
+  const columns = level.data[0]?.length ?? 0;
+  if (columns === 0 || level.data.some((row) => !Array.isArray(row) || row.length !== columns)) {
+    throw new Error(`Invalid compact level grid ${index + 1}`);
+  }
+  const activeCells = [];
+  const solutionPath = [];
+  level.data.forEach((row, y) => row.forEach((value, x) => {
+    if (!Number.isSafeInteger(value) || value === 0) return;
+    const cell = { x, y };
+    activeCells.push(cell);
+    solutionPath[Math.abs(value) - 1] = cell;
+  }));
+  if (solutionPath.length !== activeCells.length || solutionPath.some((cell) => !cell)) {
+    throw new Error(`Invalid compact level numbering ${index + 1}`);
+  }
+  return {
+    levelId: index + 1,
+    rows,
+    columns,
+    activeCells,
+    solutionPath,
+  };
+};
 const clamp01 = (value) => Math.max(0, Math.min(1, value));
 const escapeXml = (value) => String(value)
   .replaceAll('&', '&amp;')
@@ -356,7 +384,7 @@ const renderHeatmapSvg = (analysis) => {
 </svg>`;
 };
 
-const levels = JSON.parse(await readFile(LEVELS_PATH, 'utf8'));
+const levels = JSON.parse(await readFile(LEVELS_PATH, 'utf8')).map(decodeLevel);
 const analyses = levels.map(analyzeLevel);
 await mkdir(OUTPUT_DIR, { recursive: true });
 

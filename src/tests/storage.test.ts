@@ -42,6 +42,7 @@ describe('game settings migration', () => {
         targetCrossings: DEFAULT_SETTINGS.targetCrossings,
         selectedLevelId: 4,
         showNextNumber: false,
+        inputMode: DEFAULT_SETTINGS.inputMode,
         touchPreviewSize: DEFAULT_SETTINGS.touchPreviewSize,
         touchPreviewFollowsPointer: DEFAULT_SETTINGS.touchPreviewFollowsPointer,
       });
@@ -62,6 +63,20 @@ describe('game settings migration', () => {
         touchPreviewSize: 'off',
         touchPreviewFollowsPointer: true,
       });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('loads a valid input mode and falls back from an invalid one', () => {
+    const getItem = vi.fn()
+      .mockReturnValueOnce(JSON.stringify({ inputMode: 'click' }))
+      .mockReturnValueOnce(JSON.stringify({ inputMode: 'keyboard' }));
+    vi.stubGlobal('window', { localStorage: { getItem } });
+
+    try {
+      expect(loadSettings().inputMode).toBe('click');
+      expect(loadSettings().inputMode).toBe('drag');
     } finally {
       vi.unstubAllGlobals();
     }
@@ -110,7 +125,7 @@ describe('level collection migration', () => {
   it('treats exported bundled levels as official campaign levels', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true,
-      json: async () => [makeLevel(1, true)],
+      json: async () => [{ data: [[1]] }],
     })));
 
     try {

@@ -101,8 +101,9 @@ body {
   width: 100vw;
   height: 100dvh;
   min-height: 100dvh;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   overflow: hidden;
   color: var(--ink);
   background:
@@ -127,7 +128,7 @@ button, select { color: inherit; }
 button { border: 0; cursor: pointer; }
 button:focus-visible, select:focus-visible, input:focus-visible { outline: 3px solid rgba(107, 182, 255, 0.7); outline-offset: 3px; }
 
-.app-shell { width: var(--phone-width); height: var(--phone-height); min-height: 0; position: relative; isolation: isolate; overflow: hidden; border: 1px solid rgba(255,255,255,.08); border-radius: 28px; background: var(--page); box-shadow: 0 30px 100px rgba(0,0,0,.48); transform: scale(var(--ui-scale)); transform-origin: center; container-type: size; }
+.app-shell { width: var(--phone-width); height: var(--phone-height); min-height: 0; position: relative; flex: 0 0 auto; isolation: isolate; overflow: hidden; border: 1px solid rgba(255,255,255,.08); border-radius: 28px; background: var(--page); box-shadow: 0 30px 100px rgba(0,0,0,.48); transform: scale(var(--ui-scale)); transform-origin: center; container-type: size; }
 .app-shell::before {
   content: "";
   position: absolute;
@@ -1045,8 +1046,8 @@ html[data-theme="night"] .primary-tab-button.is-active::before { background: var
   isolation: isolate;
   padding: 12px 14px;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 10px;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 8px;
   overflow: hidden;
   color: var(--ink);
   background:
@@ -1067,6 +1068,35 @@ html[data-theme="night"] .primary-tab-button.is-active::before { background: var
 .progress-counter b { min-width: 42px; color: #3978b8; text-align: center; font-size: .78rem; font-variant-numeric: tabular-nums; }
 .game-host { width: calc(100% + 28px); min-height: 0; height: 100%; margin: 0 -14px; overflow: hidden; background: transparent; touch-action: none; }
 .game-host canvas { display: block; width: 100% !important; height: 100% !important; }
+.play-screen.is-click-input .game-host canvas { cursor: pointer; }
+.play-screen.is-paint-targeting .game-host canvas { cursor: crosshair; }
+
+.power-up-bar { width: min(100%, 920px); min-width: 0; margin: 0 auto; position: relative; z-index: 3; }
+.power-up-status { width: 1px; height: 1px; position: absolute; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); border: 0; white-space: nowrap; }
+.power-up-actions { display: flex; justify-content: flex-end; gap: 12px; padding-right: 4px; }
+.power-up-button { width: 64px; height: 64px; padding: 6px; position: relative; display: grid; place-items: center; overflow: visible; border: 0; border-radius: 0; color: #294058; background: transparent; box-shadow: none; touch-action: manipulation; transition: transform .16s ease, opacity .16s ease, filter .16s ease; }
+.power-up-icon { width: 52px; height: 52px; position: relative; z-index: 1; display: grid; place-items: center; transition: opacity .1s ease; }
+.power-up-icon img { width: 52px; height: 52px; display: block; object-fit: contain; filter: drop-shadow(0 3px 4px rgba(38,57,78,.13)); user-select: none; }
+.power-up-button.is-animating .power-up-icon { opacity: 0; }
+.power-up-button:not(:disabled):active { transform: translateY(1px) scale(.985); }
+.power-up-button.is-active { filter: drop-shadow(0 0 7px rgba(240,162,58,.58)); }
+.power-up-button:disabled { cursor: default; opacity: .43; filter: grayscale(.42); }
+
+.power-up-flight-layer { position: fixed; inset: 0; z-index: 1000; overflow: hidden; pointer-events: auto; cursor: wait; }
+.power-up-flight-tool { position: absolute; left: 0; top: 0; display: block; object-fit: contain; pointer-events: none; filter: drop-shadow(0 8px 9px rgba(34,55,82,.24)); user-select: none; will-change: transform; }
+.power-up-flight-tool--watercolor-brush { filter: drop-shadow(0 7px 8px rgba(39,111,177,.26)); }
+.power-up-flight-tool--paint-bucket { filter: drop-shadow(0 8px 9px rgba(86,54,170,.28)); }
+.power-up-pour-drop { width: 18px; height: 22px; position: absolute; display: block; border-radius: 64% 44% 66% 42%; background: linear-gradient(145deg, #62e4ff 10%, #1aabe5 74%); box-shadow: 0 4px 8px rgba(25,146,205,.28), inset 3px 3px 4px rgba(255,255,255,.5); pointer-events: none; transform: translate(-50%, -50%); will-change: transform, opacity; }
+
+@media (hover: hover) {
+  .power-up-button:not(:disabled):hover { transform: translateY(-2px); }
+  .power-up-button.is-active:not(:disabled):hover { filter: drop-shadow(0 0 8px rgba(240,162,58,.68)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .power-up-button { transition: none; }
+  .power-up-icon { transition: none; }
+}
 
 .touch-preview { --touch-preview-size: 144px; width: var(--touch-preview-size); aspect-ratio: 1; position: absolute; top: 126px; right: 24px; z-index: 12; touch-action: none; cursor: grab; user-select: none; will-change: transform; }
 .touch-preview[data-size="medium"] { --touch-preview-size: 172.8px; }
@@ -1191,6 +1221,7 @@ html[data-theme="night"] .primary-tab-button.is-active::before { background: var
 .setting-segmented input:checked + span { color: #fff; background: #3978b8; box-shadow: 0 4px 10px rgba(57,120,184,.22); }
 .setting-segmented input:focus-visible + span { outline: 3px solid rgba(107,182,255,.65); outline-offset: 1px; }
 .setting-theme-control { width: 132px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.setting-input-mode-control { width: 132px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .setting-row--button { width: 100%; padding: 0; color: inherit; text-align: left; background: transparent; border-right: 0; border-bottom: 0; border-left: 0; cursor: pointer; font: inherit; }
 .setting-row--button strong { color: #2f987b; font-size: .8rem; transition: color .16s ease; }
 .settings-card select { min-height: 42px; padding: 0 36px 0 12px; border: 1px solid rgba(74,101,130,.18); border-radius: 12px; color: var(--ink); background: #f1f5f9; }

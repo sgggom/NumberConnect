@@ -26,6 +26,19 @@ npm run dev
 
 打开终端显示的本地地址，默认是 `http://localhost:4173/`。
 
+## 拼豆数据格式
+
+`public/bead-patterns/patterns.json` 保存图案名称、尺寸、数据文件和预览图。每个图案 JSON 只包含 `data` 二维数组：行下标为 `y`，列下标为 `x`，颜色使用 `#RRGGBB`，空格使用 `null`。
+
+```json
+{
+  "data": [
+    [null, "#FF8A00", null],
+    ["#FF8A00", "#FFD666", "#FF8A00"]
+  ]
+}
+```
+
 ## 验证与构建
 
 ```bash

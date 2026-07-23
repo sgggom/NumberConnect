@@ -139,6 +139,17 @@
           <button id="play-settings-button" class="header-settings-image-button play-settings-image-button" aria-label="打开设置"><img src="./theme-default/settings.png" alt="" draggable="false" /></button>
         </header>
         <div id="game-host" class="game-host" aria-label="数字连接棋盘"></div>
+        <footer id="power-up-bar" class="power-up-bar" aria-label="关卡道具">
+          <p id="power-up-status" class="power-up-status" role="status" aria-live="polite">道具可重复使用</p>
+          <div class="power-up-actions">
+            <button id="watercolor-brush-button" class="power-up-button power-up-button--brush" type="button" aria-describedby="power-up-status">
+              <span class="power-up-icon" aria-hidden="true"><img src="./ui/powerups/watercolor-brush.png" alt="" draggable="false" /></span>
+            </button>
+            <button id="paint-bucket-button" class="power-up-button power-up-button--bucket" type="button" aria-describedby="power-up-status" aria-pressed="false">
+              <span class="power-up-icon" aria-hidden="true"><img src="./ui/powerups/paint-bucket.png" alt="" draggable="false" /></span>
+            </button>
+          </div>
+        </footer>
         <aside id="touch-preview" class="touch-preview" aria-label="关卡小窗，可按住任意位置拖动" hidden>
           <div id="touch-preview-surface" class="touch-preview-surface">
             <div id="touch-preview-board" class="touch-preview-board" role="img" aria-label="等待关卡载入">
@@ -341,6 +352,7 @@
       <form method="dialog" class="settings-card">
         <header><div><h2>游戏设置</h2></div><button id="settings-close-button" class="icon-button" value="cancel" aria-label="关闭">×</button></header>
         <div class="settings-list">
+          <div class="setting-row setting-row--input-mode"><span><b>操作方式</b><small>逐格点击空位或数字，或按住拖动连线</small></span><div id="settings-input-mode" class="setting-segmented setting-input-mode-control" role="radiogroup" aria-label="操作方式"><label><input type="radio" name="input-mode" value="click" /><span>点击</span></label><label><input type="radio" name="input-mode" value="drag" checked /><span>拖动</span></label></div></div>
           <label class="setting-row"><span><b>下一个数字提示</b><small>高亮下一处可见数字</small></span><input id="settings-next" class="switch" type="checkbox" checked /></label>
           <label class="setting-row"><span><b>游戏声音</b><small>连击、错误和胜利反馈</small></span><input id="settings-sound" class="switch" type="checkbox" checked /></label>
           <div class="setting-row setting-row--theme"><span><b>大厅主题</b><small>默认明亮风格或原版夜间风格</small></span><div id="settings-theme" class="setting-segmented setting-theme-control" role="radiogroup" aria-label="大厅主题"><label><input type="radio" name="ui-theme" value="default" checked /><span>默认</span></label><label><input type="radio" name="ui-theme" value="night" /><span>夜间</span></label></div></div>
