@@ -4,8 +4,13 @@ import { COLLECTION_ARTWORK_NAMES } from '../gameplay/collection/collectionArtwo
 import { buildBoardNeighborhoodPreview } from './boardNeighborhood';
 import { calculateBoardViewportLayout } from './boardViewport';
 import { ConnectionProgress, type ConnectionAction, type ConnectionFailure } from './connectionProgress';
+import {
+  dragJudgmentMode,
+  shouldHandleDragAction,
+  shouldShowDragQuestion,
+} from './dragJudgment';
 import { findSwappableHiddenPairs } from './hiddenSwap';
-import { areNeighborCells, projectCell } from './topology';
+import { projectCell } from './topology';
 import {
   BoardShape,
   backgroundUrl,
@@ -28,6 +33,8 @@ interface CellView {
   hollowRing: CellShape;
   glow: CellShape;
   label: Phaser.GameObjects.Text;
+  questionMark: Phaser.GameObjects.Text;
+  questionShown: boolean;
 }
 
 interface BoardView {
@@ -77,6 +84,13 @@ const MAX_CELL_STEP = 86;
 const AUTO_CLICK_STEP_DELAY_MS = 400;
 const BOARD_ZOOM_SCALE = 1.5;
 const BOARD_ZOOM_EDGE_INSET = 16;
+const HIDDEN_QUESTION_ALPHA = 0.28;
+const HIDDEN_QUESTION_MIN_SCALE = 0.55;
+const HIDDEN_QUESTION_SHOW_DURATION_MS = 170;
+const HIDDEN_QUESTION_HIDE_DURATION_MS = 120;
+
+const colorHex = (color: number): string =>
+  `#${(color & 0xffffff).toString(16).padStart(6, '0')}`;
 
 const baseCellRadiusForStep = (step: number, isHex: boolean): number => (isHex
   ? Math.max(16, Math.min(44, step * 0.56))
@@ -356,6 +370,7 @@ export class BoardScene extends Phaser.Scene {
       this.wrongFeedbackActive = false;
       this.view?.pointerLine.clear();
       this.stopHintPulse();
+      this.hideDragQuestions();
     } else if (!this.entranceAnimating) {
       this.refreshView();
     }
@@ -1027,8 +1042,27 @@ export class BoardScene extends Phaser.Scene {
       const labelSize = baseRadius * 2;
       label.setFixedSize(labelSize, labelSize);
       label.setPadding(0, Math.max(0, (labelSize - labelTextHeight) * 0.5), 0, 0);
+      const questionMark = this.add.text(position.x, position.y, '?', {
+        fontFamily: 'Nunito Sans, sans-serif',
+        fontStyle: '700',
+        fontSize: `${numberFontSize}px`,
+        color: colorHex(ballColor),
+        align: 'center',
+      }).setOrigin(0.5);
+      const questionTextHeight = questionMark.height;
+      questionMark.setFixedSize(labelSize, labelSize);
+      questionMark.setPadding(
+        0,
+        Math.max(0, (labelSize - questionTextHeight) * 0.5),
+        0,
+        0,
+      );
+      questionMark
+        .setVisible(false)
+        .setAlpha(0)
+        .setScale(HIDDEN_QUESTION_MIN_SCALE);
       circle.on('pointerdown', (pointer: Phaser.Input.Pointer) => this.handleCellDown(index, pointer));
-      root.add([glow, liquidRing, circle, hollowRing, label]);
+      root.add([glow, liquidRing, circle, hollowRing, label, questionMark]);
       cells.set(cellKey(cell), {
         cell,
         index,
@@ -1039,6 +1073,8 @@ export class BoardScene extends Phaser.Scene {
         hollowRing,
         glow,
         label,
+        questionMark,
+        questionShown: false,
       });
     });
 
@@ -1087,6 +1123,9 @@ export class BoardScene extends Phaser.Scene {
     const currentClickIndex = clickInput && !selectingCell
       ? this.connection?.currentClickIndex
       : undefined;
+    const dragQuestionCenter = this.isDrawing && this.connection?.activeIndex !== undefined
+      ? path[this.connection.activeIndex]
+      : undefined;
     let activeHintCell: CellView | undefined;
 
     this.view.cells.forEach((cellView, key) => {
@@ -1097,6 +1136,11 @@ export class BoardScene extends Phaser.Scene {
         && this.connection?.isVisible(cellView.index) !== true
         && this.session!.hiddenCells.has(key);
       const concealed = this.session!.hiddenCells.has(key) && !numberVisible;
+      const showQuestion = shouldShowDragQuestion(
+        dragQuestionCenter,
+        cellView.cell,
+        concealed,
+      );
       cellView.label.setText(String(this.connection?.displayNumber(cellView.index) ?? cellView.index + 1));
       cellView.liquidRing.setFillStyle(this.view!.ballColor, selected ? 1 : 0);
       cellView.circle.setFillStyle(this.view!.ballColor, concealed ? 0 : 1);
@@ -1107,8 +1151,17 @@ export class BoardScene extends Phaser.Scene {
       );
       cellView.hollowRing.setVisible(concealed);
       cellView.label.setVisible(numberVisible);
-      cellView.label.setColor(selected ? COLORS.selectedText : revealedHidden ? COLORS.revealedHiddenText : COLORS.text);
+      cellView.label.setAlpha(1);
+      cellView.label.setColor(
+        selected
+          ? COLORS.selectedText
+          : revealedHidden
+            ? COLORS.revealedHiddenText
+            : COLORS.text,
+      );
       cellView.label.setFontStyle(revealedHidden ? 'italic 900' : '900');
+      cellView.questionMark.setColor(colorHex(this.view!.ballColor));
+      this.setQuestionMarkVisible(cellView, showQuestion);
       const hint = cellView.index === nextHint?.index;
       const clickCurrent = cellView.index === currentClickIndex;
       const hintColor = nextHint?.consecutive ? COLORS.consecutiveHint : COLORS.hint;
@@ -1133,6 +1186,60 @@ export class BoardScene extends Phaser.Scene {
     if (this.session.boardZoomEnabled && this.neighborhoodPreviewIndex === undefined) {
       this.emitNeighborhoodPreview(null);
     }
+  }
+
+  private setQuestionMarkVisible(cell: CellView, visible: boolean): void {
+    if (cell.questionShown === visible) return;
+    cell.questionShown = visible;
+    this.tweens.killTweensOf(cell.questionMark);
+
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      cell.questionMark
+        .setVisible(visible)
+        .setAlpha(visible ? HIDDEN_QUESTION_ALPHA : 0)
+        .setScale(visible ? 1 : HIDDEN_QUESTION_MIN_SCALE);
+      return;
+    }
+
+    if (visible) {
+      if (!cell.questionMark.visible) {
+        cell.questionMark
+          .setAlpha(0)
+          .setScale(HIDDEN_QUESTION_MIN_SCALE);
+      }
+      cell.questionMark.setVisible(true);
+      this.tweens.add({
+        targets: cell.questionMark,
+        alpha: HIDDEN_QUESTION_ALPHA,
+        scaleX: 1,
+        scaleY: 1,
+        duration: HIDDEN_QUESTION_SHOW_DURATION_MS,
+        ease: 'Back.easeOut',
+      });
+      return;
+    }
+
+    if (!cell.questionMark.visible) {
+      cell.questionMark
+        .setAlpha(0)
+        .setScale(HIDDEN_QUESTION_MIN_SCALE);
+      return;
+    }
+    this.tweens.add({
+      targets: cell.questionMark,
+      alpha: 0,
+      scaleX: HIDDEN_QUESTION_MIN_SCALE,
+      scaleY: HIDDEN_QUESTION_MIN_SCALE,
+      duration: HIDDEN_QUESTION_HIDE_DURATION_MS,
+      ease: 'Cubic.easeIn',
+      onComplete: () => {
+        if (!cell.questionShown) cell.questionMark.setVisible(false);
+      },
+    });
+  }
+
+  private hideDragQuestions(): void {
+    this.view?.cells.forEach((cell) => this.setQuestionMarkVisible(cell, false));
   }
 
   private drawConnectedBridges(): void {
@@ -1263,20 +1370,30 @@ export class BoardScene extends Phaser.Scene {
     let closest: CellView | undefined;
     let bestDistance = this.view.radius ** 2;
     this.view.cells.forEach((candidate) => {
-      if (
-        !activeCell
-        || (
-          candidate.index !== activeIndex
-          && !areNeighborCells(activeCell, candidate.cell, this.session!.level.boardShape)
-        )
-      ) return;
+      if (!activeCell) return;
+      const judgmentMode = dragJudgmentMode(
+        activeCell,
+        candidate.cell,
+        !this.solutionRevealed && !this.connection!.isVisible(candidate.index),
+      );
+      if (judgmentMode === 'ignore') return;
       const distance = (candidate.x - localX) ** 2 + (candidate.y - localY) ** 2;
       if (distance <= bestDistance) {
         bestDistance = distance;
         closest = candidate;
       }
     });
-    if (closest) this.handleConnectionAction(this.connection.extend(closest.index));
+    if (closest && activeCell) {
+      const closestJudgmentMode = dragJudgmentMode(
+        activeCell,
+        closest.cell,
+        !this.solutionRevealed && !this.connection.isVisible(closest.index),
+      );
+      const action = this.connection.extend(closest.index);
+      if (shouldHandleDragAction(closestJudgmentMode, action.type === 'wrong')) {
+        this.handleConnectionAction(action);
+      }
+    }
     const previewIndex = closest?.index ?? this.neighborhoodPreviewIndex;
     if (!this.locked && previewIndex !== undefined) this.emitNeighborhoodPreview(previewIndex, pointer);
     this.drawPointerLine(localX, localY);
@@ -1479,6 +1596,7 @@ export class BoardScene extends Phaser.Scene {
       this.locked = true;
       this.isDrawing = false;
       this.connection?.endStroke();
+      this.hideDragQuestions();
       this.clearNeighborhoodPreview();
       this.session.onComplete();
     }

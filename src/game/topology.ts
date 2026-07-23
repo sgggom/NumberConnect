@@ -27,6 +27,10 @@ export const neighborCells = (cell: Cell, shape: BoardShape): Cell[] =>
 export const areNeighborCells = (a: Cell, b: Cell, shape: BoardShape): boolean =>
   neighborCells(a, shape).some((cell) => cell.x === b.x && cell.y === b.y);
 
+export const isWithinCellWindow = (center: Cell, candidate: Cell, radius = 1): boolean =>
+  Math.abs(candidate.x - center.x) <= radius
+  && Math.abs(candidate.y - center.y) <= radius;
+
 export const projectCell = (cell: Cell, shape: BoardShape): Cell => {
   if (shape === BoardShape.Diamond) {
     return {
