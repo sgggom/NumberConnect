@@ -19,10 +19,10 @@ const pattern: BeadPatternData = {
   name: 'Test',
   width: 3,
   height: 2,
-  pixels: {
-    '0,0': '#FF0000', '1,0': null, '2,0': '#00FF00',
-    '0,1': '#0000FF', '1,1': '#FFFFFF', '2,1': null,
-  },
+  data: [
+    ['#FF0000', null, '#00FF00'],
+    ['#0000FF', '#FFFFFF', null],
+  ],
 };
 
 describe('bead progression', () => {
@@ -55,10 +55,12 @@ describe('bead progression', () => {
     expect(loadBeadProgress(pattern, storage)).toEqual(completed);
   });
 
-  it('rejects incomplete pattern coordinates', () => {
-    expect(() => parseBeadPattern({
-      id: 'broken', name: 'Broken', width: 2, height: 1, pixels: { '0,0': '#FFFFFF' },
-    })).toThrow('Missing bead coordinate 1,0');
+  it('rejects incomplete pattern rows and metadata inside the data file', () => {
+    const metadata = { id: 'broken', name: 'Broken', width: 2, height: 1 };
+    expect(() => parseBeadPattern({ data: [['#FFFFFF']] }, metadata))
+      .toThrow('Invalid bead pattern column count at row 0: expected 2');
+    expect(() => parseBeadPattern({ data: [['#FFFFFF', null]], id: 'legacy' }, metadata))
+      .toThrow('Bead pattern JSON must only contain data');
   });
 
   it('parses an ordered pattern manifest', () => {

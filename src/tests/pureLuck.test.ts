@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import levelsJson from '../../public/levels/levels.json';
+import { decodeCompactLevelCollection } from '../game/levelDataFormat';
 import { findPureLuckAlternative } from '../game/pureLuck';
-import { BoardShape, cellKey, type Cell, type LevelData } from '../game/types';
+import { BoardShape, cellKey, type Cell } from '../game/types';
 import { selectUnambiguousHiddenCells } from '../game/unambiguousHidden';
 
 const ambiguousPath: Cell[] = [
@@ -40,7 +41,7 @@ describe('pure-luck detection', () => {
   });
 
   it('produces unique hidden layouts for every built-in level path', () => {
-    const levels = levelsJson as LevelData[];
+    const levels = decodeCompactLevelCollection(levelsJson, false);
     levels.forEach((level, index) => {
       const result = selectUnambiguousHiddenCells(level.solutionPath, level.boardShape, {
         hiddenPercent: 35,

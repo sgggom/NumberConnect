@@ -1,4 +1,8 @@
 import './editor.css';
+import {
+  decodeCompactLevelCollection,
+  encodeCompactLevelCollection,
+} from '../../game/levelDataFormat';
 import { BoardShape, type LevelData } from '../../game/types';
 import { EditorSplitPaneController } from './EditorSplitPaneController';
 import { calculateSquareGridLayout } from './editorGridLayout';
@@ -1118,19 +1122,7 @@ export class LevelEditorController {
     if (!file) return;
     try {
       const parsed = JSON.parse(await file.text()) as unknown;
-      const source = Array.isArray(parsed)
-        ? parsed
-        : parsed && typeof parsed === 'object' && Array.isArray((parsed as { levels?: unknown }).levels)
-          ? (parsed as { levels: unknown[] }).levels
-          : null;
-      if (!source) throw new Error('JSON 根节点必须是关卡数组。');
-      const levels = source.filter((entry): entry is LevelData => (
-        Boolean(entry)
-        && typeof entry === 'object'
-        && Array.isArray((entry as LevelData).activeCells)
-        && Array.isArray((entry as LevelData).solutionPath)
-      )).map((level, index) => ({ ...level, levelId: index + 1 }));
-      if (levels.length === 0) throw new Error('文件中没有有效关卡。');
+      const levels = decodeCompactLevelCollection(parsed, true);
       this.selectedLevelId = undefined;
       this.options.onLevelsChange(levels);
       this.render();
@@ -1146,7 +1138,9 @@ export class LevelEditorController {
       this.setStatus('列表为空，暂无可导出的关卡。', true);
       return;
     }
-    const blob = new Blob([JSON.stringify(levels, null, 2)], { type: 'application/json;charset=utf-8' });
+    const compactLevels = encodeCompactLevelCollection(levels);
+    const payload = compactLevels.length === 1 ? compactLevels[0] : compactLevels;
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;

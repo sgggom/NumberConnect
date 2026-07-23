@@ -1,11 +1,13 @@
 import {
   BoardShape,
   DEFAULT_SETTINGS,
+  isInputMode,
   isTouchPreviewSize,
   isUiTheme,
   type GameSettings,
   type LevelData,
 } from './types';
+import { decodeCompactLevelCollection } from './levelDataFormat';
 
 const SETTINGS_KEY = 'number-connect.settings.v1';
 const LEVEL_COLLECTION_KEY = 'number-connect.level-collection.v2';
@@ -53,9 +55,11 @@ export const loadSettings = (): GameSettings => {
         ? 'off'
         : DEFAULT_SETTINGS.touchPreviewSize;
     const uiTheme = isUiTheme(stored.uiTheme) ? stored.uiTheme : DEFAULT_SETTINGS.uiTheme;
+    const inputMode = isInputMode(stored.inputMode) ? stored.inputMode : DEFAULT_SETTINGS.inputMode;
     return {
       ...DEFAULT_SETTINGS,
       ...currentSettings,
+      inputMode,
       uiTheme,
       touchPreviewSize,
       shape: BoardShape.Level,
@@ -111,10 +115,8 @@ export const saveLevelCollection = (levels: LevelData[]): void => {
 export const loadBuiltInLevels = async (): Promise<LevelData[]> => {
   const response = await fetch('./levels/levels.json');
   if (!response.ok) throw new Error('Unable to load level collection');
-  const payload = await response.json() as LevelData[] | { levels?: LevelData[] };
-  const levels = Array.isArray(payload) ? payload : payload.levels;
-  if (!Array.isArray(levels)) throw new Error('Invalid level collection');
-  return levels
+  const payload = await response.json() as unknown;
+  return decodeCompactLevelCollection(payload, false)
     .map((level) => ({ ...withDefaultAlgorithm(level), custom: false }))
     .sort((left, right) => left.levelId - right.levelId);
 };

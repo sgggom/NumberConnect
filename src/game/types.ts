@@ -12,12 +12,19 @@ export type TouchPreviewSize = typeof TOUCH_PREVIEW_SIZES[number];
 export const UI_THEMES = ['default', 'night'] as const;
 export type UiTheme = typeof UI_THEMES[number];
 
+export const INPUT_MODES = ['drag', 'click'] as const;
+export type InputMode = typeof INPUT_MODES[number];
+
 export const isTouchPreviewSize = (value: unknown): value is TouchPreviewSize => (
   typeof value === 'string' && (TOUCH_PREVIEW_SIZES as readonly string[]).includes(value)
 );
 
 export const isUiTheme = (value: unknown): value is UiTheme => (
   typeof value === 'string' && (UI_THEMES as readonly string[]).includes(value)
+);
+
+export const isInputMode = (value: unknown): value is InputMode => (
+  typeof value === 'string' && (INPUT_MODES as readonly string[]).includes(value)
 );
 
 export interface Cell {
@@ -58,6 +65,7 @@ export interface GameSettings {
   targetCrossings: number;
   showNextNumber: boolean;
   soundEnabled: boolean;
+  inputMode: InputMode;
   uiTheme: UiTheme;
   touchPreviewSize: TouchPreviewSize;
   touchPreviewFollowsPointer: boolean;
@@ -110,6 +118,7 @@ export interface BoardSessionInput {
   completionGemColors?: readonly string[];
   showNextNumber: boolean;
   soundEnabled: boolean;
+  inputMode: InputMode;
   touchPreviewRingDepth: 1 | 2;
   mode: GameMode;
   onProgress: (current: number, total: number) => void;
@@ -139,6 +148,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   targetCrossings: 5,
   showNextNumber: true,
   soundEnabled: true,
+  inputMode: 'drag',
   uiTheme: 'default',
   touchPreviewSize: 'small',
   touchPreviewFollowsPointer: false,

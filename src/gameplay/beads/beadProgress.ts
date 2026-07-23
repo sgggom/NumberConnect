@@ -3,7 +3,7 @@ export interface BeadPatternData {
   name: string;
   width: number;
   height: number;
-  pixels: Record<string, string | null>;
+  data: Array<Array<string | null>>;
 }
 
 export interface BeadPixel {
@@ -49,29 +49,37 @@ const browserStorage = (): StorageLike | undefined => {
   }
 };
 
-export const parseBeadPattern = (value: unknown): BeadPatternData => {
-  if (!value || typeof value !== 'object') throw new Error('Invalid bead pattern');
-  const candidate = value as Partial<BeadPatternData>;
-  const width = Math.floor(Number(candidate.width));
-  const height = Math.floor(Number(candidate.height));
-  if (!candidate.id || !candidate.name || width < 1 || height < 1 || !candidate.pixels) {
+export const parseBeadPattern = (
+  value: unknown,
+  metadata: Pick<BeadPatternManifestEntry, 'id' | 'name' | 'width' | 'height'>,
+): BeadPatternData => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid bead pattern');
+  const width = Math.floor(Number(metadata.width));
+  const height = Math.floor(Number(metadata.height));
+  if (!metadata.id || !metadata.name || width < 1 || height < 1) {
     throw new Error('Invalid bead pattern metadata');
   }
-
-  const pixels: Record<string, string | null> = {};
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const key = `${x},${y}`;
-      if (!(key in candidate.pixels)) throw new Error(`Missing bead coordinate ${key}`);
-      const color = candidate.pixels[key];
-      if (color !== null && (typeof color !== 'string' || !COLOR_PATTERN.test(color))) {
-        throw new Error(`Invalid bead color at ${key}`);
-      }
-      pixels[key] = color;
-    }
+  if (Object.keys(value).length !== 1 || !('data' in value)) {
+    throw new Error('Bead pattern JSON must only contain data');
+  }
+  const source = (value as { data?: unknown }).data;
+  if (!Array.isArray(source) || source.length !== height) {
+    throw new Error(`Invalid bead pattern row count: expected ${height}`);
   }
 
-  return { id: candidate.id, name: candidate.name, width, height, pixels };
+  const data = source.map((row, y) => {
+    if (!Array.isArray(row) || row.length !== width) {
+      throw new Error(`Invalid bead pattern column count at row ${y}: expected ${width}`);
+    }
+    return row.map((color, x) => {
+      if (color !== null && (typeof color !== 'string' || !COLOR_PATTERN.test(color))) {
+        throw new Error(`Invalid bead color at ${x},${y}`);
+      }
+      return color;
+    });
+  });
+
+  return { id: metadata.id, name: metadata.name, width, height, data };
 };
 
 export const parseBeadPatternManifest = (value: unknown): BeadPatternManifestEntry[] => {
@@ -106,16 +114,7 @@ export const loadBeadPatterns = async (): Promise<BeadPatternData[]> => {
   return Promise.all(entries.map(async (entry) => {
     const response = await fetch(`./bead-patterns/${entry.data}`);
     if (!response.ok) throw new Error(`Unable to load bead pattern ${entry.id}`);
-    const pattern = parseBeadPattern(await response.json());
-    if (
-      pattern.id !== entry.id
-      || pattern.name !== entry.name
-      || pattern.width !== entry.width
-      || pattern.height !== entry.height
-    ) {
-      throw new Error(`Bead pattern metadata mismatch for ${entry.id}`);
-    }
-    return pattern;
+    return parseBeadPattern(await response.json(), entry);
   }));
 };
 
@@ -123,7 +122,7 @@ export const orderedBeads = (pattern: BeadPatternData): BeadPixel[] => {
   const beads: BeadPixel[] = [];
   for (let y = 0; y < pattern.height; y += 1) {
     for (let x = 0; x < pattern.width; x += 1) {
-      const color = pattern.pixels[`${x},${y}`];
+      const color = pattern.data[y][x];
       if (color) beads.push({ x, y, color });
     }
   }

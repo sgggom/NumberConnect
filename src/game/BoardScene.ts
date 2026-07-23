@@ -44,6 +44,8 @@ const COLORS = {
   selectedText: '#ffffff',
   hint: 0x6bb6ff,
   consecutiveHint: 0x57d88b,
+  powerUpTarget: 0xf0a23a,
+  powerUpReveal: 0x55c7ef,
   wrong: 0xf5b4bb,
 };
 
@@ -258,6 +260,7 @@ export class BoardScene extends Phaser.Scene {
   private entranceAnimating = false;
   private entranceAnimationToken = 0;
   private entranceTweens: Phaser.Tweens.Tween[] = [];
+  private cellSelectionHandler?: (cell: Cell) => void;
 
   public constructor() {
     super('board');
@@ -315,6 +318,7 @@ export class BoardScene extends Phaser.Scene {
     this.drawingNativePointerId = undefined;
     this.pointerLineTarget = undefined;
     this.wrongFeedbackActive = false;
+    this.cellSelectionHandler = undefined;
     this.transitioning = false;
     this.view = this.buildView(session, 0);
     this.refreshView();
@@ -339,6 +343,72 @@ export class BoardScene extends Phaser.Scene {
     }
   }
 
+  public canUsePowerUp(): boolean {
+    return Boolean(
+      this.session
+      && this.connection
+      && !this.locked
+      && !this.paused
+      && !this.transitioning
+      && !this.entranceAnimating
+      && !this.connection.complete,
+    );
+  }
+
+  public concealedCellKeys(): Set<string> {
+    const concealed = new Set<string>();
+    if (!this.session || !this.connection || this.solutionRevealed) return concealed;
+    this.session.level.solutionPath.forEach((cell, index) => {
+      const key = cellKey(cell);
+      if (this.session!.hiddenCells.has(key) && !this.connection!.isVisible(index)) concealed.add(key);
+    });
+    return concealed;
+  }
+
+  public cellClientPosition(cell: Cell): { x: number; y: number } | undefined {
+    if (!this.view) return undefined;
+    const cellView = this.view.cells.get(cellKey(cell));
+    if (!cellView) return undefined;
+    const canvasBounds = this.sys.game.canvas.getBoundingClientRect();
+    const gameX = this.view.root.x + cellView.x;
+    const gameY = this.view.root.y + cellView.y;
+    return {
+      x: canvasBounds.left + (gameX / Math.max(1, this.scale.width)) * canvasBounds.width,
+      y: canvasBounds.top + (gameY / Math.max(1, this.scale.height)) * canvasBounds.height,
+    };
+  }
+
+  public setCellSelectionHandler(handler?: (cell: Cell) => void): boolean {
+    if (handler && !this.canUsePowerUp()) return false;
+    this.finishPointerInteraction();
+    this.cellSelectionHandler = handler;
+    this.refreshView();
+    return true;
+  }
+
+  public revealCells(cells: ReadonlyArray<Cell>): Cell[] {
+    if (!this.session || !this.connection || !this.canUsePowerUp()) return [];
+    const concealed = this.concealedCellKeys();
+    const revealedIndexes: number[] = [];
+    const seen = new Set<string>();
+    cells.forEach((cell) => {
+      const key = cellKey(cell);
+      if (seen.has(key) || !concealed.has(key)) return;
+      seen.add(key);
+      const view = this.view?.cells.get(key);
+      if (view) revealedIndexes.push(view.index);
+    });
+    if (revealedIndexes.length === 0) return [];
+
+    this.connection.revealIndices(revealedIndexes);
+    const revealed = revealedIndexes.map((index) => ({ ...this.session!.level.solutionPath[index] }));
+    revealed.forEach((cell) => this.session!.hiddenCells.delete(cellKey(cell)));
+    this.stopHintPulse();
+    this.refreshView();
+    this.playPowerUpReveal(revealedIndexes);
+    return revealed;
+  }
+
   public setSolutionReveal(revealed: boolean): void {
     this.solutionRevealed = revealed;
     if (this.entranceAnimating && this.view) {
@@ -353,10 +423,18 @@ export class BoardScene extends Phaser.Scene {
     }
   }
 
-  public setRuntimePreferences(preferences: Pick<BoardSessionInput, 'showNextNumber' | 'soundEnabled' | 'touchPreviewRingDepth'>): void {
+  public setRuntimePreferences(
+    preferences: Pick<BoardSessionInput, 'showNextNumber' | 'soundEnabled' | 'inputMode' | 'touchPreviewRingDepth'>,
+  ): void {
     if (!this.session) return;
+    if (this.session.inputMode !== preferences.inputMode) {
+      this.finishPointerInteraction();
+      this.connection?.endStroke();
+      if (preferences.inputMode === 'click') this.connection?.enableClickMode();
+    }
     this.session.showNextNumber = preferences.showNextNumber;
     this.session.soundEnabled = preferences.soundEnabled;
+    this.session.inputMode = preferences.inputMode;
     this.session.touchPreviewRingDepth = preferences.touchPreviewRingDepth;
     if (!this.entranceAnimating) this.refreshView();
     if (!this.locked && this.neighborhoodPreviewIndex !== undefined) {
@@ -491,6 +569,7 @@ export class BoardScene extends Phaser.Scene {
     this.drawingNativePointerId = undefined;
     this.pointerLineTarget = undefined;
     this.wrongFeedbackActive = false;
+    this.cellSelectionHandler = undefined;
     const newView = this.buildView(session, distance);
     this.view = newView;
     this.refreshView();
@@ -767,11 +846,13 @@ export class BoardScene extends Phaser.Scene {
       session.hiddenCells,
       session.level.boardShape,
     );
-    return new ConnectionProgress(
+    const connection = new ConnectionProgress(
       session.level.solutionPath.length,
       visibleIndices,
       swappableHiddenPairs,
     );
+    if (session.inputMode === 'click') connection.enableClickMode();
+    return connection;
   }
 
   private buildView(session: BoardSessionInput, offsetY: number): BoardView {
@@ -911,6 +992,7 @@ export class BoardScene extends Phaser.Scene {
   private refreshView(): void {
     if (!this.view || !this.session) return;
     const path = this.session.level.solutionPath;
+    const selectingCell = this.cellSelectionHandler !== undefined;
     this.view.solutionLines.clear();
     if (this.solutionRevealed) {
       this.view.solutionLines.lineStyle(Math.max(3, this.view.radius * 0.18), this.view.ballColor, 0.58);
@@ -927,8 +1009,11 @@ export class BoardScene extends Phaser.Scene {
     this.drawConnectedBridges();
     if (!this.isDrawing) this.view.pointerLine.clear();
 
-    const nextHint = this.session.showNextNumber
+    const nextHint = this.session.showNextNumber && this.session.inputMode !== 'click' && !selectingCell
       ? this.connection?.suggestedNextHint()
+      : undefined;
+    const currentClickIndex = this.session.inputMode === 'click' && !selectingCell
+      ? this.connection?.currentClickIndex
       : undefined;
     let activeHintCell: CellView | undefined;
 
@@ -953,10 +1038,23 @@ export class BoardScene extends Phaser.Scene {
       cellView.label.setColor(selected ? COLORS.selectedText : revealedHidden ? COLORS.revealedHiddenText : COLORS.text);
       cellView.label.setFontStyle(revealedHidden ? 'italic 900' : '900');
       const hint = cellView.index === nextHint?.index;
+      const clickCurrent = cellView.index === currentClickIndex;
       const hintColor = nextHint?.consecutive ? COLORS.consecutiveHint : COLORS.hint;
-      cellView.glow.setFillStyle(hintColor, hint ? 0.2 : 0);
-      cellView.glow.setStrokeStyle(4, hintColor, hint ? 0.9 : 0);
-      if (hint) activeHintCell = cellView;
+      const glowColor = selectingCell
+        ? COLORS.powerUpTarget
+        : clickCurrent
+          ? this.view!.ballColor
+          : hintColor;
+      cellView.glow.setFillStyle(
+        glowColor,
+        selectingCell ? 0.13 : clickCurrent ? 0.12 : hint ? 0.2 : 0,
+      );
+      cellView.glow.setStrokeStyle(
+        4,
+        glowColor,
+        selectingCell ? 0.72 : clickCurrent ? 0.92 : hint ? 0.9 : 0,
+      );
+      if (hint || clickCurrent) activeHintCell = cellView;
     });
 
     this.startHintPulse(activeHintCell);
@@ -1036,6 +1134,18 @@ export class BoardScene extends Phaser.Scene {
   private handleCellDown(index: number, pointer: Phaser.Input.Pointer): void {
     if (this.locked || this.transitioning || !this.connection) return;
     if (this.drawingPointerId !== undefined && this.drawingPointerId !== pointer.id) return;
+    if (this.cellSelectionHandler && this.session) {
+      const cell = this.session.level.solutionPath[index];
+      if (cell) this.cellSelectionHandler({ ...cell });
+      return;
+    }
+    if (this.session?.inputMode === 'click') {
+      const actions = this.connection.clickForward(index);
+      actions.forEach((action, actionIndex) => {
+        this.handleConnectionAction(action, actionIndex === actions.length - 1);
+      });
+      return;
+    }
     this.isDrawing = true;
     this.drawingPointerId = pointer.id;
     this.wrongFeedbackActive = false;
@@ -1096,7 +1206,7 @@ export class BoardScene extends Phaser.Scene {
     this.drawingNativePointerId = undefined;
     this.pointerLineTarget = undefined;
     this.wrongFeedbackActive = false;
-    this.connection?.endStroke();
+    if (this.session?.inputMode !== 'click') this.connection?.endStroke();
     this.view?.pointerLine.clear();
     if (wasDrawing) this.refreshView();
     this.clearNeighborhoodPreview();
@@ -1186,7 +1296,7 @@ export class BoardScene extends Phaser.Scene {
     pointerLine.fillCircle(localX, localY, pointerRadius);
   }
 
-  private handleConnectionAction(action: ConnectionAction): void {
+  private handleConnectionAction(action: ConnectionAction, playFeedback = true): void {
     if (!this.session || !this.view || action.type === 'ignored') return;
     if (action.type === 'wrong') {
       if (this.wrongFeedbackActive) return;
@@ -1201,8 +1311,10 @@ export class BoardScene extends Phaser.Scene {
     this.refreshView();
     if (action.type === 'started' || !action.added) return;
 
-    this.playConnectedCellBounce(action.index);
-    this.playSound(`combo-${Math.min(8, action.progress - 1)}`);
+    if (playFeedback) {
+      this.playConnectedCellBounce(action.index);
+      this.playSound(`combo-${Math.min(8, action.progress - 1)}`);
+    }
     this.session.onProgress(action.progress, this.session.level.solutionPath.length);
 
     if (action.complete) {
@@ -1239,8 +1351,47 @@ export class BoardScene extends Phaser.Scene {
     });
   }
 
+  private playPowerUpReveal(indexes: ReadonlyArray<number>): void {
+    if (!this.view || !this.session || indexes.length === 0) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const revealed = indexes
+      .map((index) => this.view!.cells.get(cellKey(this.session!.level.solutionPath[index])))
+      .filter((cell): cell is CellView => cell !== undefined);
+    const targets = revealed.flatMap((cell) => [cell.circle, cell.label]);
+    this.tweens.killTweensOf(targets);
+    targets.forEach((target) => target.setAlpha(0.2).setScale(0.68));
+    revealed.forEach((cell, index) => {
+      cell.glow.setFillStyle(COLORS.powerUpReveal, 0.34);
+      cell.glow.setStrokeStyle(4, COLORS.powerUpReveal, 0.92);
+      cell.glow.setScale(0.82);
+      this.tweens.add({
+        targets: [cell.circle, cell.label],
+        alpha: 1,
+        scaleX: 1,
+        scaleY: 1,
+        delay: index * 45,
+        duration: 230,
+        ease: 'Back.easeOut',
+      });
+      this.tweens.add({
+        targets: cell.glow,
+        alpha: 0,
+        scaleX: 1.32,
+        scaleY: 1.32,
+        delay: index * 45,
+        duration: 420,
+        ease: 'Sine.easeOut',
+        onComplete: () => {
+          cell.glow.setAlpha(1).setScale(1);
+          if (index === revealed.length - 1) this.refreshView();
+        },
+      });
+    });
+  }
+
   private connectionFailureMessage(reason: ConnectionFailure): string {
     if (reason === 'hidden-start') return '请从显示数字开始。';
+    if (reason === 'click-order') return '请按从小到大的顺序点击数字。';
     if (reason === 'direction-change') return '一次连线请保持同一数字方向。';
     return '请连接相邻的连续数字。';
   }

@@ -62,6 +62,140 @@ describe('connection progress', () => {
     expect(progress.extend(4)).toMatchObject({ type: 'wrong', reason: 'non-consecutive' });
   });
 
+  it('allows a power-up to reveal a hidden starting point', () => {
+    const progress = new ConnectionProgress(5, [0, 4]);
+
+    expect(progress.begin(2)).toMatchObject({ type: 'wrong', reason: 'hidden-start' });
+    expect(progress.revealIndices([2, 2, 9])).toBe(1);
+    expect(progress.begin(2)).toEqual({ type: 'started', index: 2 });
+  });
+
+  it('clicks every position in ascending order, including concealed cells', () => {
+    const progress = new ConnectionProgress(6, [0, 3, 5]);
+
+    progress.enableClickMode();
+    expect(progress.currentClickIndex).toBe(0);
+    expect(progress.isVisible(1)).toBe(false);
+    expect(progress.clickForward(1).at(-1)).toMatchObject({
+      type: 'advanced',
+      index: 1,
+      progress: 2,
+    });
+    expect(progress.isVisible(1)).toBe(true);
+    expect(progress.currentClickIndex).toBe(1);
+    expect(progress.clickForward(3).at(-1)).toEqual({
+      type: 'wrong',
+      index: 3,
+      reason: 'click-order',
+    });
+    expect(progress.clickForward(2).at(-1)).toMatchObject({
+      type: 'advanced',
+      index: 2,
+      progress: 3,
+    });
+    expect(progress.clickForward(3).at(-1)).toMatchObject({
+      type: 'advanced',
+      index: 3,
+      progress: 4,
+    });
+    expect(progress.progress).toBe(4);
+    expect(progress.isEdgeConnected(0)).toBe(true);
+    expect(progress.isEdgeConnected(1)).toBe(true);
+    expect(progress.isEdgeConnected(2)).toBe(true);
+
+    progress.clickForward(4);
+    const completion = progress.clickForward(5);
+    expect(completion.at(-1)).toMatchObject({ type: 'advanced', complete: true, progress: 6 });
+  });
+
+  it('starts from number two and rejects out-of-order clicks', () => {
+    const progress = new ConnectionProgress(5, [0, 3, 4]);
+
+    progress.enableClickMode();
+    expect(progress.clickForward(3).at(-1)).toEqual({
+      type: 'wrong',
+      index: 3,
+      reason: 'click-order',
+    });
+    expect(progress.clickForward(0)).toEqual([{ type: 'ignored' }]);
+    expect(progress.clickForward(1).at(-1)).toMatchObject({
+      type: 'advanced',
+      index: 1,
+      progress: 2,
+    });
+  });
+
+  it('adds a power-up-revealed number to the click sequence', () => {
+    const progress = new ConnectionProgress(5, [0, 3, 4]);
+
+    progress.enableClickMode();
+    progress.clickForward(1);
+    progress.revealIndices([2]);
+    expect(progress.clickForward(3)).toEqual([{
+      type: 'wrong',
+      index: 3,
+      reason: 'click-order',
+    }]);
+    expect(progress.clickForward(2).at(-1)).toMatchObject({
+      type: 'advanced',
+      index: 2,
+      progress: 3,
+    });
+  });
+
+  it('continues from the connected prefix after switching from drag to click', () => {
+    const progress = new ConnectionProgress(6, [0, 3, 5]);
+
+    progress.begin(0);
+    progress.extend(1);
+    progress.endStroke();
+    progress.enableClickMode();
+
+    expect(progress.clickForward(3).at(-1)).toMatchObject({
+      type: 'wrong',
+      reason: 'click-order',
+    });
+    expect(progress.clickForward(2).at(-1)).toMatchObject({
+      type: 'advanced',
+      index: 2,
+      progress: 3,
+    });
+    const actions = progress.clickForward(3);
+    expect(actions.filter((action) => action.type === 'advanced')).toHaveLength(1);
+    expect(progress.progress).toBe(4);
+    expect(progress.activeIndex).toBe(3);
+  });
+
+  it('accepts either concealed position for an undecided swappable pair in click mode', () => {
+    const progress = new ConnectionProgress(4, [0, 3], [[1, 2]]);
+
+    progress.enableClickMode();
+    expect(progress.clickForward(2).at(-1)).toMatchObject({
+      type: 'advanced',
+      index: 2,
+      progress: 2,
+    });
+    expect(progress.clickForward(1).at(-1)).toMatchObject({
+      type: 'advanced',
+      index: 1,
+      progress: 3,
+    });
+    expect(progress.clickForward(3).at(-1)).toMatchObject({
+      type: 'advanced',
+      complete: true,
+      progress: 4,
+    });
+  });
+
+  it('locks an undecided swappable pair back to authored order when one number is revealed', () => {
+    const progress = new ConnectionProgress(4, [0, 3], [[1, 2]]);
+
+    progress.revealIndices([1]);
+    progress.begin(0);
+    expect(progress.extend(2)).toMatchObject({ type: 'wrong', reason: 'non-consecutive' });
+    expect(progress.extend(1)).toMatchObject({ type: 'advanced' });
+  });
+
   it('only suggests the next visible number when connecting forward', () => {
     const progress = new ConnectionProgress(7, [0, 2, 4, 6]);
 

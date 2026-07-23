@@ -336,14 +336,19 @@ const moonCastle = definePattern({
   line(4, 47, 26, 47, c.outline);
 });
 
-const existingCat = JSON.parse(readFileSync(join(OUTPUT, 'orange-cat-20x20.json'), 'utf8'));
-const catGrid = createCanvas(existingCat.width, existingCat.height);
-for (let y = 0; y < existingCat.height; y += 1) {
-  for (let x = 0; x < existingCat.width; x += 1) catGrid[y][x] = existingCat.pixels[`${x},${y}`];
+const catMetadata = { id: 'orange-cat-20x20', name: '橙色小猫', width: 20, height: 20 };
+const existingCat = JSON.parse(readFileSync(join(OUTPUT, `${catMetadata.id}.json`), 'utf8'));
+if (!Array.isArray(existingCat.data)) throw new Error('Invalid orange cat bead data');
+const catGrid = existingCat.data.map((row) => [...row]);
+if (
+  catGrid.length !== catMetadata.height
+  || catGrid.some((row) => !Array.isArray(row) || row.length !== catMetadata.width)
+) {
+  throw new Error('Invalid orange cat bead data');
 }
 
 const patterns = [
-  { ...existingCat, grid: catGrid },
+  { ...catMetadata, grid: catGrid },
   strawberry,
   whale,
   rocket,
@@ -355,21 +360,10 @@ const patterns = [
 ];
 
 const toJson = (pattern) => {
-  const pixels = {};
-  for (let y = 0; y < pattern.height; y += 1) {
-    for (let x = 0; x < pattern.width; x += 1) pixels[`${x},${y}`] = pattern.grid[y][x];
-  }
-  return {
-    id: pattern.id,
-    name: pattern.name,
-    width: pattern.width,
-    height: pattern.height,
-    coordinateSystem: {
-      origin: 'top-left', indexBase: 0, xAxis: 'left-to-right', yAxis: 'top-to-bottom', lookup: 'pixels[`${x},${y}`]',
-    },
-    palette: pattern.palette,
-    pixels,
-  };
+  const rows = pattern.grid
+    .map((row) => `    ${JSON.stringify(row).replaceAll(',', ', ')}`)
+    .join(',\n');
+  return `{\n  "data": [\n${rows}\n  ]\n}\n`;
 };
 
 const toSvg = (pattern) => {
@@ -399,7 +393,7 @@ const toSvg = (pattern) => {
 
 for (const pattern of patterns) {
   const filename = `${pattern.id}.json`;
-  if (pattern.id !== existingCat.id) writeFileSync(join(OUTPUT, filename), `${JSON.stringify(toJson(pattern), null, 2)}\n`);
+  writeFileSync(join(OUTPUT, filename), toJson(pattern));
   writeFileSync(join(OUTPUT, `${pattern.id}.svg`), toSvg(pattern));
 }
 

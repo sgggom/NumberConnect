@@ -20,6 +20,11 @@ import { selectHiddenCells } from './game/hidden';
 import { formatLives } from './game/lives';
 import { levelBallColorCss } from './game/levelTheme';
 import {
+  chooseWatercolorReveal,
+  paintBucketRevealCells,
+  type PowerUpId,
+} from './game/powerUps';
+import {
   getNextLevelId,
   loadBuiltInLevels,
   loadLevelCollection,
@@ -30,13 +35,16 @@ import {
 import {
   BoardShape,
   cellKey,
+  isInputMode,
   isTouchPreviewSize,
   isUiTheme,
   type BoardNeighborhoodPreview,
   type BoardSessionInput,
+  type Cell,
   type EndlessStageSettings,
   type GameMode,
   type GameSettings,
+  type InputMode,
   type LevelData,
   type TouchPreviewSize,
   type UiTheme,
@@ -97,6 +105,8 @@ const waitFor = (duration: number): Promise<void> => new Promise((resolve) => wi
 const TOUCH_PREVIEW_ENTER_DURATION_MS = 240;
 const TOUCH_PREVIEW_EXIT_DURATION_MS = 170;
 const PRIMARY_ACTION_TRANSITION_DURATION_MS = 320;
+const POWER_UP_FLIGHT_DURATION_MS = 420;
+const POWER_UP_RETURN_DURATION_MS = 360;
 const COLLECTION_MIN_LEVELS = 7;
 const COLLECTION_PROGRESS_KEY = 'number-connect.collection-route.v1';
 const DAILY_COMPLETION_KEY = 'number-connect.daily-completed.v1';
@@ -232,6 +242,51 @@ interface BeadFlightCluster {
   gems: HTMLElement[];
 }
 
+interface ClientPoint {
+  x: number;
+  y: number;
+}
+
+const powerUpTransform = (
+  point: ClientPoint,
+  anchor: ClientPoint,
+  rotation: number,
+  scale: number,
+): string => `translate3d(${point.x - anchor.x}px, ${point.y - anchor.y}px, 0) rotate(${rotation}deg) scale(${scale})`;
+
+const powerUpFlightKeyframes = (
+  start: ClientPoint,
+  end: ClientPoint,
+  anchor: ClientPoint,
+  startRotation: number,
+  endRotation: number,
+  startScale: number,
+  endScale: number,
+): Keyframe[] => {
+  const distance = Math.hypot(end.x - start.x, end.y - start.y);
+  const direction = end.x >= start.x ? 1 : -1;
+  const control = {
+    x: (start.x + end.x) * 0.5 + direction * Math.min(46, 14 + distance * 0.05),
+    y: Math.min(start.y, end.y) - Math.min(112, 34 + distance * 0.13),
+  };
+  return [0, 0.22, 0.48, 0.74, 1].map((progress) => {
+    const inverse = 1 - progress;
+    const point = {
+      x: inverse * inverse * start.x + 2 * inverse * progress * control.x + progress * progress * end.x,
+      y: inverse * inverse * start.y + 2 * inverse * progress * control.y + progress * progress * end.y,
+    };
+    return {
+      offset: progress,
+      transform: powerUpTransform(
+        point,
+        anchor,
+        startRotation + (endRotation - startRotation) * progress,
+        startScale + (endScale - startScale) * progress,
+      ),
+    };
+  });
+};
+
 interface TouchPreviewVisibilityAnimation {
   fromScale: number;
   fromOpacity: number;
@@ -254,6 +309,9 @@ class NumberConnectApp {
   private readonly levelLabel = query<HTMLElement>('#play-level-label');
   private readonly progressLabel = query<HTMLElement>('#play-progress');
   private readonly livesLabel = query<HTMLElement>('#play-lives');
+  private readonly powerUpStatus = query<HTMLElement>('#power-up-status');
+  private readonly watercolorBrushButton = query<HTMLButtonElement>('#watercolor-brush-button');
+  private readonly paintBucketButton = query<HTMLButtonElement>('#paint-bucket-button');
   private readonly solutionToggle = query<HTMLInputElement>('#solution-toggle');
   private readonly touchPreview = query<HTMLElement>('#touch-preview');
   private readonly touchPreviewSurface = query<HTMLElement>('#touch-preview-surface');
@@ -262,6 +320,7 @@ class NumberConnectApp {
   private readonly touchPreviewPathLines = query<SVGGElement>('#touch-preview-path-lines');
   private readonly touchPreviewPointerLine = query<SVGLineElement>('#touch-preview-pointer-line');
   private readonly touchPreviewSizeControl = query<HTMLElement>('#touch-preview-size');
+  private readonly inputModeControl = query<HTMLElement>('#settings-input-mode');
   private readonly uiThemeControl = query<HTMLElement>('#settings-theme');
   private readonly resultOverlay = query<HTMLElement>('#result-overlay');
   private readonly resultTitle = query<HTMLElement>('#result-title');
@@ -346,6 +405,10 @@ class NumberConnectApp {
   private resultContext: ResultContext = 'normal';
   private resultActionBusy = false;
   private solutionRevealed = false;
+  private activePowerUp?: PowerUpId;
+  private animatingPowerUp?: PowerUpId;
+  private powerUpMessage?: string;
+  private powerUpMessageTone: 'neutral' | 'active' | 'success' = 'neutral';
   private videoViews: VideoViewRecord[] = loadVideoViews();
   private playContext: PlayContext = 'normal';
   private beadPatterns: BeadPatternData[] = [];
@@ -446,6 +509,7 @@ class NumberConnectApp {
     this.renderEndlessHub();
     this.renderFavoritesScreen();
     this.renderTouchPreviewState();
+    this.renderInputMode();
   }
 
   private uiVisualScale(): number {
@@ -506,9 +570,14 @@ class NumberConnectApp {
   private bindPlayControls(): void {
     this.playLevelButton.addEventListener('click', () => this.openLevelPicker());
     this.levelPickerDialog.addEventListener('close', () => {
-      if (!this.playScreen.hidden) this.boardScene.setPaused(false);
+      if (!this.playScreen.hidden) {
+        this.boardScene.setPaused(false);
+        this.renderPowerUps();
+      }
     });
     query('#play-settings-button').addEventListener('click', () => this.openSettings('play'));
+    this.watercolorBrushButton.addEventListener('click', () => void this.useWatercolorBrush());
+    this.paintBucketButton.addEventListener('click', () => this.togglePaintBucket());
     this.bindSingleTouchInput();
     this.bindTouchPreviewDrag();
     this.restartButton.addEventListener('click', () => this.handleResultPrimary());
@@ -1080,6 +1149,23 @@ class NumberConnectApp {
     });
   }
 
+  private selectedInputMode(): InputMode {
+    const value = this.inputModeControl.querySelector<HTMLInputElement>(
+      'input[name="input-mode"]:checked',
+    )?.value;
+    return isInputMode(value) ? value : 'drag';
+  }
+
+  private setInputModeControl(mode: InputMode): void {
+    this.inputModeControl.querySelectorAll<HTMLInputElement>('input[name="input-mode"]').forEach((input) => {
+      input.checked = input.value === mode;
+    });
+  }
+
+  private renderInputMode(): void {
+    this.playScreen.classList.toggle('is-click-input', this.settings.inputMode === 'click');
+  }
+
   private selectedUiTheme(): UiTheme {
     const value = this.uiThemeControl.querySelector<HTMLInputElement>(
       'input[name="ui-theme"]:checked',
@@ -1103,7 +1189,10 @@ class NumberConnectApp {
       else this.backToLobby();
     });
     this.settingsDialog.addEventListener('close', () => {
-      if (this.settingsContext === 'play') this.boardScene.setPaused(false);
+      if (this.settingsContext === 'play') {
+        this.boardScene.setPaused(false);
+        this.renderPowerUps();
+      }
     });
   }
 
@@ -1236,6 +1325,11 @@ class NumberConnectApp {
   private openLevelPicker(): void {
     if (this.playLevelButton.disabled || this.levelPickerDialog.open) return;
     this.refreshLevelOptions();
+    if (this.activePowerUp === 'paint-bucket') {
+      this.cancelPowerUpTargeting();
+      this.setPowerUpMessage('已取消油漆桶选择。');
+      this.renderPowerUps();
+    }
     this.boardScene.setPaused(true);
     this.levelPickerDialog.showModal();
   }
@@ -1253,9 +1347,12 @@ class NumberConnectApp {
   }
 
   private setSolutionReveal(revealed: boolean): void {
+    if (revealed && this.activePowerUp === 'paint-bucket') this.cancelPowerUpTargeting();
     this.solutionRevealed = revealed;
     this.solutionToggle.checked = revealed;
     this.boardScene.setSolutionReveal(revealed);
+    if (revealed) this.setPowerUpMessage();
+    this.renderPowerUps();
   }
 
   private async startNormalMode(): Promise<void> {
@@ -1359,12 +1456,14 @@ class NumberConnectApp {
         : undefined,
       showNextNumber: this.settings.showNextNumber,
       soundEnabled: this.settings.soundEnabled,
+      inputMode: this.settings.inputMode,
       touchPreviewRingDepth: this.settings.touchPreviewSize === 'large' ? 2 : 1,
       mode: this.mode,
       onProgress: (current, total) => {
         this.currentProgress = current;
         this.currentTotal = total;
         this.renderProgress();
+        this.renderPowerUps();
         if (this.playContext !== 'editor-playtest') {
           this.events.emit('level.progressed', { ...eventContext, current, total });
         }
@@ -1387,11 +1486,13 @@ class NumberConnectApp {
 
   private setCurrentBoard(level: LevelData, profile?: EndlessStageSettings): void {
     this.currentLevel = level;
+    this.resetPowerUps();
     this.currentProgress = 0;
     this.currentTotal = level.solutionPath.length;
     this.updateGameHeading(level);
     this.renderProgress();
     this.boardScene.setBoard(this.makeSession(level, profile));
+    this.renderPowerUps();
     if (this.playContext !== 'editor-playtest') {
       this.events.emit('level.started', {
         mode: this.mode,
@@ -1435,6 +1536,328 @@ class NumberConnectApp {
 
   private renderProgress(): void {
     this.progressLabel.textContent = `${this.currentProgress} / ${this.currentTotal}`;
+  }
+
+  private setPowerUpMessage(
+    message?: string,
+    tone: 'neutral' | 'active' | 'success' = 'neutral',
+  ): void {
+    this.powerUpMessage = message;
+    this.powerUpMessageTone = message ? tone : 'neutral';
+  }
+
+  private resetPowerUps(): void {
+    this.cancelPowerUpTargeting();
+    this.setPowerUpMessage();
+  }
+
+  private cancelPowerUpTargeting(): void {
+    this.activePowerUp = undefined;
+    this.boardScene.setCellSelectionHandler(undefined);
+    this.playScreen.classList.remove('is-paint-targeting');
+    this.paintBucketButton.classList.remove('is-active');
+    this.paintBucketButton.setAttribute('aria-pressed', 'false');
+  }
+
+  private renderPowerUps(): void {
+    const concealedCount = this.boardScene.concealedCellKeys().size;
+    const noRevealTargets = !this.currentLevel || this.solutionRevealed || concealedCount === 0;
+    const bucketActive = this.activePowerUp === 'paint-bucket';
+    const animationBusy = this.animatingPowerUp !== undefined;
+
+    this.watercolorBrushButton.disabled = noRevealTargets || animationBusy;
+    this.paintBucketButton.disabled = noRevealTargets || animationBusy;
+    this.paintBucketButton.classList.toggle('is-active', bucketActive);
+    this.paintBucketButton.setAttribute('aria-pressed', String(bucketActive));
+    this.watercolorBrushButton.setAttribute(
+      'aria-label',
+      this.animatingPowerUp === 'watercolor-brush'
+        ? '水彩笔，正在显示随机空位'
+        : '水彩笔，随机显示一个空位，可重复使用',
+    );
+    this.paintBucketButton.setAttribute(
+      'aria-label',
+      this.animatingPowerUp === 'paint-bucket'
+        ? '油漆桶，正在显示选中位置的 3×3 范围空位'
+        : `油漆桶，选择中心位置并显示 3×3 范围空位，可重复使用${bucketActive ? '，正在选择中心位置' : ''}`,
+    );
+    this.playScreen.classList.toggle('is-paint-targeting', bucketActive);
+    this.playScreen.classList.toggle('is-power-up-animating', animationBusy);
+    this.playScreen.setAttribute('aria-busy', String(animationBusy));
+
+    let message = this.powerUpMessage;
+    let tone = this.powerUpMessageTone;
+    if (bucketActive) {
+      message ??= '请选择一个中心格，再显示其 3×3 范围内的空位。';
+      tone = 'active';
+    } else if (!message && this.solutionRevealed) {
+      message = '答案显示时，道具暂不可用。';
+    } else if (!message && concealedCount === 0) {
+      message = '当前没有需要显示的空位。';
+    } else if (!message) {
+      message = '道具可重复使用';
+    }
+    this.powerUpStatus.textContent = message;
+    this.powerUpStatus.classList.toggle('is-active', tone === 'active');
+    this.powerUpStatus.classList.toggle('is-success', tone === 'success');
+  }
+
+  private async animatePowerUpUse<T>(
+    id: PowerUpId,
+    button: HTMLButtonElement,
+    target: ClientPoint | undefined,
+    applyEffect: () => T,
+  ): Promise<T> {
+    let effectApplied = false;
+    let effectResult: T;
+    const applyEffectOnce = (): T => {
+      if (!effectApplied) {
+        effectApplied = true;
+        effectResult = applyEffect();
+      }
+      return effectResult!;
+    };
+
+    this.animatingPowerUp = id;
+    button.classList.add('is-animating');
+    this.renderPowerUps();
+
+    let layer: HTMLElement | undefined;
+    try {
+      const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const sourceImage = button.querySelector<HTMLImageElement>('.power-up-icon img');
+      const sourceBounds = sourceImage?.getBoundingClientRect();
+      if (
+        reducedMotion
+        || !target
+        || !sourceImage
+        || !sourceBounds
+        || sourceBounds.width <= 0
+        || sourceBounds.height <= 0
+      ) {
+        await nextFrame();
+        return applyEffectOnce();
+      }
+
+      layer = document.createElement('div');
+      layer.className = 'power-up-flight-layer';
+      layer.setAttribute('aria-hidden', 'true');
+
+      const tool = document.createElement('img');
+      tool.className = `power-up-flight-tool power-up-flight-tool--${id}`;
+      tool.src = sourceImage.currentSrc || sourceImage.src;
+      tool.alt = '';
+      tool.draggable = false;
+      tool.style.width = `${sourceBounds.width}px`;
+      tool.style.height = `${sourceBounds.height}px`;
+
+      const anchor = id === 'watercolor-brush'
+        ? { x: sourceBounds.width * 0.19, y: sourceBounds.height * 0.82 }
+        : { x: sourceBounds.width * 0.5, y: sourceBounds.height * 0.56 };
+      const start = {
+        x: sourceBounds.left + anchor.x,
+        y: sourceBounds.top + anchor.y,
+      };
+      const arrival = id === 'paint-bucket'
+        ? { x: target.x, y: target.y - sourceBounds.height * 0.16 }
+        : target;
+      tool.style.transformOrigin = `${anchor.x}px ${anchor.y}px`;
+      tool.style.transform = powerUpTransform(start, anchor, 0, 1);
+      layer.append(tool);
+      document.body.append(layer);
+
+      const outward = tool.animate(
+        powerUpFlightKeyframes(start, arrival, anchor, 0, 0, 1, 1.08),
+        {
+          duration: POWER_UP_FLIGHT_DURATION_MS,
+          easing: 'cubic-bezier(.2,.76,.22,1)',
+          fill: 'forwards',
+        },
+      );
+      await outward.finished;
+
+      if (id === 'watercolor-brush') {
+        const brushMotion = tool.animate([
+          { offset: 0, transform: powerUpTransform(arrival, anchor, 0, 1.08) },
+          { offset: 0.2, transform: powerUpTransform({ x: arrival.x - 5, y: arrival.y }, anchor, -10, 1.11) },
+          { offset: 0.42, transform: powerUpTransform({ x: arrival.x + 6, y: arrival.y }, anchor, 11, 1.11) },
+          { offset: 0.64, transform: powerUpTransform({ x: arrival.x - 5, y: arrival.y }, anchor, -9, 1.1) },
+          { offset: 0.84, transform: powerUpTransform({ x: arrival.x + 4, y: arrival.y }, anchor, 7, 1.09) },
+          { offset: 1, transform: powerUpTransform(arrival, anchor, 0, 1.08) },
+        ], {
+          duration: 520,
+          easing: 'ease-in-out',
+          fill: 'forwards',
+        });
+        await waitFor(275);
+        applyEffectOnce();
+        await brushMotion.finished;
+      } else {
+        const bucketMotion = tool.animate([
+          { offset: 0, transform: powerUpTransform(arrival, anchor, 0, 1.08) },
+          { offset: 0.2, transform: powerUpTransform({ x: arrival.x + 2, y: arrival.y - 2 }, anchor, 10, 1.09) },
+          { offset: 0.52, transform: powerUpTransform({ x: arrival.x - 3, y: arrival.y - 5 }, anchor, -54, 1.11) },
+          { offset: 0.74, transform: powerUpTransform({ x: arrival.x - 4, y: arrival.y - 4 }, anchor, -62, 1.11) },
+          { offset: 1, transform: powerUpTransform({ x: arrival.x - 3, y: arrival.y - 3 }, anchor, -56, 1.1) },
+        ], {
+          duration: 560,
+          easing: 'cubic-bezier(.34,.02,.24,1)',
+          fill: 'forwards',
+        });
+        await waitFor(330);
+        const drop = document.createElement('i');
+        drop.className = 'power-up-pour-drop';
+        drop.style.left = `${target.x}px`;
+        drop.style.top = `${target.y}px`;
+        layer.append(drop);
+        const dropMotion = drop.animate([
+          { offset: 0, opacity: 0, transform: 'translate(-50%, -28px) scale(.28)' },
+          { offset: 0.2, opacity: 1, transform: 'translate(-50%, -18px) scale(.55)' },
+          { offset: 0.62, opacity: 0.9, transform: 'translate(-50%, -2px) scale(.9)' },
+          { offset: 1, opacity: 0, transform: 'translate(-50%, 4px) scale(1.35)' },
+        ], {
+          duration: 430,
+          easing: 'cubic-bezier(.2,.72,.25,1)',
+          fill: 'forwards',
+        });
+        applyEffectOnce();
+        await bucketMotion.finished;
+        const uprightMotion = tool.animate([
+          { transform: powerUpTransform({ x: arrival.x - 3, y: arrival.y - 3 }, anchor, -56, 1.1) },
+          { transform: powerUpTransform(arrival, anchor, 8, 1.08) },
+          { transform: powerUpTransform(arrival, anchor, 0, 1.08) },
+        ], {
+          duration: 190,
+          easing: 'cubic-bezier(.3,.8,.35,1.18)',
+          fill: 'forwards',
+        });
+        await Promise.all([uprightMotion.finished, dropMotion.finished]);
+      }
+
+      const returnBounds = sourceImage.getBoundingClientRect();
+      const returnPoint = returnBounds.width > 0 && returnBounds.height > 0
+        ? { x: returnBounds.left + anchor.x, y: returnBounds.top + anchor.y }
+        : start;
+      const returning = tool.animate(
+        powerUpFlightKeyframes(arrival, returnPoint, anchor, 0, 0, 1.08, 1),
+        {
+          duration: POWER_UP_RETURN_DURATION_MS,
+          easing: 'cubic-bezier(.38,.02,.24,1)',
+          fill: 'forwards',
+        },
+      );
+      await returning.finished;
+      return applyEffectOnce();
+    } catch {
+      return applyEffectOnce();
+    } finally {
+      layer?.remove();
+      button.classList.remove('is-animating');
+      if (this.animatingPowerUp === id) this.animatingPowerUp = undefined;
+      this.renderPowerUps();
+    }
+  }
+
+  private async useWatercolorBrush(): Promise<void> {
+    if (this.animatingPowerUp) return;
+    this.cancelPowerUpTargeting();
+    if (!this.currentLevel || this.solutionRevealed) {
+      this.setPowerUpMessage('当前无法使用水彩笔。');
+      this.renderPowerUps();
+      return;
+    }
+    if (!this.boardScene.canUsePowerUp()) {
+      this.setPowerUpMessage('棋盘正在准备，请稍后再试。');
+      this.renderPowerUps();
+      return;
+    }
+
+    const cell = chooseWatercolorReveal(
+      this.currentLevel.solutionPath,
+      this.boardScene.concealedCellKeys(),
+    );
+    if (!cell) {
+      this.setPowerUpMessage('当前没有需要显示的空位。');
+      this.renderPowerUps();
+      return;
+    }
+    this.setPowerUpMessage('水彩笔正在前往随机空位。', 'active');
+    const revealed = await this.animatePowerUpUse(
+      'watercolor-brush',
+      this.watercolorBrushButton,
+      this.boardScene.cellClientPosition(cell),
+      () => this.boardScene.revealCells([cell]),
+    );
+    if (revealed.length === 0) {
+      this.setPowerUpMessage('这次没有显示空位，请再试一次。');
+      this.renderPowerUps();
+      return;
+    }
+
+    this.setPowerUpMessage('水彩笔随机显示了 1 个空位。', 'success');
+    this.renderPowerUps();
+  }
+
+  private togglePaintBucket(): void {
+    if (this.animatingPowerUp) return;
+    if (this.activePowerUp === 'paint-bucket') {
+      this.cancelPowerUpTargeting();
+      this.setPowerUpMessage('已取消油漆桶选择。');
+      this.renderPowerUps();
+      return;
+    }
+    if (!this.currentLevel || this.solutionRevealed || this.boardScene.concealedCellKeys().size === 0) {
+      this.setPowerUpMessage('当前没有需要显示的空位。');
+      this.renderPowerUps();
+      return;
+    }
+
+    this.activePowerUp = 'paint-bucket';
+    const armed = this.boardScene.setCellSelectionHandler((center) => void this.applyPaintBucket(center));
+    if (!armed) {
+      this.activePowerUp = undefined;
+      this.setPowerUpMessage('棋盘正在准备，请稍后再试。');
+      this.renderPowerUps();
+      return;
+    }
+    this.setPowerUpMessage('请选择一个中心格，再显示其 3×3 范围内的空位。', 'active');
+    this.renderPowerUps();
+  }
+
+  private async applyPaintBucket(center: Cell): Promise<void> {
+    if (
+      this.animatingPowerUp
+      || this.activePowerUp !== 'paint-bucket'
+      || !this.currentLevel
+    ) return;
+
+    const cells = paintBucketRevealCells(
+      this.currentLevel.solutionPath,
+      this.boardScene.concealedCellKeys(),
+      center,
+    );
+    if (cells.length === 0) {
+      this.setPowerUpMessage('这个 3×3 范围没有空位，请换一个中心格。', 'active');
+      this.renderPowerUps();
+      return;
+    }
+
+    const target = this.boardScene.cellClientPosition(center);
+    this.cancelPowerUpTargeting();
+    this.setPowerUpMessage('油漆桶正在前往选中的位置。', 'active');
+    const revealed = await this.animatePowerUpUse(
+      'paint-bucket',
+      this.paintBucketButton,
+      target,
+      () => this.boardScene.revealCells(cells),
+    );
+    if (revealed.length === 0) {
+      this.setPowerUpMessage('这次没有显示空位，请重新选择油漆桶。');
+      this.renderPowerUps();
+      return;
+    }
+    this.setPowerUpMessage(`油漆桶显示了 ${revealed.length} 个空位。`, 'success');
+    this.renderPowerUps();
   }
 
   private renderLives(): void {
@@ -1483,6 +1906,8 @@ class NumberConnectApp {
   }
 
   private handleLifeDepleted(): void {
+    this.cancelPowerUpTargeting();
+    this.renderPowerUps();
     this.boardScene.setPaused(true);
     if (this.playContext === 'editor-playtest') {
       this.resultContext = 'editor-playtest-failed';
@@ -1758,10 +2183,15 @@ class NumberConnectApp {
     this.currentTotal = next.solutionPath.length;
     this.updateGameHeading(next);
     this.renderProgress();
+    this.resetPowerUps();
+    this.setPowerUpMessage('正在准备下一关。');
+    this.renderPowerUps();
 
     try {
       await this.boardScene.transitionTo(this.makeSession(next, profile));
     } finally {
+      this.setPowerUpMessage();
+      this.renderPowerUps();
       this.resultActionBusy = false;
       this.setResultActionsDisabled(false);
     }
@@ -1832,12 +2262,14 @@ class NumberConnectApp {
   private backToLobby(): void {
     this.playContext = 'normal';
     this.resultOverlay.hidden = true;
+    this.cancelPowerUpTargeting();
     this.boardScene.setPaused(true);
     this.showScreen('lobby');
   }
 
   private leavePlayScreen(): void {
     this.resultOverlay.hidden = true;
+    this.cancelPowerUpTargeting();
     this.boardScene.setPaused(true);
     if (this.playContext === 'bead') {
       this.currentBeadReward = [];
@@ -1870,7 +2302,14 @@ class NumberConnectApp {
 
   private openSettings(context: 'lobby' | 'play'): void {
     this.settingsContext = context;
-    if (context === 'play') this.boardScene.setPaused(true);
+    if (context === 'play') {
+      if (this.activePowerUp === 'paint-bucket') {
+        this.cancelPowerUpTargeting();
+        this.setPowerUpMessage('已取消油漆桶选择。');
+        this.renderPowerUps();
+      }
+      this.boardScene.setPaused(true);
+    }
     this.populateSettingsForm();
     this.renderVideoStats();
     const leaveButton = query<HTMLButtonElement>('#settings-lobby-button');
@@ -1922,6 +2361,7 @@ class NumberConnectApp {
   }
 
   private populateSettingsForm(): void {
+    this.setInputModeControl(this.settings.inputMode);
     query<HTMLInputElement>('#settings-next').checked = this.settings.showNextNumber;
     query<HTMLInputElement>('#settings-sound').checked = this.settings.soundEnabled;
     this.setUiThemeControl(this.settings.uiTheme);
@@ -1956,9 +2396,11 @@ class NumberConnectApp {
 
   private refreshSettingsControls(): void {
     query<HTMLInputElement>('#settings-touch-preview-follow').disabled = this.selectedTouchPreviewSize() === 'off';
+    query<HTMLInputElement>('#settings-next').disabled = this.selectedInputMode() === 'click';
   }
 
   private applySettingsChange(): void {
+    this.settings.inputMode = this.selectedInputMode();
     this.settings.showNextNumber = query<HTMLInputElement>('#settings-next').checked;
     this.settings.soundEnabled = query<HTMLInputElement>('#settings-sound').checked;
     this.settings.uiTheme = this.selectedUiTheme();
@@ -1969,9 +2411,11 @@ class NumberConnectApp {
     this.renderDefaultLobbyLevelNumber();
     this.refreshSettingsControls();
     this.renderTouchPreviewState();
+    this.renderInputMode();
     this.boardScene.setRuntimePreferences({
       showNextNumber: this.settings.showNextNumber,
       soundEnabled: this.settings.soundEnabled,
+      inputMode: this.settings.inputMode,
       touchPreviewRingDepth: this.settings.touchPreviewSize === 'large' ? 2 : 1,
     });
 
@@ -2582,7 +3026,7 @@ class NumberConnectApp {
     for (let y = 0; y < pattern.height; y += 1) {
       for (let x = 0; x < pattern.width; x += 1) {
         const key = `${x},${y}`;
-        const color = pattern.pixels[key];
+        const color = pattern.data[y][x];
         const cell = document.createElement('span');
         cell.className = 'bead-pattern-cell';
         if (color) {
