@@ -187,6 +187,38 @@ describe('connection progress', () => {
     });
   });
 
+  it('exposes consecutive visible numbers one step at a time for auto-click', () => {
+    const progress = new ConnectionProgress(7, [0, 1, 2, 4, 5, 6]);
+
+    progress.enableClickMode();
+    progress.clickForward(1);
+    expect(progress.nextVisibleClickIndex()).toBe(2);
+    progress.clickForward(2);
+    expect(progress.progress).toBe(3);
+    expect(progress.currentClickIndex).toBe(2);
+    expect(progress.nextVisibleClickIndex()).toBeUndefined();
+    expect(progress.isVisible(3)).toBe(false);
+
+    progress.clickForward(3);
+    expect(progress.nextVisibleClickIndex()).toBe(4);
+    progress.clickForward(4);
+    expect(progress.nextVisibleClickIndex()).toBe(5);
+  });
+
+  it('keeps the current visible auto-click target after an out-of-order click', () => {
+    const progress = new ConnectionProgress(5, [0, 1, 2, 3, 4]);
+
+    progress.enableClickMode();
+    expect(progress.clickForward(2).at(-1)).toMatchObject({
+      type: 'wrong',
+      index: 2,
+      reason: 'click-order',
+    });
+    expect(progress.progress).toBe(0);
+    expect(progress.currentClickIndex).toBe(0);
+    expect(progress.nextVisibleClickIndex()).toBe(1);
+  });
+
   it('locks an undecided swappable pair back to authored order when one number is revealed', () => {
     const progress = new ConnectionProgress(4, [0, 3], [[1, 2]]);
 

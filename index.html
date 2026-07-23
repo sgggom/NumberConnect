@@ -158,6 +158,7 @@
                 <line id="touch-preview-pointer-line" class="touch-preview-pointer-line" hidden></line>
               </svg>
               <div id="touch-preview-cells" class="touch-preview-cells" aria-hidden="true"></div>
+              <div id="touch-preview-viewport" class="touch-preview-viewport" aria-hidden="true" hidden></div>
             </div>
           </div>
         </aside>
@@ -352,12 +353,12 @@
       <form method="dialog" class="settings-card">
         <header><div><h2>游戏设置</h2></div><button id="settings-close-button" class="icon-button" value="cancel" aria-label="关闭">×</button></header>
         <div class="settings-list">
-          <div class="setting-row setting-row--input-mode"><span><b>操作方式</b><small>逐格点击空位或数字，或按住拖动连线</small></span><div id="settings-input-mode" class="setting-segmented setting-input-mode-control" role="radiogroup" aria-label="操作方式"><label><input type="radio" name="input-mode" value="click" /><span>点击</span></label><label><input type="radio" name="input-mode" value="drag" checked /><span>拖动</span></label></div></div>
+          <div class="setting-row setting-row--input-mode"><span><b>操作方式</b><small>逐格点击、自动连接连续显示数字，或拖动连线</small></span><div id="settings-input-mode" class="setting-segmented setting-input-mode-control" role="radiogroup" aria-label="操作方式"><label><input type="radio" name="input-mode" value="click" /><span>点击</span></label><label><input type="radio" name="input-mode" value="auto-click" /><span>自动点击</span></label><label><input type="radio" name="input-mode" value="drag" checked /><span>拖动</span></label></div></div>
           <label class="setting-row"><span><b>下一个数字提示</b><small>高亮下一处可见数字</small></span><input id="settings-next" class="switch" type="checkbox" checked /></label>
           <label class="setting-row"><span><b>游戏声音</b><small>连击、错误和胜利反馈</small></span><input id="settings-sound" class="switch" type="checkbox" checked /></label>
           <div class="setting-row setting-row--theme"><span><b>大厅主题</b><small>默认明亮风格或原版夜间风格</small></span><div id="settings-theme" class="setting-segmented setting-theme-control" role="radiogroup" aria-label="大厅主题"><label><input type="radio" name="ui-theme" value="default" checked /><span>默认</span></label><label><input type="radio" name="ui-theme" value="night" /><span>夜间</span></label></div></div>
           <label id="settings-solution-row" class="setting-row" hidden><span><b>显示答案</b><small>显示隐藏数字和完整连线</small></span><input id="solution-toggle" class="switch" type="checkbox" /></label>
-          <div class="setting-row setting-row--preview-size"><span><b>关卡小窗</b><small>选择关闭、窗口大小或扩展显示范围</small></span><div id="touch-preview-size" class="setting-segmented" role="radiogroup" aria-label="关卡小窗大小"><label><input type="radio" name="touch-preview-size" value="off" /><span>关闭</span></label><label><input type="radio" name="touch-preview-size" value="small" checked /><span>小</span></label><label><input type="radio" name="touch-preview-size" value="medium" /><span>中</span></label><label><input type="radio" name="touch-preview-size" value="large" /><span>大</span></label></div></div>
+          <div class="setting-row setting-row--preview-size"><span><b>关卡小窗</b><small>选择局部小窗，或放大棋盘并使用全局缩略图</small></span><div id="touch-preview-size" class="setting-segmented" role="radiogroup" aria-label="关卡小窗模式"><label><input type="radio" name="touch-preview-size" value="off" /><span>关闭</span></label><label><input type="radio" name="touch-preview-size" value="small" checked /><span>小</span></label><label><input type="radio" name="touch-preview-size" value="medium" /><span>中</span></label><label><input type="radio" name="touch-preview-size" value="large" /><span>大</span></label><label><input type="radio" name="touch-preview-size" value="zoom" /><span>放大</span></label></div></div>
           <label class="setting-row"><span><b>小窗跟手</b><small>让关卡小窗始终显示在触摸位置上方</small></span><input id="settings-touch-preview-follow" class="switch" type="checkbox" /></label>
           <button id="video-stats-button" class="setting-row setting-row--button" type="button"><span><b>视频统计</b><small>查看奖励视频的触发点位</small></span><strong id="video-stats-count">0 次 ›</strong></button>
         </div>
