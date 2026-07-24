@@ -15,7 +15,13 @@ import {
 import { calculateEditorLevelMetrics } from './levelMetrics';
 import { LevelEditorModel } from './LevelEditorModel';
 import { mountLevelEditorView } from './LevelEditorView';
-import { simulateLevelPlay, type SimulatedPlayResult } from './simulateLevelPlay';
+import {
+  averageSimulatedPlayResults,
+  simulateLevelPlay,
+  type SimulatedPlayResult,
+  type SimulationReasoningLevel,
+} from './simulateLevelPlay';
+import { formatLevelBaseDataTsv } from './levelBaseDataTsv';
 import {
   EDITOR_ALGORITHMS,
   editorAlgorithmLabel,
@@ -52,8 +58,6 @@ interface SimulationOverlayPoint {
   size: number;
 }
 
-const SIMULATION_STEP_INTERVAL_MS = 500;
-
 export class LevelEditorController {
   private readonly model = new LevelEditorModel();
   private painting = false;
@@ -73,13 +77,10 @@ export class LevelEditorController {
   private recognitionAmbiguousCellKeys = new Set<string>();
   private recognitionAmbiguousPathSignature?: string;
   private simulationResult?: SimulatedPlayResult;
+  private simulationRepresentativeResult?: SimulatedPlayResult;
   private simulationSignature?: string;
-  private simulationVisibleStepCount = 0;
-  private simulationAnimationTimer?: number;
-  private simulationAnimationRun = 0;
-  private isSimulationAnimating = false;
-  private simulationCellEvents: SimulationCellEvent[] = [];
-  private simulationCellEventIndex = 0;
+  private simulationRunCount = 1;
+  private simulationReasoningLevel: SimulationReasoningLevel = 'medium';
   private simulationSuccessfulCells: EditorCell[] = [];
   private simulationErrorAttempts: SimulationErrorAttempt[] = [];
 
@@ -107,7 +108,6 @@ export class LevelEditorController {
     this.query('#editor-back-button').addEventListener('click', () => {
       this.cancelPathAnimation();
       this.cancelImageRecognition();
-      this.cancelSimulationAnimation();
       this.options.onBack();
     });
     this.query<HTMLSelectElement>('#editor-shape').addEventListener('change', (event) => {
@@ -170,8 +170,21 @@ export class LevelEditorController {
     this.query('#editor-image-formation-button').addEventListener('click', () => void this.readImageFromClipboard('initial-formation'));
     this.query('#editor-undo-delete-button').addEventListener('click', () => this.undoLastDeletion());
     this.query('#editor-generate-path-button').addEventListener('click', () => this.generatePath());
+    this.query<HTMLInputElement>('#editor-simulation-count').addEventListener('change', (event) => {
+      const input = event.currentTarget as HTMLInputElement;
+      this.simulationRunCount = Math.max(1, Math.min(100, Math.round(Number(input.value) || 1)));
+      input.value = String(this.simulationRunCount);
+      this.clearSimulationResult();
+      this.renderSimulationPanel();
+    });
+    this.query<HTMLSelectElement>('#editor-simulation-reasoning').addEventListener('change', (event) => {
+      this.simulationReasoningLevel = (event.currentTarget as HTMLSelectElement)
+        .value as SimulationReasoningLevel;
+      this.clearSimulationResult();
+      this.renderSimulationPanel();
+    });
     this.query('#editor-simulate-button').addEventListener('click', () => this.simulatePlay());
-    this.query('#editor-simulation-next-button').addEventListener('click', () => this.advanceSimulationManually());
+    this.query('#editor-simulation-export-button').addEventListener('click', () => void this.exportLevelBaseData());
     this.query('#editor-playtest-button').addEventListener('click', () => this.playtest());
     this.query('#editor-save-button').addEventListener('click', () => this.save());
     this.query('#editor-level-add').addEventListener('click', () => this.save());
@@ -249,10 +262,9 @@ export class LevelEditorController {
       : '';
     grid.dataset.shape = this.model.shape;
     grid.dataset.manualMode = this.model.manualEditMode;
-    grid.setAttribute('aria-busy', String(this.isPathAnimating || this.isSimulationAnimating));
+    grid.setAttribute('aria-busy', String(this.isPathAnimating));
     this.host.classList.toggle('is-path-animating', this.isPathAnimating);
     this.host.classList.toggle('is-image-recognizing', this.isImageRecognizing);
-    this.host.classList.toggle('is-simulation-animating', this.isSimulationAnimating);
     const order = this.model.pathOrder();
     const visiblePathLength = this.pathRevealCount ?? this.model.solutionPath.length;
     const cells: HTMLButtonElement[] = [];
@@ -406,61 +418,136 @@ export class LevelEditorController {
   }
 
   private simulatePlay(): void {
-    if (this.isSimulationAnimating) {
-      this.cancelSimulationAnimation();
-      this.renderSimulationPanel();
-      this.setStatus(`模拟已停止：已移动 ${this.simulationCellEventIndex}/${this.simulationCellEvents.length} 格，完成 ${this.simulationVisibleStepCount}/${this.simulationResult?.totalSteps ?? 0} 步。`);
-      return;
-    }
     if (!this.model.hasGeneratedPath) {
       this.setStatus('请先生成覆盖全部格子的路径。', true);
       return;
     }
     if (!this.initializeSimulation()) return;
-    this.isSimulationAnimating = true;
-    this.host.classList.add('is-simulation-animating');
-    this.renderSimulationPanel();
-    const run = ++this.simulationAnimationRun;
-    this.setStatus(`模拟开始：每 ${SIMULATION_STEP_INTERVAL_MS / 1000} 秒前进一格，共 ${this.simulationCellEvents.length} 次移动。`);
-    this.scheduleNextSimulationStep(run);
+    const totalSteps = this.simulationResult?.totalSteps ?? 0;
+    const errorCount = this.simulationResult?.errorCount ?? 0;
+    const formatValue = (value: number): string => String(Math.round(value * 100) / 100);
+    this.setStatus(this.simulationRunCount > 1
+      ? `${this.simulationRunCount} 次模拟完成：平均 ${formatValue(totalSteps)} 步，平均错误 ${formatValue(errorCount)} 次。`
+      : `模拟完成：共 ${totalSteps} 步，错误 ${errorCount} 次。`);
   }
 
-  private initializeSimulation(): boolean {
-    this.cancelSimulationAnimation();
-    this.simulationResult = simulateLevelPlay({
+  private async exportLevelBaseData(): Promise<void> {
+    const levelId = this.selectedLevelId ?? this.options.getNextLevelId();
+    const level = this.model.createLevel(levelId);
+    if (!level) {
+      this.setStatus('请先生成完整路径，再导出基础数据。', true);
+      return;
+    }
+
+    const metrics = calculateEditorLevelMetrics({
       path: this.model.solutionPath,
       hiddenCellKeys: this.model.hiddenCellKeys,
       shape: this.model.shape,
     });
+    const simulation = this.simulationResult
+      && this.simulationSignature === this.currentSimulationSignature()
+      ? this.simulationResult
+      : simulateLevelPlay({
+          path: this.model.solutionPath,
+          hiddenCellKeys: this.model.hiddenCellKeys,
+          shape: this.model.shape,
+          reasoningLevel: this.simulationReasoningLevel,
+        });
+    const simulationStepCount = simulation.steps.length;
+    const averageConnectableCount = simulationStepCount === 0
+      ? 0
+      : simulation.steps.reduce((sum, step) => sum + step.connectableCount, 0)
+        / simulationStepCount;
+    const directConnectRatio = simulationStepCount === 0
+      ? 0
+      : simulation.steps.reduce(
+          (sum, step) => sum + (step.directConnectRate ?? Number(step.directConnect)),
+          0,
+        )
+        / simulationStepCount;
+    const averageDistanceToNextVisibleNumber = simulationStepCount === 0
+      ? 0
+      : simulation.steps.reduce(
+          (sum, step) => sum + step.distanceToNextVisibleNumber,
+          0,
+        ) / simulationStepCount;
+    const text = formatLevelBaseDataTsv({
+      levelId,
+      shape: this.shapeLabel(level.boardShape),
+      rows: level.rows,
+      columns: level.columns,
+      cellCount: level.activeCells.length,
+      levelJson: JSON.stringify(encodeCompactLevelCollection([level])[0]),
+      algorithm: editorAlgorithmLabel(level.algorithm?.id),
+      metrics,
+      averageConnectableCount,
+      directConnectRatio,
+      averageDistanceToNextVisibleNumber,
+    });
+
+    try {
+      await this.writeClipboardText(text);
+      this.setStatus(`关卡 ${levelId} 的基础数据已复制，可直接粘贴到表格。`);
+    } catch {
+      this.setStatus('复制失败，请允许浏览器访问剪贴板后重试。', true);
+    }
+  }
+
+  private async writeClipboardText(text: string): Promise<void> {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.readOnly = true;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    textarea.style.pointerEvents = 'none';
+    document.body.append(textarea);
+    textarea.select();
+    try {
+      if (!document.execCommand('copy')) throw new Error('Copy command was rejected');
+    } finally {
+      textarea.remove();
+    }
+  }
+
+  private initializeSimulation(): boolean {
+    const simulationResults = Array.from({ length: this.simulationRunCount }, () => (
+      simulateLevelPlay({
+        path: this.model.solutionPath,
+        hiddenCellKeys: this.model.hiddenCellKeys,
+        shape: this.model.shape,
+        reasoningLevel: this.simulationReasoningLevel,
+      })
+    ));
+    this.simulationRepresentativeResult = simulationResults[0];
+    this.simulationResult = this.simulationRunCount === 1
+      ? simulationResults[0]
+      : averageSimulatedPlayResults(simulationResults);
     this.simulationSignature = this.currentSimulationSignature();
-    this.simulationVisibleStepCount = 0;
-    this.simulationCellEvents = this.createSimulationCellEvents(this.simulationResult);
-    this.simulationCellEventIndex = 0;
     this.simulationErrorAttempts = [];
-    const startingCell = this.simulationResult.steps[0]?.attemptedCells[0];
-    this.simulationSuccessfulCells = startingCell ? [{ ...startingCell }] : [];
-    const hasMovement = this.simulationCellEvents.length > 0;
-    if (!hasMovement) this.simulationVisibleStepCount = this.simulationResult.totalSteps;
+    this.simulationSuccessfulCells = [];
+    const simulationCellEvents = this.createSimulationCellEvents(this.simulationRepresentativeResult);
+    simulationCellEvents.forEach((event) => {
+      if (event.isError) {
+        this.simulationErrorAttempts.push({ from: { ...event.from }, to: { ...event.to } });
+        return;
+      }
+      const lastCell = this.simulationSuccessfulCells[this.simulationSuccessfulCells.length - 1];
+      if (!lastCell || `${lastCell.x},${lastCell.y}` !== `${event.from.x},${event.from.y}`) {
+        this.simulationSuccessfulCells.push({ ...event.from });
+      }
+      this.simulationSuccessfulCells.push({ ...event.to });
+    });
     this.renderSimulationPanel();
-    if (!hasMovement) {
+    if (simulationCellEvents.length === 0) {
       this.setStatus('模拟完成：当前关卡没有可播放的步骤。');
       return false;
     }
     return true;
-  }
-
-  private advanceSimulationManually(): void {
-    if (this.isSimulationAnimating) return;
-    if (!this.model.hasGeneratedPath) {
-      this.setStatus('请先生成覆盖全部格子的路径。', true);
-      return;
-    }
-    if (!this.simulationResult && !this.initializeSimulation()) return;
-    if (this.simulationCellEventIndex >= this.simulationCellEvents.length) {
-      this.setStatus('本次模拟已经完成；点击“重新模拟”可生成一次新的玩家体验。');
-      return;
-    }
-    this.advanceSimulationCell();
   }
 
   private createSimulationCellEvents(result: SimulatedPlayResult): SimulationCellEvent[] {
@@ -477,144 +564,247 @@ export class LevelEditorController {
     }));
   }
 
-  private scheduleNextSimulationStep(run: number): void {
-    this.simulationAnimationTimer = window.setTimeout(() => {
-      this.simulationAnimationTimer = undefined;
-      this.advanceSimulationAnimation(run);
-    }, SIMULATION_STEP_INTERVAL_MS);
-  }
-
-  private advanceSimulationAnimation(run: number): void {
-    if (run !== this.simulationAnimationRun || !this.isSimulationAnimating || !this.simulationResult) return;
-    if (!this.advanceSimulationCell()) return;
-    if (this.isSimulationAnimating) this.scheduleNextSimulationStep(run);
-  }
-
-  private advanceSimulationCell(): boolean {
-    if (!this.simulationResult) return false;
-    const event = this.simulationCellEvents[this.simulationCellEventIndex];
-    if (!event) return false;
-    if (event.isError) {
-      this.simulationErrorAttempts.push({ from: { ...event.from }, to: { ...event.to } });
-    } else {
-      const lastCell = this.simulationSuccessfulCells[this.simulationSuccessfulCells.length - 1];
-      if (!lastCell || `${lastCell.x},${lastCell.y}` !== `${event.from.x},${event.from.y}`) {
-        this.simulationSuccessfulCells.push({ ...event.from });
-      }
-      this.simulationSuccessfulCells.push({ ...event.to });
-    }
-    this.simulationCellEventIndex += 1;
-    if (event.completesStep) this.simulationVisibleStepCount = event.stepIndex + 1;
-    const total = this.simulationResult.totalSteps;
-    const finished = this.simulationCellEventIndex >= this.simulationCellEvents.length;
-    if (finished) {
-      this.isSimulationAnimating = false;
-      this.host.classList.remove('is-simulation-animating');
-    }
-    this.renderSimulationPanel();
-    if (finished) {
-      this.setStatus(`模拟完成：共 ${total} 步，错误 ${this.simulationResult.errorCount} 次。`);
-      return true;
-    }
-    if (event.isError) {
-      this.setStatus(`正在模拟第 ${event.stepIndex + 1}/${total} 步：猜错一格，已标红并排除该选项。`);
-    } else if (event.completesStep) {
-      this.setStatus(`已完成第 ${event.stepIndex + 1}/${total} 步，继续下一步。`);
-    } else {
-      this.setStatus(`正在模拟第 ${event.stepIndex + 1}/${total} 步：前进到第 ${this.simulationSuccessfulCells.length} 个格子。`);
-    }
-    return true;
-  }
-
   private renderSimulationPanel(): void {
     const button = this.query<HTMLButtonElement>('#editor-simulate-button');
-    const nextButton = this.query<HTMLButtonElement>('#editor-simulation-next-button');
+    const exportButton = this.query<HTMLButtonElement>('#editor-simulation-export-button');
     const summary = this.query<HTMLElement>('#editor-simulation-summary');
     const results = this.query<HTMLElement>('#editor-simulation-results');
     const controlsUnavailable = !this.model.hasGeneratedPath || this.isPathAnimating || this.isImageRecognizing;
-    const simulationFinished = this.simulationResult !== undefined
-      && this.simulationCellEventIndex >= this.simulationCellEvents.length;
     button.disabled = controlsUnavailable;
-    button.textContent = this.isSimulationAnimating
-      ? '停止模拟'
-      : this.simulationResult ? '重新模拟' : '开始模拟';
-    button.classList.toggle('is-running', this.isSimulationAnimating);
-    nextButton.disabled = controlsUnavailable || this.isSimulationAnimating || simulationFinished;
-    nextButton.textContent = simulationFinished ? '已完成' : '下一步';
+    button.textContent = this.simulationResult ? '重新模拟' : '开始模拟';
+    exportButton.disabled = controlsUnavailable;
+    this.query<HTMLInputElement>('#editor-simulation-count').disabled = controlsUnavailable;
+    this.query<HTMLSelectElement>('#editor-simulation-reasoning').disabled = controlsUnavailable;
 
     if (!this.simulationResult) {
       summary.hidden = true;
       const empty = document.createElement('p');
       empty.className = 'editor-simulation-empty';
       empty.textContent = this.model.hasGeneratedPath
-        ? '点击开始模拟，查看一次随机玩家体验。'
-        : '生成完整路径后，即可模拟一次玩家体验。';
+        ? '点击开始模拟，生成本关的逐步统计曲线。'
+        : '生成完整路径后，即可查看逐步统计曲线。';
       results.replaceChildren(empty);
       this.renderSimulationOverlay();
       return;
     }
 
     summary.hidden = false;
-    const visibleSteps = this.simulationResult.steps.slice(0, this.simulationVisibleStepCount);
-    const visibleErrors = visibleSteps.filter((step) => step.outcome === 'error').length;
-    this.query('#editor-simulation-total-steps').textContent = this.simulationVisibleStepCount === this.simulationResult.totalSteps
-      ? String(this.simulationResult.totalSteps)
-      : `${this.simulationVisibleStepCount}/${this.simulationResult.totalSteps}`;
-    this.query('#editor-simulation-error-count').textContent = String(visibleErrors);
-    const cards = visibleSteps.map((step, index) => {
-      const card = document.createElement('article');
-      card.className = `editor-simulation-step${step.outcome === 'error' ? ' is-error' : ''}${index === visibleSteps.length - 1 ? ' is-current' : ''}`;
-
-      const header = document.createElement('div');
-      header.className = 'editor-simulation-step__header';
-      const title = document.createElement('b');
-      title.textContent = `第 ${step.stepNumber} 步`;
-      const status = document.createElement('span');
-      status.className = 'editor-simulation-step__status';
-      status.textContent = step.outcome === 'error' ? '猜错' : '完成';
-      header.append(title, status);
-
-      const range = document.createElement('div');
-      range.className = 'editor-simulation-step__range';
-      range.textContent = step.outcome === 'error'
-        ? `从数字 ${step.startNumber} 出发 · 停在 ${step.endNumber}`
-        : `从数字 ${step.startNumber} 连接到 ${step.endNumber}`;
-
-      const metrics = document.createElement('dl');
-      const appendMetric = (label: string, value: number, tooltip?: string): void => {
-        const item = document.createElement('div');
-        if (tooltip) item.title = tooltip;
-        const term = document.createElement('dt');
-        term.textContent = label;
-        const description = document.createElement('dd');
-        description.textContent = String(value);
-        item.append(term, description);
-        metrics.append(item);
-      };
-      appendMetric('长度', step.length, '本步连出的线段数；猜错时包含最后一段错误尝试。');
-      appendMetric('拐弯', step.turnCount);
-      appendMetric('填空', step.filledHiddenCount, '本步正确填入的隐藏数字数量。');
-      appendMetric('分叉', step.forkCount, '本步遇到两个或更多未知候选空位的次数。');
-      card.append(header, range, metrics);
-      return card;
-    });
-    if (cards.length === 0) {
-      const pending = document.createElement('p');
-      pending.className = 'editor-simulation-empty is-running';
-      pending.textContent = this.isSimulationAnimating
-        ? '已定位起点…0.5 秒后前进第 1 格。'
-        : '已定位起点，点击“下一步”前进第 1 格。';
-      results.replaceChildren(pending);
-    } else {
-      results.replaceChildren(...cards);
-      window.requestAnimationFrame(() => {
-        results.scrollTo({
-          top: results.scrollHeight,
-          behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
-        });
-      });
-    }
+    const multipleRuns = this.simulationRunCount > 1;
+    const formatSummaryValue = (value: number): string => (
+      Number.isInteger(value) ? String(value) : String(Math.round(value * 100) / 100)
+    );
+    this.query('#editor-simulation-total-steps-label').textContent = multipleRuns ? '平均总步数' : '总步数';
+    this.query('#editor-simulation-error-count-label').textContent = multipleRuns ? '平均错误次数' : '错误次数';
+    this.query('#editor-simulation-total-steps').textContent = formatSummaryValue(this.simulationResult.totalSteps);
+    this.query('#editor-simulation-error-count').textContent = formatSummaryValue(this.simulationResult.errorCount);
+    results.replaceChildren(this.createSimulationChart(this.simulationResult));
     this.renderSimulationOverlay();
+  }
+
+  private createSimulationChart(result: SimulatedPlayResult): HTMLElement {
+    const figure = document.createElement('figure');
+    figure.className = 'editor-simulation-chart';
+    figure.setAttribute(
+      'aria-label',
+      `本关${this.simulationRunCount > 1 ? `${this.simulationRunCount} 次模拟平均 ` : ''}共 ${result.totalSteps} 步；曲线依次展示拐弯类型、可连接数量、直接连接和距离下个显示数字。`,
+    );
+
+    const svgNamespace = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(svgNamespace, 'svg');
+    svg.setAttribute('viewBox', '0 0 600 410');
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-hidden', 'true');
+
+    const createSvgElement = <K extends keyof SVGElementTagNameMap>(
+      name: K,
+      attributes: Record<string, string | number>,
+    ): SVGElementTagNameMap[K] => {
+      const element = document.createElementNS(svgNamespace, name);
+      Object.entries(attributes).forEach(([attribute, value]) => {
+        element.setAttribute(attribute, String(value));
+      });
+      return element;
+    };
+
+    const plotLeft = 78;
+    const plotRight = 584;
+    const plotWidth = plotRight - plotLeft;
+    const bandHeight = 72;
+    const bandGap = 18;
+    const chartTop = 24;
+    const chartBottom = chartTop + bandHeight * 4 + bandGap * 3;
+    const stepCount = Math.max(1, result.steps.length);
+    const xAt = (index: number): number => (
+      stepCount === 1
+        ? plotLeft + plotWidth / 2
+        : plotLeft + index / (stepCount - 1) * plotWidth
+    );
+    const turnValues = {
+      straight: 0,
+      acute: 1,
+      'right-angle': 2,
+      obtuse: 3,
+    } as const;
+    const maxConnectable = Math.max(1, ...result.steps.map((step) => step.connectableCount));
+    const maxVisibleDistance = Math.max(
+      1,
+      ...result.steps.map((step) => step.distanceToNextVisibleNumber),
+    );
+    const chartNumberLabel = (value: number): string => (
+      Number.isInteger(value) ? String(value) : String(Math.round(value * 100) / 100)
+    );
+    const bands = [
+      {
+        title: '拐弯类型',
+        color: '#f3c24b',
+        values: result.steps.map((step) => step.turnValue ?? turnValues[step.turnType]),
+        maximum: 3,
+        labels: [
+          { value: 3, label: '钝角' },
+          { value: 2, label: '直角' },
+          { value: 1, label: '锐角' },
+          { value: 0, label: '直线' },
+        ],
+      },
+      {
+        title: '可连接数量',
+        color: '#58d0aa',
+        values: result.steps.map((step) => step.connectableCount),
+        maximum: maxConnectable,
+        labels: [
+          { value: maxConnectable, label: chartNumberLabel(maxConnectable) },
+          { value: 0, label: '0' },
+        ],
+      },
+      {
+        title: this.simulationRunCount > 1 ? '直接连接占比' : '直接连接',
+        color: '#7ec9ff',
+        values: result.steps.map((step) => step.directConnectRate ?? Number(step.directConnect)),
+        maximum: 1,
+        labels: [
+          { value: 1, label: '是' },
+          { value: 0, label: '否' },
+        ],
+      },
+      {
+        title: '距离下个显示数字',
+        color: '#c99cff',
+        values: result.steps.map((step) => step.distanceToNextVisibleNumber),
+        maximum: maxVisibleDistance,
+        labels: maxVisibleDistance > 1
+          ? [
+              { value: maxVisibleDistance, label: chartNumberLabel(maxVisibleDistance) },
+              { value: 1, label: '1' },
+            ]
+          : [{ value: 1, label: '1' }],
+      },
+    ];
+
+    const tickIndexes = new Set<number>();
+    const tickStride = Math.max(1, Math.ceil(stepCount / 8));
+    for (let index = 0; index < stepCount; index += tickStride) tickIndexes.add(index);
+    tickIndexes.add(stepCount - 1);
+    [...tickIndexes].sort((left, right) => left - right).forEach((index) => {
+      const x = xAt(index);
+      svg.append(createSvgElement('line', {
+        x1: x,
+        y1: chartTop,
+        x2: x,
+        y2: chartBottom,
+        class: 'editor-simulation-chart__grid editor-simulation-chart__grid--vertical',
+      }));
+      const tick = createSvgElement('text', {
+        x,
+        y: chartBottom + 23,
+        class: 'editor-simulation-chart__axis-label',
+        'text-anchor': 'middle',
+      });
+      tick.textContent = String(index + 1);
+      svg.append(tick);
+    });
+
+    bands.forEach((band, bandIndex) => {
+      const top = chartTop + bandIndex * (bandHeight + bandGap);
+      const bottom = top + bandHeight;
+      const yAt = (value: number): number => (
+        bottom - 6 - value / Math.max(1, band.maximum) * (bandHeight - 12)
+      );
+      svg.append(createSvgElement('rect', {
+        x: plotLeft,
+        y: top,
+        width: plotWidth,
+        height: bandHeight,
+        rx: 10,
+        class: 'editor-simulation-chart__band',
+      }));
+
+      const title = createSvgElement('text', {
+        x: plotLeft,
+        y: top - 7,
+        class: 'editor-simulation-chart__title',
+      });
+      title.textContent = band.title;
+      svg.append(title);
+
+      band.labels.forEach(({ value, label }) => {
+        const y = yAt(value);
+        svg.append(createSvgElement('line', {
+          x1: plotLeft,
+          y1: y,
+          x2: plotRight,
+          y2: y,
+          class: 'editor-simulation-chart__grid',
+        }));
+        const axisLabel = createSvgElement('text', {
+          x: plotLeft - 8,
+          y: y + 4,
+          class: 'editor-simulation-chart__axis-label',
+          'text-anchor': 'end',
+        });
+        axisLabel.textContent = label;
+        svg.append(axisLabel);
+      });
+
+      if (band.values.length > 0) {
+        const line = createSvgElement('polyline', {
+          points: band.values.map((value, index) => `${xAt(index)},${yAt(value)}`).join(' '),
+          class: 'editor-simulation-chart__line',
+          stroke: band.color,
+        });
+        svg.append(line);
+
+        band.values.forEach((value, index) => {
+          const isError = (result.steps[index]?.errorRate ?? Number(
+            result.steps[index]?.outcome === 'error',
+          )) > 0;
+          if (!isError && band.values.length > 64) return;
+          svg.append(createSvgElement('circle', {
+            cx: xAt(index),
+            cy: yAt(value),
+            r: isError ? 4.4 : 2.4,
+            class: isError
+              ? 'editor-simulation-chart__point is-error'
+              : 'editor-simulation-chart__point',
+            fill: isError ? '#f05b6c' : band.color,
+          }));
+        });
+      }
+    });
+
+    const axisTitle = createSvgElement('text', {
+      x: plotLeft,
+      y: chartBottom + 23,
+      class: 'editor-simulation-chart__axis-title',
+    });
+    axisTitle.textContent = '步数';
+    svg.append(axisTitle);
+
+    const caption = document.createElement('figcaption');
+    caption.textContent = this.simulationRunCount > 1
+      ? `${this.simulationRunCount} 次模拟的逐步平均值；红点表示该步至少一次连接错误。`
+      : '四组曲线共享横轴；红点表示该步连接错误。';
+    figure.append(svg, caption);
+    return figure;
   }
 
   private renderSimulationOverlay(): void {
@@ -703,8 +893,7 @@ export class LevelEditorController {
       appendErrorLine('editor-simulation-line editor-simulation-line--error');
     });
 
-    const simulationFinished = !this.isSimulationAnimating
-      && this.simulationCellEventIndex >= this.simulationCellEvents.length;
+    const simulationFinished = this.simulationResult !== undefined;
     const successfulKeys = new Set(successfulPoints.map((point) => point.key));
     this.model.solutionPath.forEach((cell, index) => {
       const key = `${cell.x},${cell.y}`;
@@ -748,21 +937,10 @@ export class LevelEditorController {
     });
   }
 
-  private cancelSimulationAnimation(): void {
-    this.simulationAnimationRun += 1;
-    if (this.simulationAnimationTimer !== undefined) window.clearTimeout(this.simulationAnimationTimer);
-    this.simulationAnimationTimer = undefined;
-    this.isSimulationAnimating = false;
-    this.host.classList.remove('is-simulation-animating');
-  }
-
   private clearSimulationResult(): void {
-    this.cancelSimulationAnimation();
     this.simulationResult = undefined;
+    this.simulationRepresentativeResult = undefined;
     this.simulationSignature = undefined;
-    this.simulationVisibleStepCount = 0;
-    this.simulationCellEvents = [];
-    this.simulationCellEventIndex = 0;
     this.simulationSuccessfulCells = [];
     this.simulationErrorAttempts = [];
     this.renderSimulationOverlay();
@@ -770,7 +948,7 @@ export class LevelEditorController {
 
   private currentSimulationSignature(): string {
     const hidden = [...this.model.hiddenCellKeys].sort().join('|');
-    return `${this.model.shape}:${this.currentPathSignature()}:${hidden}`;
+    return `${this.model.shape}:${this.currentPathSignature()}:${hidden}:${this.simulationRunCount}:${this.simulationReasoningLevel}`;
   }
 
   private async readImageFromClipboard(mode: ImageRecognitionMode): Promise<void> {
@@ -1024,7 +1202,6 @@ export class LevelEditorController {
       this.setStatus('请先生成覆盖全部格子的路径。', true);
       return;
     }
-    this.cancelSimulationAnimation();
     this.setStatus('正在进入试玩，退出后将返回当前编辑状态。');
     this.options.onPlaytest(level);
   }

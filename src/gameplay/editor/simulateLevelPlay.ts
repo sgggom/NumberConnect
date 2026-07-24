@@ -1,9 +1,11 @@
 import { findSwappableHiddenPairs } from '../../game/hiddenSwap';
 import { BoardShape } from '../../game/types';
 import { areEditorCellsNeighbors } from './findEditorPath';
+import { classifyEditorTurn, type EditorTurnType } from './levelMetrics';
 import type { EditorCell, EditorShape } from './types';
 
-export type SimulatedStepOutcome = 'error' | 'complete';
+export type SimulatedStepOutcome = 'error' | 'connected';
+export type SimulationReasoningLevel = 'low' | 'medium' | 'high';
 
 export interface SimulatedPlayStep {
   stepNumber: number;
@@ -11,10 +13,13 @@ export interface SimulatedPlayStep {
   startNumber: number;
   endNumber: number;
   attemptedCells: EditorCell[];
-  length: number;
-  turnCount: number;
-  filledHiddenCount: number;
-  forkCount: number;
+  turnType: EditorTurnType;
+  turnValue?: number;
+  connectableCount: number;
+  directConnect: boolean;
+  directConnectRate?: number;
+  distanceToNextVisibleNumber: number;
+  errorRate?: number;
 }
 
 export interface SimulatedPlayResult {
@@ -23,10 +28,60 @@ export interface SimulatedPlayResult {
   steps: SimulatedPlayStep[];
 }
 
+const average = (values: ReadonlyArray<number>): number => (
+  values.length === 0 ? 0 : values.reduce((sum, value) => sum + value, 0) / values.length
+);
+
+const turnValueFor = (turnType: EditorTurnType): number => ({
+  straight: 0,
+  acute: 1,
+  'right-angle': 2,
+  obtuse: 3,
+})[turnType];
+
+export const averageSimulatedPlayResults = (
+  results: ReadonlyArray<SimulatedPlayResult>,
+): SimulatedPlayResult => {
+  if (results.length === 0) return { totalSteps: 0, errorCount: 0, steps: [] };
+  const maximumStepCount = Math.max(0, ...results.map((result) => result.steps.length));
+  const steps = Array.from({ length: maximumStepCount }, (_, stepIndex): SimulatedPlayStep => {
+    const samples = results
+      .map((result) => result.steps[stepIndex])
+      .filter((step): step is SimulatedPlayStep => step !== undefined);
+    const representative = samples[0];
+    if (!representative) throw new Error(`Missing simulation samples for step ${stepIndex + 1}.`);
+    const directConnectRate = average(samples.map((step) => (
+      step.directConnectRate ?? Number(step.directConnect)
+    )));
+    const errorRate = average(samples.map((step) => (
+      step.errorRate ?? Number(step.outcome === 'error')
+    )));
+    return {
+      ...representative,
+      stepNumber: stepIndex + 1,
+      outcome: errorRate > 0 ? 'error' : 'connected',
+      turnValue: average(samples.map((step) => step.turnValue ?? turnValueFor(step.turnType))),
+      connectableCount: average(samples.map((step) => step.connectableCount)),
+      directConnect: directConnectRate >= 0.5,
+      directConnectRate,
+      distanceToNextVisibleNumber: average(
+        samples.map((step) => step.distanceToNextVisibleNumber),
+      ),
+      errorRate,
+    };
+  });
+  return {
+    totalSteps: average(results.map((result) => result.totalSteps)),
+    errorCount: average(results.map((result) => result.errorCount)),
+    steps,
+  };
+};
+
 interface SimulateLevelPlayInput {
   path: ReadonlyArray<EditorCell>;
   hiddenCellKeys: ReadonlySet<string>;
   shape: EditorShape;
+  reasoningLevel?: SimulationReasoningLevel;
   random?: () => number;
 }
 
@@ -39,38 +94,6 @@ const boardShapeFor = (shape: EditorShape): BoardShape => {
   if (shape === 'rectangle') return BoardShape.Rectangle;
   if (shape === 'hex') return BoardShape.Hex;
   return BoardShape.Square;
-};
-
-const projectCell = (cell: EditorCell, shape: EditorShape): EditorCell => {
-  if (shape === 'diamond') {
-    return {
-      x: (cell.x - cell.y) * Math.SQRT1_2,
-      y: (cell.x + cell.y) * Math.SQRT1_2,
-    };
-  }
-  if (shape === 'hex') {
-    return {
-      x: cell.x * 0.8660254,
-      y: cell.y + (cell.x % 2 === 0 ? 0 : 0.5),
-    };
-  }
-  return cell;
-};
-
-const countTurns = (cells: ReadonlyArray<EditorCell>, shape: EditorShape): number => {
-  if (cells.length < 3) return 0;
-  const projected = cells.map((cell) => projectCell(cell, shape));
-  let turns = 0;
-  for (let index = 2; index < projected.length; index += 1) {
-    const previousX = projected[index - 1].x - projected[index - 2].x;
-    const previousY = projected[index - 1].y - projected[index - 2].y;
-    const nextX = projected[index].x - projected[index - 1].x;
-    const nextY = projected[index].y - projected[index - 1].y;
-    const cross = previousX * nextY - previousY * nextX;
-    const dot = previousX * nextX + previousY * nextY;
-    if (Math.abs(cross) > 1e-6 || dot <= 0) turns += 1;
-  }
-  return turns;
 };
 
 const chooseCandidate = (
@@ -158,6 +181,7 @@ const canReachNextVisibleNumber = (
   hiddenCellKeys: ReadonlySet<string>,
   neighborsByCell: CellNeighborMap,
   shape: EditorShape,
+  predictionDepth: number,
 ): boolean => {
   let anchorIndex = currentPosition + 1;
   while (anchorIndex < route.length && hiddenCellKeys.has(keyOf(route[anchorIndex]))) anchorIndex += 1;
@@ -215,6 +239,9 @@ const canReachNextVisibleNumber = (
       if (!remainsConnectedAfterAnchor) failedStates.add(stateKey);
       return remainsConnectedAfterAnchor;
     }
+    // The candidate itself is the first predicted connection. Stop once the
+    // selected reasoning tier's lookahead has been reached.
+    if (predictedSteps + 1 >= predictionDepth) return true;
 
     const availableCount = intermediateCells.reduce(
       (count, cell) => count + (visited.has(keyOf(cell)) ? 0 : 1),
@@ -268,17 +295,21 @@ const chooseAnalyzedCandidate = (
   hiddenCellKeys: ReadonlySet<string>,
   neighborsByCell: CellNeighborMap,
   shape: EditorShape,
+  predictionDepth: number,
   random: () => number,
 ): EditorCell => {
-  const safeCandidates = candidates.filter((candidate) => canReachNextVisibleNumber(
-    candidate,
-    currentPosition,
-    route,
-    routeCellKeys,
-    hiddenCellKeys,
-    neighborsByCell,
-    shape,
-  ));
+  const safeCandidates = predictionDepth === 0
+    ? candidates
+    : candidates.filter((candidate) => canReachNextVisibleNumber(
+        candidate,
+        currentPosition,
+        route,
+        routeCellKeys,
+        hiddenCellKeys,
+        neighborsByCell,
+        shape,
+        predictionDepth,
+      ));
   const available = safeCandidates.length > 0 ? safeCandidates : candidates;
   const scored = available.map((candidate) => ({
     candidate,
@@ -298,18 +329,45 @@ const chooseAnalyzedCandidate = (
   );
 };
 
+const countConnectableCells = (
+  current: EditorCell,
+  currentPosition: number,
+  route: ReadonlyArray<EditorCell>,
+  shape: EditorShape,
+): number => route.slice(currentPosition + 1).reduce(
+  (count, candidate) => count + Number(areEditorCellsNeighbors(current, candidate, shape)),
+  0,
+);
+
+const distanceToNextVisibleNumber = (
+  currentPosition: number,
+  route: ReadonlyArray<EditorCell>,
+  hiddenCellKeys: ReadonlySet<string>,
+): number => {
+  let nextVisiblePosition = currentPosition + 1;
+  while (
+    nextVisiblePosition < route.length - 1
+    && hiddenCellKeys.has(keyOf(route[nextVisiblePosition]))
+  ) {
+    nextVisiblePosition += 1;
+  }
+  return Math.max(1, nextVisiblePosition - currentPosition);
+};
+
 /**
  * Simulates a forward player who follows visible numbers and only guesses when
- * two or more still-possible hidden cells are adjacent. A wrong guess is
- * remembered at that exact path position before the next attempt begins.
+ * two or more still-possible hidden cells are adjacent. Every attempted
+ * connection is one step. A wrong guess is remembered at that exact path
+ * position before the next connection is attempted.
  */
 export const simulateLevelPlay = ({
   path,
   hiddenCellKeys,
   shape,
+  reasoningLevel = 'medium',
   random = Math.random,
 }: SimulateLevelPlayInput): SimulatedPlayResult => {
-  if (path.length === 0) return { totalSteps: 0, errorCount: 0, steps: [] };
+  if (path.length < 2) return { totalSteps: 0, errorCount: 0, steps: [] };
 
   const route = path.map((cell) => ({ ...cell }));
   const pathCellKeys = new Set(route.map(keyOf));
@@ -324,92 +382,93 @@ export const simulateLevelPlay = ({
   const steps: SimulatedPlayStep[] = [];
   let currentPosition = 0;
   let errorCount = 0;
+  const predictionDepth = reasoningLevel === 'low' ? 0 : reasoningLevel === 'high' ? 5 : 2;
 
-  do {
-    const stepNumber = steps.length + 1;
+  while (currentPosition < route.length - 1) {
+    const current = route[currentPosition];
+    const expected = route[currentPosition + 1];
+    const expectedKey = keyOf(expected);
+    const excludedAtCurrent = excludedChoices.get(keyOf(current)) ?? new Set<string>();
+    const expectedIsVisible = !hiddenCellKeys.has(expectedKey);
+    const candidates = expectedIsVisible
+      ? [expected]
+      : route.slice(currentPosition + 1).filter((candidate) => {
+          const key = keyOf(candidate);
+          return pathCellKeys.has(key)
+            && hiddenCellKeys.has(key)
+            && !excludedAtCurrent.has(key)
+            && areEditorCellsNeighbors(current, candidate, shape);
+        });
+
+    const selected = candidates.length > 1
+      ? chooseAnalyzedCandidate(
+          candidates,
+          current,
+          currentPosition,
+          route,
+          pathCellKeys,
+          hiddenCellKeys,
+          neighborsByCell,
+          shape,
+          predictionDepth,
+          random,
+        )
+      : candidates[0] ?? expected;
+    const selectedKey = keyOf(selected);
     const startNumber = currentPosition + 1;
-    const stepCells: EditorCell[] = [{ ...route[currentPosition] }];
-    let filledHiddenCount = 0;
-    let forkCount = 0;
-    let outcome: SimulatedStepOutcome = 'complete';
-
-    while (currentPosition < route.length - 1) {
-      const current = route[currentPosition];
-      const expected = route[currentPosition + 1];
-      const expectedKey = keyOf(expected);
-      const excludedAtCurrent = excludedChoices.get(keyOf(current)) ?? new Set<string>();
-      const expectedIsVisible = !hiddenCellKeys.has(expectedKey);
-      const candidates = expectedIsVisible
-        ? [expected]
-        : route.slice(currentPosition + 1).filter((candidate) => {
-            const key = keyOf(candidate);
-            return pathCellKeys.has(key)
-              && hiddenCellKeys.has(key)
-              && !excludedAtCurrent.has(key)
-              && areEditorCellsNeighbors(current, candidate, shape);
-          });
-
-      if (candidates.length > 1) forkCount += 1;
-      const selected = candidates.length > 1
-        ? chooseAnalyzedCandidate(
-            candidates,
-            current,
-            currentPosition,
-            route,
-            pathCellKeys,
-            hiddenCellKeys,
-            neighborsByCell,
-            shape,
-            random,
-          )
-        : candidates[0] ?? expected;
-      const selectedKey = keyOf(selected);
-      stepCells.push({ ...selected });
-
-      const swappable = swappableByAnchor.get(currentPosition);
-      const swapUndecided = swappable && !decidedSwaps.has(swappable.firstIndex);
-      const alternate = swapUndecided ? route[swappable.secondIndex] : undefined;
-      const selectedAuthored = selectedKey === expectedKey;
-      const selectedAlternate = alternate !== undefined && selectedKey === keyOf(alternate);
-
-      if (!selectedAuthored && !selectedAlternate) {
-        let excluded = excludedChoices.get(keyOf(current));
-        if (!excluded) {
-          excluded = new Set<string>();
-          excludedChoices.set(keyOf(current), excluded);
-        }
-        excluded.add(selectedKey);
-        errorCount += 1;
-        outcome = 'error';
-        break;
-      }
-
-      if (swapUndecided) {
-        if (selectedAlternate) {
-          [route[swappable.firstIndex], route[swappable.secondIndex]] = [
-            route[swappable.secondIndex],
-            route[swappable.firstIndex],
-          ];
-        }
-        decidedSwaps.add(swappable.firstIndex);
-      }
-
-      currentPosition += 1;
-      if (hiddenCellKeys.has(selectedKey)) filledHiddenCount += 1;
-    }
+    const swappable = swappableByAnchor.get(currentPosition);
+    const swapUndecided = swappable && !decidedSwaps.has(swappable.firstIndex);
+    const alternate = swapUndecided ? route[swappable.secondIndex] : undefined;
+    const selectedAuthored = selectedKey === expectedKey;
+    const selectedAlternate = alternate !== undefined && selectedKey === keyOf(alternate);
+    const outcome: SimulatedStepOutcome = selectedAuthored || selectedAlternate
+      ? 'connected'
+      : 'error';
 
     steps.push({
-      stepNumber,
+      stepNumber: steps.length + 1,
       outcome,
       startNumber,
-      endNumber: currentPosition + 1,
-      attemptedCells: stepCells,
-      length: stepCells.length - 1,
-      turnCount: countTurns(stepCells, shape),
-      filledHiddenCount,
-      forkCount,
+      endNumber: outcome === 'connected' ? startNumber + 1 : startNumber,
+      attemptedCells: [{ ...current }, { ...selected }],
+      turnType: classifyEditorTurn(
+        currentPosition > 0 ? route[currentPosition - 1] : undefined,
+        current,
+        selected,
+        shape,
+      ),
+      connectableCount: countConnectableCells(current, currentPosition, route, shape),
+      directConnect: expectedIsVisible,
+      distanceToNextVisibleNumber: distanceToNextVisibleNumber(
+        currentPosition,
+        route,
+        hiddenCellKeys,
+      ),
     });
-  } while (currentPosition < route.length - 1);
+
+    if (outcome === 'error') {
+      let excluded = excludedChoices.get(keyOf(current));
+      if (!excluded) {
+        excluded = new Set<string>();
+        excludedChoices.set(keyOf(current), excluded);
+      }
+      excluded.add(selectedKey);
+      errorCount += 1;
+      continue;
+    }
+
+    if (swapUndecided) {
+      if (selectedAlternate) {
+        [route[swappable.firstIndex], route[swappable.secondIndex]] = [
+          route[swappable.secondIndex],
+          route[swappable.firstIndex],
+        ];
+      }
+      decidedSwaps.add(swappable.firstIndex);
+    }
+
+    currentPosition += 1;
+  }
 
   return {
     totalSteps: steps.length,
