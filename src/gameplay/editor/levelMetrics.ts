@@ -1,6 +1,8 @@
 import { countEditorPathCrossings } from './findEditorPath';
 import type { EditorCell, EditorShape } from './types';
 
+export type EditorTurnType = 'straight' | 'right-angle' | 'obtuse' | 'acute';
+
 export interface EditorLevelMetrics {
   rightAngleTurns: number;
   acuteAngleTurns: number;
@@ -50,22 +52,43 @@ const interiorAngle = (previous: EditorCell, current: EditorCell, next: EditorCe
   return Math.acos(cosine) * 180 / Math.PI;
 };
 
+export const classifyEditorTurn = (
+  previous: EditorCell | undefined,
+  current: EditorCell,
+  next: EditorCell,
+  shape: EditorShape,
+): EditorTurnType => {
+  if (!previous) return 'straight';
+  const angle = interiorAngle(
+    projectCell(previous, shape),
+    projectCell(current, shape),
+    projectCell(next, shape),
+  );
+  if (Math.abs(angle - 180) < 0.5) return 'straight';
+  if (Math.abs(angle - 90) < 0.5) return 'right-angle';
+  return angle < 90 ? 'acute' : 'obtuse';
+};
+
 export const calculateEditorLevelMetrics = ({
   path,
   hiddenCellKeys,
   shape,
 }: EditorLevelMetricsInput): EditorLevelMetrics => {
-  const projectedPath = path.map((cell) => projectCell(cell, shape));
   let rightAngleTurns = 0;
   let acuteAngleTurns = 0;
   let obtuseAngleTurns = 0;
   let straightContinuations = 0;
 
-  for (let index = 1; index < projectedPath.length - 1; index += 1) {
-    const angle = interiorAngle(projectedPath[index - 1], projectedPath[index], projectedPath[index + 1]);
-    if (Math.abs(angle - 180) < 0.5) straightContinuations += 1;
-    else if (Math.abs(angle - 90) < 0.5) rightAngleTurns += 1;
-    else if (angle < 90) acuteAngleTurns += 1;
+  for (let index = 1; index < path.length - 1; index += 1) {
+    const turnType = classifyEditorTurn(
+      path[index - 1],
+      path[index],
+      path[index + 1],
+      shape,
+    );
+    if (turnType === 'straight') straightContinuations += 1;
+    else if (turnType === 'right-angle') rightAngleTurns += 1;
+    else if (turnType === 'acute') acuteAngleTurns += 1;
     else obtuseAngleTurns += 1;
   }
 

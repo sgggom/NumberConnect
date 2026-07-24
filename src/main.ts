@@ -235,7 +235,7 @@ const roundedRoutePath = (points: RoutePoint[], radius = 20): string => {
   return `${path} L ${last.x} ${last.y}`;
 };
 
-type ResultContext = 'normal' | 'collection' | 'daily' | 'endless-stage' | 'life-depleted' | 'editor-playtest' | 'editor-playtest-failed';
+type ResultContext = 'normal' | 'collection' | 'daily' | 'endless-stage' | 'life-depleted' | 'editor-playtest';
 type PlayContext = 'normal' | 'collection' | 'daily' | 'editor-playtest' | 'bead';
 
 interface BeadFlightCluster {
@@ -393,6 +393,7 @@ class NumberConnectApp {
   private mode: GameMode = 'normal';
   private stage = initialEndlessRunState.stage;
   private lives = 3;
+  private editorPlaytestErrorCount = 0;
   private endlessSeed = initialEndlessRunState.seed;
   private endlessSessionActive = initialEndlessRunState.active;
   private endlessLives = initialEndlessRunState.lives;
@@ -1600,7 +1601,7 @@ class NumberConnectApp {
   private async startEditorPlaytest(level: LevelData): Promise<void> {
     this.playContext = 'editor-playtest';
     this.mode = 'normal';
-    this.lives = 3;
+    this.editorPlaytestErrorCount = 0;
     this.renderLives();
     await this.showPlayScreen();
     this.setCurrentBoard(level);
@@ -2042,6 +2043,12 @@ class NumberConnectApp {
   }
 
   private renderLives(): void {
+    if (this.playContext === 'editor-playtest') {
+      this.livesLabel.hidden = false;
+      this.livesLabel.textContent = `错误 × ${this.editorPlaytestErrorCount}`;
+      this.livesLabel.setAttribute('aria-label', `错误次数 ${this.editorPlaytestErrorCount}`);
+      return;
+    }
     if (this.mode === 'endless' && this.endlessSessionActive) {
       this.endlessLives = this.lives;
       this.recordEndlessProgress();
@@ -2080,6 +2087,11 @@ class NumberConnectApp {
   }
 
   private handleWrong(): void {
+    if (this.playContext === 'editor-playtest') {
+      this.editorPlaytestErrorCount += 1;
+      this.renderLives();
+      return;
+    }
     if (this.lives <= 0) return;
     this.lives -= 1;
     this.renderLives();
@@ -2090,20 +2102,6 @@ class NumberConnectApp {
     this.cancelPowerUpTargeting();
     this.renderPowerUps();
     this.boardScene.setPaused(true);
-    if (this.playContext === 'editor-playtest') {
-      this.resultContext = 'editor-playtest-failed';
-      this.resultTitle.textContent = '试玩结束';
-      this.resultMessage.textContent = `当前数字进度 ${this.currentProgress} / ${this.currentTotal}`;
-      this.resultReward.hidden = true;
-      this.restartButton.textContent = '重新试玩';
-      this.nextButton.hidden = true;
-      this.resultLobbyButton.textContent = '返回编辑器';
-      this.resultActions.classList.add('is-single');
-      this.setResultActionsDisabled(false);
-      this.resultOverlay.hidden = false;
-      return;
-    }
-
     this.resultContext = 'life-depleted';
     this.resultTitle.textContent = '生命已耗尽';
     const progress = `当前数字进度 ${this.currentProgress} / ${this.currentTotal}`;
@@ -2129,7 +2127,7 @@ class NumberConnectApp {
   private showEditorPlaytestResult(): void {
     this.resultContext = 'editor-playtest';
     this.resultTitle.textContent = '试玩完成';
-    this.resultMessage.textContent = '当前编辑器关卡可以完整通关。';
+    this.resultMessage.textContent = `当前编辑器关卡可以完整通关，本次错误 ${this.editorPlaytestErrorCount} 次。`;
     this.resultReward.hidden = true;
     this.restartButton.textContent = '再试一次';
     this.nextButton.hidden = true;
@@ -2211,10 +2209,10 @@ class NumberConnectApp {
     if (this.resultActionBusy) return;
     if (this.resultContext === 'endless-stage') {
       void this.advanceEndlessStage(false);
-    } else if (this.resultContext === 'life-depleted' || this.resultContext === 'editor-playtest-failed') {
+    } else if (this.resultContext === 'life-depleted') {
       this.restartAfterFailure();
     } else if (this.resultContext === 'editor-playtest') {
-      this.lives = 3;
+      this.editorPlaytestErrorCount = 0;
       this.renderLives();
       this.restartCurrent();
     } else {
@@ -2398,6 +2396,7 @@ class NumberConnectApp {
 
   private restartCurrent(): void {
     this.resultOverlay.hidden = true;
+    this.boardScene.setPaused(false);
     if (this.mode === 'endless') {
       const profile = getEndlessStageSettings(this.stage);
       this.setCurrentBoard(this.createEndlessLevel(this.stage, profile), profile);

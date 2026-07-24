@@ -1,9 +1,8 @@
-const LEVEL_EDITOR_VIEW_VERSION = '8';
+const LEVEL_EDITOR_VIEW_VERSION = '15';
 
 export const mountLevelEditorView = (host: HTMLElement): void => {
   const hasCurrentView = host.dataset.editorViewVersion === LEVEL_EDITOR_VIEW_VERSION
-    && host.querySelector('#editor-simulate-button') !== null
-    && host.querySelector('#editor-simulation-next-button') !== null;
+    && host.querySelector('#editor-simulate-button') !== null;
   if (host.childElementCount > 0 && hasCurrentView) return;
 
   // Vite can hot-reload the controller while keeping the editor's old DOM.
@@ -57,14 +56,24 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
               <h3 id="editor-simulation-title">模拟关卡</h3>
             </div>
             <div class="editor-simulation-controls">
+              <label class="editor-simulation-count">模拟次数
+                <input id="editor-simulation-count" type="number" min="1" max="100" step="1" value="1" inputmode="numeric" />
+              </label>
+              <label class="editor-simulation-reasoning">推理能力
+                <select id="editor-simulation-reasoning">
+                  <option value="low">低</option>
+                  <option value="medium" selected>中</option>
+                  <option value="high">高</option>
+                </select>
+              </label>
               <button id="editor-simulate-button" class="button button--secondary button--small" type="button" disabled>开始模拟</button>
-              <button id="editor-simulation-next-button" class="button button--secondary button--small" type="button" title="手动前进一格" disabled>下一步</button>
+              <button id="editor-simulation-export-button" class="button button--secondary button--small" type="button" title="将当前关卡基础数据以 Tab 分隔格式复制到剪贴板" disabled>导出基础数据</button>
             </div>
           </div>
-          <p class="editor-simulation-rule">自动模拟每 0.5 秒前进一格，也可点击“下一步”逐格检查；分叉时预判到下一个显示数字，排除沿途或连接后出现死路、数字间距不符、剩余格子断开的选项，再优先靠近数值相近的显示数字，并列才随机。</p>
+          <p class="editor-simulation-rule">每次从当前格连接到一个相邻格记为一步。模拟后以共享步数横轴展示拐弯类型、可连接数量、直接连接和距离下个显示数字四组曲线；红点表示连接错误。</p>
           <div id="editor-simulation-summary" class="editor-simulation-summary" hidden>
-            <div><span>总步数</span><strong id="editor-simulation-total-steps">0</strong></div>
-            <div><span>错误次数</span><strong id="editor-simulation-error-count">0</strong></div>
+            <div><span id="editor-simulation-total-steps-label">总步数</span><strong id="editor-simulation-total-steps">0</strong></div>
+            <div><span id="editor-simulation-error-count-label">错误次数</span><strong id="editor-simulation-error-count">0</strong></div>
           </div>
           <div id="editor-simulation-results" class="editor-simulation-results" aria-live="polite">
             <p class="editor-simulation-empty">生成完整路径后，即可模拟一次玩家体验。</p>
