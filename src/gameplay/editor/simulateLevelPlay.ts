@@ -1,4 +1,4 @@
-import { findSwappableHiddenPairs } from '../../game/hiddenSwap';
+import { PathCompletionSolver } from '../../game/pathCompletionSolver';
 import { BoardShape } from '../../game/types';
 import { areEditorCellsNeighbors } from './findEditorPath';
 import { classifyEditorTurn, type EditorTurnType } from './levelMetrics';
@@ -19,6 +19,13 @@ export interface SimulatedPlayStep {
   directConnect: boolean;
   directConnectRate?: number;
   distanceToNextVisibleNumber: number;
+  reasoningDepth: number;
+  availableBranchCount: number;
+  lengthValidBranchCount: number;
+  rejectedIsolationBranchCount: number;
+  choiceCount: number;
+  reasoningBranchCount: number;
+  legalReasoningBranchCount: number;
   errorRate?: number;
 }
 
@@ -67,6 +74,17 @@ export const averageSimulatedPlayResults = (
       distanceToNextVisibleNumber: average(
         samples.map((step) => step.distanceToNextVisibleNumber),
       ),
+      reasoningDepth: average(samples.map((step) => step.reasoningDepth)),
+      availableBranchCount: average(samples.map((step) => step.availableBranchCount)),
+      lengthValidBranchCount: average(samples.map((step) => step.lengthValidBranchCount)),
+      rejectedIsolationBranchCount: average(
+        samples.map((step) => step.rejectedIsolationBranchCount),
+      ),
+      choiceCount: average(samples.map((step) => step.choiceCount)),
+      reasoningBranchCount: average(samples.map((step) => step.reasoningBranchCount)),
+      legalReasoningBranchCount: average(
+        samples.map((step) => step.legalReasoningBranchCount),
+      ),
       errorRate,
     };
   });
@@ -83,6 +101,7 @@ interface SimulateLevelPlayInput {
   shape: EditorShape;
   reasoningLevel?: SimulationReasoningLevel;
   random?: () => number;
+  completionSolver?: PathCompletionSolver;
 }
 
 type CellNeighborMap = ReadonlyMap<string, ReadonlyArray<string>>;
@@ -173,7 +192,23 @@ const minimumStepsBetween = (
   );
 };
 
-const canReachNextVisibleNumber = (
+interface CandidateReasoningAnalysis {
+  candidate: EditorCell;
+  canReach: boolean;
+  exploredDepth: number;
+  lengthValid: boolean;
+  rejectedByIsolation: boolean;
+}
+
+interface CandidateSelectionAnalysis {
+  selected: EditorCell;
+  reasoningDepth: number;
+  availableBranchCount: number;
+  lengthValidBranchCount: number;
+  rejectedIsolationBranchCount: number;
+}
+
+const analyzeCandidateReasoning = (
   candidate: EditorCell,
   currentPosition: number,
   route: ReadonlyArray<EditorCell>,
@@ -182,27 +217,59 @@ const canReachNextVisibleNumber = (
   neighborsByCell: CellNeighborMap,
   shape: EditorShape,
   predictionDepth: number,
-): boolean => {
+): CandidateReasoningAnalysis => {
   let anchorIndex = currentPosition + 1;
   while (anchorIndex < route.length && hiddenCellKeys.has(keyOf(route[anchorIndex]))) anchorIndex += 1;
   if (anchorIndex >= route.length) anchorIndex = route.length - 1;
   const anchor = route[anchorIndex];
+  const distanceToAnchor = Math.max(1, anchorIndex - currentPosition);
+  const depthLimit = Math.min(predictionDepth, distanceToAnchor);
   // The selected candidate is a+1. Every remaining intermediate cell must be
   // placed before the next visible-number anchor can be connected.
   const requiredIntermediateCount = anchorIndex - currentPosition - 2;
-  if (requiredIntermediateCount < 0) return keyOf(candidate) === keyOf(anchor);
 
   const connectedKeys = new Set(route.slice(0, currentPosition + 1).map(keyOf));
   const anchorKey = keyOf(anchor);
-  if (keyOf(candidate) === anchorKey) return false;
+  const candidateKey = keyOf(candidate);
+  const lengthValid = requiredIntermediateCount >= 0
+    && candidateKey !== anchorKey
+    && minimumStepsBetween(candidate, anchor, shape) <= requiredIntermediateCount + 1;
   const intermediateCells = route.filter((cell) => {
     const key = keyOf(cell);
     return key !== anchorKey && hiddenCellKeys.has(key) && !connectedKeys.has(key);
   });
-  const visited = new Set([keyOf(candidate)]);
+  const visited = new Set([candidateKey]);
+  const rejectedByIsolation = !leavesRemainingCellsConnected(
+    candidate,
+    routeCellKeys,
+    connectedKeys,
+    visited,
+    neighborsByCell,
+  );
+  if (predictionDepth === 0) {
+    return {
+      candidate,
+      canReach: true,
+      exploredDepth: 0,
+      lengthValid,
+      rejectedByIsolation,
+    };
+  }
+  if (requiredIntermediateCount < 0 || candidateKey === anchorKey) {
+    return {
+      candidate,
+      canReach: candidateKey === anchorKey,
+      exploredDepth: Math.min(1, depthLimit),
+      lengthValid,
+      rejectedByIsolation,
+    };
+  }
+
   const failedStates = new Set<string>();
+  let exploredDepth = 0;
 
   const search = (current: EditorCell, predictedSteps: number): boolean => {
+    exploredDepth = Math.max(exploredDepth, Math.min(depthLimit, predictedSteps + 1));
     const stateKey = `${keyOf(current)}:${predictedSteps}:${[...visited].sort().join('|')}`;
     if (failedStates.has(stateKey)) return false;
     if (!leavesRemainingCellsConnected(
@@ -223,6 +290,9 @@ const canReachNextVisibleNumber = (
       return false;
     }
     if (remainingIntermediateCount === 0) {
+      const depthIncludingAnchor = predictedSteps + 2;
+      if (depthIncludingAnchor > depthLimit) return true;
+      exploredDepth = Math.max(exploredDepth, depthIncludingAnchor);
       if (!areEditorCellsNeighbors(current, anchor, shape)) {
         failedStates.add(stateKey);
         return false;
@@ -241,7 +311,7 @@ const canReachNextVisibleNumber = (
     }
     // The candidate itself is the first predicted connection. Stop once the
     // selected reasoning tier's lookahead has been reached.
-    if (predictedSteps + 1 >= predictionDepth) return true;
+    if (predictedSteps + 1 >= depthLimit) return true;
 
     const availableCount = intermediateCells.reduce(
       (count, cell) => count + (visited.has(keyOf(cell)) ? 0 : 1),
@@ -263,7 +333,13 @@ const canReachNextVisibleNumber = (
     return false;
   };
 
-  return search(candidate, 0);
+  return {
+    candidate,
+    canReach: search(candidate, 0),
+    exploredDepth,
+    lengthValid,
+    rejectedByIsolation,
+  };
 };
 
 const nearbyVisibleNumberDistance = (
@@ -297,10 +373,8 @@ const chooseAnalyzedCandidate = (
   shape: EditorShape,
   predictionDepth: number,
   random: () => number,
-): EditorCell => {
-  const safeCandidates = predictionDepth === 0
-    ? candidates
-    : candidates.filter((candidate) => canReachNextVisibleNumber(
+): CandidateSelectionAnalysis => {
+  const analyses = candidates.map((candidate) => analyzeCandidateReasoning(
         candidate,
         currentPosition,
         route,
@@ -310,6 +384,9 @@ const chooseAnalyzedCandidate = (
         shape,
         predictionDepth,
       ));
+  const safeCandidates = predictionDepth === 0
+    ? candidates
+    : analyses.filter(({ canReach }) => canReach).map(({ candidate }) => candidate);
   const available = safeCandidates.length > 0 ? safeCandidates : candidates;
   const scored = available.map((candidate) => ({
     candidate,
@@ -323,10 +400,20 @@ const chooseAnalyzedCandidate = (
     ),
   }));
   const bestDistance = Math.min(...scored.map(({ distance }) => distance));
-  return chooseCandidate(
+  return {
+    selected: chooseCandidate(
     scored.filter(({ distance }) => distance === bestDistance).map(({ candidate }) => candidate),
     random,
-  );
+    ),
+    reasoningDepth: predictionDepth === 0
+      ? 0
+      : Math.max(0, ...analyses.map(({ exploredDepth }) => exploredDepth)),
+    availableBranchCount: candidates.length,
+    lengthValidBranchCount: analyses.filter(({ lengthValid }) => lengthValid).length,
+    rejectedIsolationBranchCount: analyses.filter(
+      ({ lengthValid, rejectedByIsolation }) => lengthValid && rejectedByIsolation,
+    ).length,
+  };
 };
 
 const countConnectableCells = (
@@ -354,6 +441,118 @@ const distanceToNextVisibleNumber = (
   return Math.max(1, nextVisiblePosition - currentPosition);
 };
 
+interface NewReasoningMetrics {
+  choiceCount: number;
+  reasoningBranchCount: number;
+  legalReasoningBranchCount: number;
+}
+
+const calculateNewReasoningMetrics = (
+  currentPosition: number,
+  route: ReadonlyArray<EditorCell>,
+  routeCellKeys: ReadonlySet<string>,
+  hiddenCellKeys: ReadonlySet<string>,
+  neighborsByCell: CellNeighborMap,
+  shape: EditorShape,
+  predictionDepth: number,
+): NewReasoningMetrics => {
+  const current = route[currentPosition];
+  const connectedKeys = new Set(route.slice(0, currentPosition + 1).map(keyOf));
+  const hiddenAvailableCells = route.filter((cell) => {
+    const key = keyOf(cell);
+    return hiddenCellKeys.has(key) && !connectedKeys.has(key);
+  });
+  const choiceCount = hiddenAvailableCells.reduce(
+    (count, cell) => count + Number(areEditorCellsNeighbors(current, cell, shape)),
+    0,
+  );
+
+  let nextVisiblePosition = currentPosition + 1;
+  while (
+    nextVisiblePosition < route.length
+    && hiddenCellKeys.has(keyOf(route[nextVisiblePosition]))
+  ) {
+    nextVisiblePosition += 1;
+  }
+  if (nextVisiblePosition >= route.length) nextVisiblePosition = route.length - 1;
+  const intermediateCount = Math.max(0, nextVisiblePosition - currentPosition - 1);
+  if (intermediateCount === 0) {
+    return {
+      choiceCount,
+      reasoningBranchCount: 0,
+      legalReasoningBranchCount: 0,
+    };
+  }
+
+  const target = route[nextVisiblePosition];
+  const targetKey = keyOf(target);
+  const visitedKeys = new Set<string>([keyOf(current)]);
+  const predictedKeys = new Set<string>();
+  let reasoningBranchCount = 0;
+  let legalReasoningBranchCount = 0;
+
+  const createsDeadlockAt = (cell: EditorCell, moveDepth: number): boolean => (
+    predictionDepth > 0
+    && moveDepth <= predictionDepth
+    && !leavesRemainingCellsConnected(
+      cell,
+      routeCellKeys,
+      connectedKeys,
+      predictedKeys,
+      neighborsByCell,
+    )
+  );
+
+  const search = (
+    position: EditorCell,
+    usedIntermediateCount: number,
+    deadlockDetected: boolean,
+  ): void => {
+    const remainingIntermediateCount = intermediateCount - usedIntermediateCount;
+    const remainingMovesToTarget = remainingIntermediateCount + 1;
+    if (minimumStepsBetween(position, target, shape) > remainingMovesToTarget) return;
+
+    if (remainingIntermediateCount === 0) {
+      if (!areEditorCellsNeighbors(position, target, shape)) return;
+      predictedKeys.add(targetKey);
+      const targetMoveDepth = usedIntermediateCount + 1;
+      const branchDeadlocks = deadlockDetected || createsDeadlockAt(target, targetMoveDepth);
+      predictedKeys.delete(targetKey);
+      reasoningBranchCount += 1;
+      if (predictionDepth === 0 || !branchDeadlocks) legalReasoningBranchCount += 1;
+      return;
+    }
+
+    for (const next of hiddenAvailableCells) {
+      const nextKey = keyOf(next);
+      if (
+        nextKey === targetKey
+        || visitedKeys.has(nextKey)
+        || !areEditorCellsNeighbors(position, next, shape)
+      ) {
+        continue;
+      }
+      const nextUsedCount = usedIntermediateCount + 1;
+      const movesAfterNext = intermediateCount - nextUsedCount + 1;
+      if (minimumStepsBetween(next, target, shape) > movesAfterNext) continue;
+
+      visitedKeys.add(nextKey);
+      predictedKeys.add(nextKey);
+      const branchDeadlocks = deadlockDetected || createsDeadlockAt(next, nextUsedCount);
+      search(next, nextUsedCount, branchDeadlocks);
+      predictedKeys.delete(nextKey);
+      visitedKeys.delete(nextKey);
+    }
+  };
+
+  search(current, 0, false);
+  return {
+    choiceCount,
+    reasoningBranchCount,
+    legalReasoningBranchCount,
+  };
+};
+
 /**
  * Simulates a forward player who follows visible numbers and only guesses when
  * two or more still-possible hidden cells are adjacent. Every attempted
@@ -366,20 +565,30 @@ export const simulateLevelPlay = ({
   shape,
   reasoningLevel = 'medium',
   random = Math.random,
+  completionSolver: providedCompletionSolver,
 }: SimulateLevelPlayInput): SimulatedPlayResult => {
   if (path.length < 2) return { totalSteps: 0, errorCount: 0, steps: [] };
 
   const route = path.map((cell) => ({ ...cell }));
   const pathCellKeys = new Set(route.map(keyOf));
+  const nodeIndexByKey = new Map(route.map((cell, index) => [keyOf(cell), index]));
   const neighborsByCell = buildCellNeighborMap(route, shape);
-  const swappablePairs = findSwappableHiddenPairs(route, hiddenCellKeys, boardShapeFor(shape));
-  const swappableByAnchor = new Map(swappablePairs.map(([firstIndex, secondIndex]) => [
-    firstIndex - 1,
-    { firstIndex, secondIndex },
-  ]));
-  const decidedSwaps = new Set<number>();
+  const completionSolver = providedCompletionSolver
+    ?? new PathCompletionSolver(route, boardShapeFor(shape));
+  const fixedPositions = new Map<number, number>();
+  route.forEach((cell, index) => {
+    if (
+      index === 0
+      || index === route.length - 1
+      || !hiddenCellKeys.has(keyOf(cell))
+    ) {
+      fixedPositions.set(index, index);
+    }
+  });
+  const requiredEdges: Array<readonly [number, number]> = [];
   const excludedChoices = new Map<string, Set<string>>();
   const steps: SimulatedPlayStep[] = [];
+  const newReasoningMetricsCache = new Map<string, NewReasoningMetrics>();
   let currentPosition = 0;
   let errorCount = 0;
   const predictionDepth = reasoningLevel === 'low' ? 0 : reasoningLevel === 'high' ? 5 : 2;
@@ -400,7 +609,7 @@ export const simulateLevelPlay = ({
             && areEditorCellsNeighbors(current, candidate, shape);
         });
 
-    const selected = candidates.length > 1
+    const branchAnalysis = !expectedIsVisible && candidates.length > 1
       ? chooseAnalyzedCandidate(
           candidates,
           current,
@@ -413,18 +622,72 @@ export const simulateLevelPlay = ({
           predictionDepth,
           random,
         )
-      : candidates[0] ?? expected;
+      : !expectedIsVisible && candidates.length === 1
+        ? (() => {
+            const analysis = analyzeCandidateReasoning(
+              candidates[0],
+              currentPosition,
+              route,
+              pathCellKeys,
+              hiddenCellKeys,
+              neighborsByCell,
+              shape,
+              0,
+            );
+            return {
+              selected: candidates[0],
+              reasoningDepth: 0,
+              availableBranchCount: 1,
+              lengthValidBranchCount: Number(analysis.lengthValid),
+              rejectedIsolationBranchCount: Number(
+                analysis.lengthValid && analysis.rejectedByIsolation,
+              ),
+            };
+          })()
+        : {
+            selected: candidates[0] ?? expected,
+            reasoningDepth: 0,
+            availableBranchCount: 0,
+            lengthValidBranchCount: 0,
+            rejectedIsolationBranchCount: 0,
+          };
+    const selected = branchAnalysis.selected;
     const selectedKey = keyOf(selected);
     const startNumber = currentPosition + 1;
-    const swappable = swappableByAnchor.get(currentPosition);
-    const swapUndecided = swappable && !decidedSwaps.has(swappable.firstIndex);
-    const alternate = swapUndecided ? route[swappable.secondIndex] : undefined;
-    const selectedAuthored = selectedKey === expectedKey;
-    const selectedAlternate = alternate !== undefined && selectedKey === keyOf(alternate);
-    const outcome: SimulatedStepOutcome = selectedAuthored || selectedAlternate
-      ? 'connected'
-      : 'error';
-
+    const currentNodeIndex = nodeIndexByKey.get(keyOf(current));
+    const selectedNodeIndex = nodeIndexByKey.get(selectedKey);
+    const followsCurrentCompletion = selectedKey === expectedKey;
+    const completion = currentNodeIndex === undefined || selectedNodeIndex === undefined
+      ? null
+      : followsCurrentCompletion
+        ? route.map((cell) => nodeIndexByKey.get(keyOf(cell)) as number)
+        : completionSolver.findCompletion({
+            fixedPositions,
+            requiredEdges: [
+              ...requiredEdges,
+              [currentNodeIndex, selectedNodeIndex],
+            ],
+            directedStep: {
+              from: currentNodeIndex,
+              to: selectedNodeIndex,
+              direction: 1,
+            },
+          });
+    const outcome: SimulatedStepOutcome = completion ? 'connected' : 'error';
+    const newReasoningMetricsKey = `${currentPosition}:${route.map(keyOf).join('|')}`;
+    let newReasoningMetrics = newReasoningMetricsCache.get(newReasoningMetricsKey);
+    if (!newReasoningMetrics) {
+      newReasoningMetrics = calculateNewReasoningMetrics(
+        currentPosition,
+        route,
+        pathCellKeys,
+        hiddenCellKeys,
+        neighborsByCell,
+        shape,
+        predictionDepth,
+      );
+      newReasoningMetricsCache.set(newReasoningMetricsKey, newReasoningMetrics);
+    }
     steps.push({
       stepNumber: steps.length + 1,
       outcome,
@@ -444,6 +707,13 @@ export const simulateLevelPlay = ({
         route,
         hiddenCellKeys,
       ),
+      reasoningDepth: branchAnalysis.reasoningDepth,
+      availableBranchCount: branchAnalysis.availableBranchCount,
+      lengthValidBranchCount: branchAnalysis.lengthValidBranchCount,
+      rejectedIsolationBranchCount: branchAnalysis.rejectedIsolationBranchCount,
+      choiceCount: newReasoningMetrics.choiceCount,
+      reasoningBranchCount: newReasoningMetrics.reasoningBranchCount,
+      legalReasoningBranchCount: newReasoningMetrics.legalReasoningBranchCount,
     });
 
     if (outcome === 'error') {
@@ -457,14 +727,12 @@ export const simulateLevelPlay = ({
       continue;
     }
 
-    if (swapUndecided) {
-      if (selectedAlternate) {
-        [route[swappable.firstIndex], route[swappable.secondIndex]] = [
-          route[swappable.secondIndex],
-          route[swappable.firstIndex],
-        ];
+    if (completion && currentNodeIndex !== undefined && selectedNodeIndex !== undefined) {
+      requiredEdges.push([currentNodeIndex, selectedNodeIndex]);
+      route.splice(0, route.length, ...completion.map((nodeIndex) => path[nodeIndex]));
+      for (let position = 0; position <= currentPosition + 1; position += 1) {
+        fixedPositions.set(completion[position], position);
       }
-      decidedSwaps.add(swappable.firstIndex);
     }
 
     currentPosition += 1;

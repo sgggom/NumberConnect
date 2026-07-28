@@ -24,7 +24,7 @@ export interface Algorithm1Selection {
 
 export interface Algorithm2Parameters {
   topology: 'board-shape';
-  pathMode: 'single-stroke-no-luck';
+  pathMode: 'single-stroke-multiple-solutions';
   targetCrossings: number;
   turnProbability: number;
   hiddenPercent: number;
@@ -39,7 +39,7 @@ export interface Algorithm2Selection {
 
 export interface Algorithm3Parameters {
   topology: 'board-shape';
-  pathMode: 'single-stroke-no-luck-feature-hidden';
+  pathMode: 'single-stroke-multiple-solutions-feature-hidden';
   targetCrossings: number;
   turnProbability: number;
   straightHiddenProbability: number;
@@ -54,7 +54,26 @@ export interface Algorithm3Selection {
   parameters: Algorithm3Parameters;
 }
 
-export type EditorAlgorithmSelection = Algorithm1Selection | Algorithm2Selection | Algorithm3Selection;
+export interface Algorithm4Parameters {
+  topology: 'board-shape';
+  pathMode: 'single-stroke-multiple-solutions';
+  targetCrossings: number;
+  turnProbability: number;
+  hiddenPercent: number;
+  maxHiddenRun: number;
+  maxVisibleRun: number;
+}
+
+export interface Algorithm4Selection {
+  id: 'algorithm-4';
+  parameters: Algorithm4Parameters;
+}
+
+export type EditorAlgorithmSelection =
+  | Algorithm1Selection
+  | Algorithm2Selection
+  | Algorithm3Selection
+  | Algorithm4Selection;
 export type EditorAlgorithmId = EditorAlgorithmSelection['id'];
 
 export interface EditorAlgorithmDescriptor {

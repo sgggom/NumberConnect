@@ -85,7 +85,32 @@ export const renderEditorAlgorithmParameters = (
         numberField('最长连续显示', selection.parameters.maxVisibleRun, 1, 12, (value) => update({ maxVisibleRun: value })),
       );
       const note = document.createElement('small');
-      note.textContent = '多数步骤按拐弯概率随机选择方向；接近死局时会启用安全引导并自动回退。';
+      note.textContent = '多数步骤按拐弯概率随机选择方向；接近死局时会启用安全引导并自动回退。隐藏结果不强制唯一解。';
+      host.append(note);
+      break;
+    }
+    case 'algorithm-4': {
+      const description = document.createElement('p');
+      description.textContent = EDITOR_ALGORITHMS.find((item) => item.id === selection.id)?.description ?? '';
+      const update = (parameters: Partial<typeof selection.parameters>): void => onChange({
+        ...selection,
+        parameters: { ...selection.parameters, ...parameters },
+      });
+      const targetCrossings = shape === 'hex' ? 0 : selection.parameters.targetCrossings;
+      const crossings = numberField('最大交叉数量', targetCrossings, 0, 99, (value) => update({ targetCrossings: value }));
+      const crossingsInput = crossings.querySelector('input')!;
+      crossingsInput.disabled = shape === 'hex';
+      crossingsInput.title = shape === 'hex' ? '六边形蜂窝棋盘不会产生交叉' : '允许出现的最大交叉数量';
+      host.append(
+        description,
+        crossings,
+        numberField('拐弯概率 %', selection.parameters.turnProbability, 0, 100, (value) => update({ turnProbability: value })),
+        numberField('隐藏比例 %', selection.parameters.hiddenPercent, 0, 90, (value) => update({ hiddenPercent: value })),
+        numberField('最长连续隐藏', selection.parameters.maxHiddenRun, 1, 8, (value) => update({ maxHiddenRun: value })),
+        numberField('最长连续显示', selection.parameters.maxVisibleRun, 1, 12, (value) => update({ maxVisibleRun: value })),
+      );
+      const note = document.createElement('small');
+      note.textContent = '隐藏格先以互不相邻的种子分散生成，再向周围邻格扩张；每次优先补充周围隐藏数最少的显示数字，并遵守连续隐藏和显示限制。';
       host.append(note);
       break;
     }
@@ -132,8 +157,8 @@ export const renderEditorAlgorithmParameters = (
       );
       const note = document.createElement('small');
       note.textContent = crossingsDisabled
-        ? '六边形棋盘无交叉；其余概率先决定隐藏候选，再受隐藏占比、成片尺寸和唯一解限制。'
-        : '交叉概率作用于交叉线段两端数字；各概率先决定候选，再受隐藏占比、成片尺寸和唯一解限制。';
+        ? '六边形棋盘无交叉；其余概率先决定隐藏候选，再受隐藏占比和成片尺寸限制，不强制唯一解。'
+        : '交叉概率作用于交叉线段两端数字；各概率先决定候选，再受隐藏占比和成片尺寸限制，不强制唯一解。';
       host.append(note);
       break;
     }

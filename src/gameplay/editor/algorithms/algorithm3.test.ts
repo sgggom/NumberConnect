@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { findPureLuckAlternative } from '../../../game/pureLuck';
 import { BoardShape, cellKey } from '../../../game/types';
-import { largestHiddenClusterSize, selectUnambiguousHiddenCells } from '../../../game/unambiguousHidden';
+import { largestHiddenClusterSize } from '../../../game/unambiguousHidden';
 import { LevelEditorModel } from '../LevelEditorModel';
 import { normalizeEditorAlgorithm, resolveEditorAlgorithmForShape } from './registry';
 import {
@@ -9,6 +9,7 @@ import {
   classifyAlgorithm3HiddenFeatures,
   createAlgorithm3Selection,
   runAlgorithm3,
+  selectAlgorithm3HiddenCells,
 } from './algorithm3';
 
 describe('editor algorithm 3', () => {
@@ -41,32 +42,30 @@ describe('editor algorithm 3', () => {
 
   it('uses feature probabilities as candidate gates before the global hidden limit', () => {
     const path = Array.from({ length: 8 }, (_, x) => ({ x, y: 0 }));
-    const result = selectUnambiguousHiddenCells(path, BoardShape.Square, {
+    const result = selectAlgorithm3HiddenCells(path, 'rectangle', {
+      straightHiddenProbability: 100,
+      turnHiddenProbability: 0,
+      crossingHiddenProbability: 0,
       hiddenPercent: 90,
-      maxHiddenRun: 1,
-      maxVisibleRun: path.length,
-      seed: 17,
-      attempts: 1,
-      candidateProbabilities: [0, 100, 0, 100, 0, 100, 0, 0],
-    });
+      maxHiddenClusterSize: 1,
+    }, 17);
 
-    expect(result.hiddenCells).toEqual(new Set(['1,0', '3,0', '5,0']));
+    expect(result.hiddenCells.size).toBeGreaterThan(0);
+    expect(result.hiddenCells.size).toBeLessThanOrEqual(result.targetCount);
+    expect(largestHiddenClusterSize(path, result.hiddenCells, BoardShape.Rectangle)).toBe(1);
   });
 
-  it('keeps the configured maximum spatial hidden-cluster size and a unique path', () => {
+  it('keeps the configured maximum spatial hidden-cluster size', () => {
     const path = Array.from({ length: 8 }, (_, x) => ({ x, y: 0 }));
-    const result = selectUnambiguousHiddenCells(path, BoardShape.Square, {
+    const result = selectAlgorithm3HiddenCells(path, 'rectangle', {
+      straightHiddenProbability: 100,
+      turnHiddenProbability: 100,
+      crossingHiddenProbability: 100,
       hiddenPercent: 90,
-      maxHiddenRun: 2,
-      maxVisibleRun: path.length,
-      seed: 29,
-      attempts: 1,
-      candidateProbabilities: path.map((_, index) => index === 0 || index === path.length - 1 ? 0 : 100),
       maxHiddenClusterSize: 2,
-    });
+    }, 29);
 
-    expect(largestHiddenClusterSize(path, result.hiddenCells, BoardShape.Square)).toBeLessThanOrEqual(2);
-    expect(findPureLuckAlternative(path, result.hiddenCells, BoardShape.Square)).toBeNull();
+    expect(largestHiddenClusterSize(path, result.hiddenCells, BoardShape.Rectangle)).toBeLessThanOrEqual(2);
   });
 
   it('groups spatial neighbors even when their numbers are not consecutive', () => {
@@ -80,15 +79,13 @@ describe('editor algorithm 3', () => {
     const nonConsecutiveNeighbors = new Set(['1,0', '1,1']);
     expect(largestHiddenClusterSize(path, nonConsecutiveNeighbors, BoardShape.Square)).toBe(2);
 
-    const result = selectUnambiguousHiddenCells(path, BoardShape.Square, {
+    const result = selectAlgorithm3HiddenCells(path, 'square', {
+      straightHiddenProbability: 100,
+      turnHiddenProbability: 100,
+      crossingHiddenProbability: 100,
       hiddenPercent: 100,
-      maxHiddenRun: 8,
-      maxVisibleRun: path.length,
-      seed: 41,
-      attempts: 1,
-      candidateProbabilities: [0, 100, 0, 100, 0],
       maxHiddenClusterSize: 1,
-    });
+    }, 41);
     expect(largestHiddenClusterSize(path, result.hiddenCells, BoardShape.Square)).toBeLessThanOrEqual(1);
   });
 
@@ -109,6 +106,7 @@ describe('editor algorithm 3', () => {
     expect(normalized).toMatchObject({
       id: 'algorithm-3',
       parameters: {
+        pathMode: 'single-stroke-multiple-solutions-feature-hidden',
         targetCrossings: 99,
         turnProbability: 0,
         straightHiddenProbability: 35,
@@ -126,7 +124,7 @@ describe('editor algorithm 3', () => {
     });
   });
 
-  it('runs on algorithm 2 path generation and emits a fixed no-luck hidden layout', () => {
+  it('runs on algorithm 2 path generation and emits a fixed feature-based hidden layout', () => {
     const selection = createAlgorithm3Selection();
     selection.parameters = {
       ...selection.parameters,
@@ -151,7 +149,36 @@ describe('editor algorithm 3', () => {
     const hidden = new Set(result?.hiddenCells?.map(cellKey));
     expect(hidden.size).toBeGreaterThan(0);
     expect(largestHiddenClusterSize(result?.path ?? [], hidden, BoardShape.Rectangle)).toBeLessThanOrEqual(2);
-    expect(findPureLuckAlternative(result?.path ?? [], hidden, BoardShape.Rectangle)).toBeNull();
+  });
+
+  it('keeps ambiguous hidden layouts instead of repairing them into a unique solution', () => {
+    const selection = createAlgorithm3Selection();
+    selection.parameters = {
+      ...selection.parameters,
+      targetCrossings: 0,
+      straightHiddenProbability: 100,
+      turnHiddenProbability: 100,
+      crossingHiddenProbability: 100,
+      hiddenPercent: 100,
+      maxHiddenClusterSize: 8,
+    };
+    const result = runAlgorithm3({
+      rows: 2,
+      columns: 2,
+      activeCells: new Set(['0,0', '1,0', '0,1', '1,1']),
+      shape: 'square',
+      generationIndex: 17,
+      searchMode: 'quality',
+    }, selection);
+    const hidden = new Set(result?.hiddenCells?.map(cellKey));
+
+    expect(result?.path).toHaveLength(4);
+    expect(hidden.size).toBe(2);
+    expect(findPureLuckAlternative(
+      result?.path ?? [],
+      hidden,
+      BoardShape.Square,
+    )).not.toBeNull();
   });
 
   it('saves algorithm 3 and its hidden-selection parameters through the editor model', () => {
@@ -187,6 +214,5 @@ describe('editor algorithm 3', () => {
     });
     const hidden = new Set(level?.hiddenCells?.map(cellKey));
     expect(largestHiddenClusterSize(level?.solutionPath ?? [], hidden, BoardShape.Square)).toBeLessThanOrEqual(2);
-    expect(findPureLuckAlternative(level?.solutionPath ?? [], hidden, BoardShape.Square)).toBeNull();
   });
 });

@@ -142,6 +142,9 @@
         <footer id="power-up-bar" class="power-up-bar" aria-label="关卡道具">
           <p id="power-up-status" class="power-up-status" role="status" aria-live="polite">道具可重复使用</p>
           <div class="power-up-actions">
+            <button id="undo-step-button" class="power-up-button power-up-button--undo" type="button" aria-describedby="power-up-status" disabled>
+              <span class="power-up-icon" aria-hidden="true"><img src="./ui/powerups/undo.svg" alt="" draggable="false" /></span>
+            </button>
             <button id="watercolor-brush-button" class="power-up-button power-up-button--brush" type="button" aria-describedby="power-up-status">
               <span class="power-up-icon" aria-hidden="true"><img src="./ui/powerups/watercolor-brush.png" alt="" draggable="false" /></span>
             </button>
@@ -362,7 +365,10 @@
           <label class="setting-row"><span><b>小窗跟手</b><small>让关卡小窗始终显示在触摸位置上方</small></span><input id="settings-touch-preview-follow" class="switch" type="checkbox" /></label>
           <button id="video-stats-button" class="setting-row setting-row--button" type="button"><span><b>视频统计</b><small>查看奖励视频的触发点位</small></span><strong id="video-stats-count">0 次 ›</strong></button>
         </div>
-        <footer id="settings-actions" class="settings-actions" hidden><button id="settings-lobby-button" class="button button--secondary" type="button">返回大厅</button></footer>
+        <footer id="settings-actions" class="settings-actions" hidden>
+          <button id="settings-lobby-button" class="button button--secondary" type="button">返回大厅</button>
+          <button id="settings-restart-button" class="button button--secondary" type="button">重玩</button>
+        </footer>
       </form>
     </dialog>
 

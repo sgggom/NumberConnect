@@ -311,6 +311,7 @@ class NumberConnectApp {
   private readonly progressLabel = query<HTMLElement>('#play-progress');
   private readonly livesLabel = query<HTMLElement>('#play-lives');
   private readonly powerUpStatus = query<HTMLElement>('#power-up-status');
+  private readonly undoStepButton = query<HTMLButtonElement>('#undo-step-button');
   private readonly watercolorBrushButton = query<HTMLButtonElement>('#watercolor-brush-button');
   private readonly paintBucketButton = query<HTMLButtonElement>('#paint-bucket-button');
   private readonly solutionToggle = query<HTMLInputElement>('#solution-toggle');
@@ -335,6 +336,7 @@ class NumberConnectApp {
   private readonly levelPickerDialog = query<HTMLDialogElement>('#level-picker-dialog');
   private readonly levelPickerGrid = query<HTMLElement>('#level-picker-grid');
   private readonly settingsDialog = query<HTMLDialogElement>('#settings-dialog');
+  private readonly settingsRestartButton = query<HTMLButtonElement>('#settings-restart-button');
   private readonly videoStatsDialog = query<HTMLDialogElement>('#video-stats-dialog');
   private readonly videoStatsCount = query<HTMLElement>('#video-stats-count');
   private readonly videoStatsTotal = query<HTMLElement>('#video-stats-total');
@@ -588,6 +590,7 @@ class NumberConnectApp {
       }
     });
     query('#play-settings-button').addEventListener('click', () => this.openSettings('play'));
+    this.undoStepButton.addEventListener('click', () => this.undoLastConnectionStep());
     this.watercolorBrushButton.addEventListener('click', () => void this.useWatercolorBrush());
     this.paintBucketButton.addEventListener('click', () => this.togglePaintBucket());
     this.bindSingleTouchInput();
@@ -1364,6 +1367,7 @@ class NumberConnectApp {
     this.settingsDialog.addEventListener('change', () => this.applySettingsChange());
     query('#video-stats-button').addEventListener('click', () => this.openVideoStats());
     query('#video-stats-reset').addEventListener('click', () => this.resetVideoStats());
+    this.settingsRestartButton.addEventListener('click', () => this.restartFromSettings());
     query('#settings-lobby-button').addEventListener('click', () => {
       this.settingsDialog.close();
       if (this.settingsContext === 'play') this.leavePlayScreen();
@@ -1746,7 +1750,9 @@ class NumberConnectApp {
     const noRevealTargets = !this.currentLevel || this.solutionRevealed || concealedCount === 0;
     const bucketActive = this.activePowerUp === 'paint-bucket';
     const animationBusy = this.animatingPowerUp !== undefined;
+    const undoAvailable = !this.solutionRevealed && this.boardScene.canUndoStep();
 
+    this.undoStepButton.disabled = !undoAvailable || animationBusy;
     this.watercolorBrushButton.disabled = noRevealTargets || animationBusy;
     this.paintBucketButton.disabled = noRevealTargets || animationBusy;
     this.paintBucketButton.classList.toggle('is-active', bucketActive);
@@ -1763,6 +1769,10 @@ class NumberConnectApp {
         ? '油漆桶，正在显示选中位置的 3×3 范围空位'
         : `油漆桶，选择中心位置并显示 3×3 范围空位，可重复使用${bucketActive ? '，正在选择中心位置' : ''}`,
     );
+    this.undoStepButton.setAttribute(
+      'aria-label',
+      undoAvailable ? '撤回道具，撤回上一步连接' : '撤回道具，当前没有可撤回的连接',
+    );
     this.playScreen.classList.toggle('is-paint-targeting', bucketActive);
     this.playScreen.classList.toggle('is-power-up-animating', animationBusy);
     this.playScreen.setAttribute('aria-busy', String(animationBusy));
@@ -1774,14 +1784,25 @@ class NumberConnectApp {
       tone = 'active';
     } else if (!message && this.solutionRevealed) {
       message = '答案显示时，道具暂不可用。';
-    } else if (!message && concealedCount === 0) {
-      message = '当前没有需要显示的空位。';
+    } else if (!message && concealedCount === 0 && !undoAvailable) {
+      message = '当前没有可用的道具目标。';
     } else if (!message) {
       message = '道具可重复使用';
     }
     this.powerUpStatus.textContent = message;
     this.powerUpStatus.classList.toggle('is-active', tone === 'active');
     this.powerUpStatus.classList.toggle('is-success', tone === 'success');
+  }
+
+  private undoLastConnectionStep(): void {
+    if (this.activePowerUp === 'paint-bucket') this.cancelPowerUpTargeting();
+    if (!this.boardScene.undoLastStep()) {
+      this.setPowerUpMessage('当前没有可撤回的连接。');
+      this.renderPowerUps();
+      return;
+    }
+    this.setPowerUpMessage('已撤回一步。', 'success');
+    this.renderPowerUps();
   }
 
   private async animatePowerUpUse<T>(
@@ -2378,6 +2399,19 @@ class NumberConnectApp {
 
   private restartAfterFailure(): void {
     this.lives = 3;
+    this.renderLives();
+    this.restartCurrent();
+  }
+
+  private restartFromSettings(): void {
+    if (this.settingsContext !== 'play') return;
+    this.settingsDialog.close();
+    this.setSolutionReveal(false);
+    if (this.playContext === 'editor-playtest') {
+      this.editorPlaytestErrorCount = 0;
+    } else if (this.mode !== 'endless') {
+      this.lives = 3;
+    }
     this.renderLives();
     this.restartCurrent();
   }

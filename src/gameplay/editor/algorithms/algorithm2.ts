@@ -1,5 +1,5 @@
-import { BoardShape, type Cell } from '../../../game/types';
-import { selectUnambiguousHiddenCells } from '../../../game/unambiguousHidden';
+import { selectHiddenCells } from '../../../game/hidden';
+import type { Cell } from '../../../game/types';
 import { areEditorCellsNeighbors, findEditorPath, randomizeEditorPath } from '../findEditorPath';
 import type { EditorCell } from '../types';
 import type {
@@ -12,7 +12,7 @@ export const createAlgorithm2Selection = (): Algorithm2Selection => ({
   id: 'algorithm-2',
   parameters: {
     topology: 'board-shape',
-    pathMode: 'single-stroke-no-luck',
+    pathMode: 'single-stroke-multiple-solutions',
     targetCrossings: 20,
     turnProbability: 40,
     hiddenPercent: 50,
@@ -20,15 +20,6 @@ export const createAlgorithm2Selection = (): Algorithm2Selection => ({
     maxVisibleRun: 4,
   },
 });
-
-const boardShapeOf = (shape: EditorAlgorithmContext['shape']): BoardShape => {
-  switch (shape) {
-    case 'diamond': return BoardShape.Diamond;
-    case 'rectangle': return BoardShape.Rectangle;
-    case 'hex': return BoardShape.Hex;
-    default: return BoardShape.Square;
-  }
-};
 
 const toCell = (key: string): Cell => {
   const [x, y] = key.split(',').map(Number);
@@ -110,23 +101,27 @@ export const runAlgorithm2 = (
 ): EditorAlgorithmResult | null => {
   const path = generateAlgorithm2Path(context, selection.parameters);
   if (!path) return null;
-  const realtime = context.searchMode === 'realtime';
 
   const seed = Math.imul(context.generationIndex + 1, 104729)
     ^ Math.imul(context.rows + 1, 73856093)
     ^ Math.imul(context.columns + 1, 19349663)
-    ^ path.length;
-  const hidden = selectUnambiguousHiddenCells(path, boardShapeOf(context.shape), {
-    hiddenPercent: selection.parameters.hiddenPercent,
-    maxHiddenRun: selection.parameters.maxHiddenRun,
-    maxVisibleRun: selection.parameters.maxVisibleRun,
+    ^ path.length
+    ^ 0x4f1bbcdc;
+  const hiddenCells = selectHiddenCells(
+    [...path],
+    selection.parameters.hiddenPercent,
+    selection.parameters.maxHiddenRun,
+    selection.parameters.maxVisibleRun,
     seed,
-    ...(realtime ? { attempts: 2 } : {}),
-  });
+  );
+  const targetHiddenCount = Math.min(
+    Math.max(0, path.length - 2),
+    Math.max(0, Math.round(path.length * selection.parameters.hiddenPercent / 100)),
+  );
 
   return {
     path,
-    hiddenCells: [...hidden.hiddenCells].map(toCell),
-    targetHiddenCount: hidden.targetCount,
+    hiddenCells: [...hiddenCells].map(toCell),
+    targetHiddenCount,
   };
 };

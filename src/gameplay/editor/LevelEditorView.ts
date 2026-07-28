@@ -1,4 +1,4 @@
-const LEVEL_EDITOR_VIEW_VERSION = '15';
+const LEVEL_EDITOR_VIEW_VERSION = '22';
 
 export const mountLevelEditorView = (host: HTMLElement): void => {
   const hasCurrentView = host.dataset.editorViewVersion === LEVEL_EDITOR_VIEW_VERSION
@@ -52,8 +52,17 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
 
         <section class="editor-simulation-panel" aria-labelledby="editor-simulation-title">
           <div class="editor-simulation-panel__header">
-            <div>
-              <h3 id="editor-simulation-title">模拟关卡</h3>
+            <div class="editor-simulation-launcher-copy">
+              <button
+                id="editor-simulation-open-button"
+                class="editor-simulation-open-button"
+                type="button"
+                aria-label="在新窗口打开模拟关卡"
+              >
+                <span id="editor-simulation-title">模拟关卡</span>
+                <span class="editor-simulation-open-icon" aria-hidden="true">↗</span>
+              </button>
+              <p id="editor-simulation-launcher-state">点击标题，在独立窗口查看模拟数据</p>
             </div>
             <div class="editor-simulation-controls">
               <label class="editor-simulation-count">模拟次数
@@ -70,7 +79,7 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
               <button id="editor-simulation-export-button" class="button button--secondary button--small" type="button" title="将当前关卡基础数据以 Tab 分隔格式复制到剪贴板" disabled>导出基础数据</button>
             </div>
           </div>
-          <p class="editor-simulation-rule">每次从当前格连接到一个相邻格记为一步。模拟后以共享步数横轴展示拐弯类型、可连接数量、直接连接和距离下个显示数字四组曲线；红点表示连接错误。</p>
+          <p class="editor-simulation-rule">每次从当前格连接到一个相邻格记为一步。七组曲线共享步数横轴，依次展示可连接数量、直接连接、距离下个显示数字、推理深度、选择数量、路径推理分支数量和合法推理分支数量；红点表示连接错误。</p>
           <div id="editor-simulation-summary" class="editor-simulation-summary" hidden>
             <div><span id="editor-simulation-total-steps-label">总步数</span><strong id="editor-simulation-total-steps">0</strong></div>
             <div><span id="editor-simulation-error-count-label">错误次数</span><strong id="editor-simulation-error-count">0</strong></div>
@@ -102,8 +111,9 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
           <label class="editor-algorithm-select">算法
             <select id="editor-algorithm">
               <option value="algorithm-1">算法1</option>
-              <option value="algorithm-2" selected>算法2</option>
+              <option value="algorithm-2">算法2</option>
               <option value="algorithm-3">算法3</option>
+              <option value="algorithm-4" selected>算法4</option>
             </select>
           </label>
         </div>

@@ -19,6 +19,7 @@ import {
   shouldShowDragQuestion,
 } from './dragJudgment';
 import { findSwappableHiddenPairs } from './hiddenSwap';
+import { PathCompletionSolver } from './pathCompletionSolver';
 import { projectCell } from './topology';
 import {
   BoardShape,
@@ -372,6 +373,26 @@ export class BoardScene extends Phaser.Scene {
       && !this.autoClickTimer
       && !this.connection.complete,
     );
+  }
+
+  public canUndoStep(): boolean {
+    return this.canUsePowerUp() && this.connection?.canUndoStep === true;
+  }
+
+  public undoLastStep(): boolean {
+    if (!this.session || !this.connection || !this.canUndoStep()) return false;
+    this.cancelAutoClickSequence();
+    this.finishPointerInteraction();
+    const progress = this.connection.undoLastStep();
+    if (progress === undefined) return false;
+
+    this.wrongFeedbackActive = false;
+    this.stopHintPulse();
+    this.hideDragQuestions();
+    this.clearNeighborhoodPreview();
+    this.refreshView();
+    this.session.onProgress(progress, this.session.level.solutionPath.length);
+    return true;
   }
 
   public concealedCellKeys(): Set<string> {
@@ -896,6 +917,10 @@ export class BoardScene extends Phaser.Scene {
       session.level.solutionPath.length,
       visibleIndices,
       swappableHiddenPairs,
+      new PathCompletionSolver(
+        session.level.solutionPath,
+        session.level.boardShape,
+      ),
     );
     if (usesClickInput(session.inputMode)) connection.enableClickMode();
     return connection;
@@ -1654,6 +1679,7 @@ export class BoardScene extends Phaser.Scene {
   private connectionFailureMessage(reason: ConnectionFailure): string {
     if (reason === 'hidden-start') return '请从显示数字开始。';
     if (reason === 'click-order') return '请按从小到大的顺序点击数字。';
+    if (reason === 'no-completion') return '这样连接后，剩余格子无法完成一笔连。';
     if (reason === 'direction-change') return '一次连线请保持同一数字方向。';
     return '请连接相邻的连续数字。';
   }

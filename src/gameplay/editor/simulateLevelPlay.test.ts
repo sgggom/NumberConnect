@@ -1,10 +1,33 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { PathCompletionSolver } from '../../game/pathCompletionSolver';
+import { BoardShape } from '../../game/types';
 import { formatLevelBaseDataTsv } from './levelBaseDataTsv';
 import { averageSimulatedPlayResults, simulateLevelPlay } from './simulateLevelPlay';
 
 const keyOf = (cell: { x: number; y: number }): string => `${cell.x},${cell.y}`;
 
 describe('editor level play simulation', () => {
+  it('reuses the current complete path without searching on normal simulation steps', () => {
+    const path = [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 2, y: 0 },
+      { x: 3, y: 0 },
+    ];
+    const solver = new PathCompletionSolver(path, BoardShape.Square);
+    const findCompletion = vi.spyOn(solver, 'findCompletion');
+
+    const result = simulateLevelPlay({
+      path,
+      hiddenCellKeys: new Set([keyOf(path[1]), keyOf(path[2])]),
+      shape: 'square',
+      completionSolver: solver,
+    });
+
+    expect(result.errorCount).toBe(0);
+    expect(findCompletion).not.toHaveBeenCalled();
+  });
+
   it('records every connection as one step with the requested cell data', () => {
     const path = [
       { x: 0, y: 0 },
@@ -32,6 +55,13 @@ describe('editor level play simulation', () => {
           connectableCount: 2,
           directConnect: true,
           distanceToNextVisibleNumber: 1,
+          reasoningDepth: 0,
+          availableBranchCount: 0,
+          lengthValidBranchCount: 0,
+          rejectedIsolationBranchCount: 0,
+          choiceCount: 0,
+          reasoningBranchCount: 0,
+          legalReasoningBranchCount: 0,
         },
         {
           stepNumber: 2,
@@ -43,6 +73,13 @@ describe('editor level play simulation', () => {
           connectableCount: 2,
           directConnect: true,
           distanceToNextVisibleNumber: 1,
+          reasoningDepth: 0,
+          availableBranchCount: 0,
+          lengthValidBranchCount: 0,
+          rejectedIsolationBranchCount: 0,
+          choiceCount: 0,
+          reasoningBranchCount: 0,
+          legalReasoningBranchCount: 0,
         },
         {
           stepNumber: 3,
@@ -54,12 +91,19 @@ describe('editor level play simulation', () => {
           connectableCount: 1,
           directConnect: true,
           distanceToNextVisibleNumber: 1,
+          reasoningDepth: 0,
+          availableBranchCount: 0,
+          lengthValidBranchCount: 0,
+          rejectedIsolationBranchCount: 0,
+          choiceCount: 0,
+          reasoningBranchCount: 0,
+          legalReasoningBranchCount: 0,
         },
       ],
     });
   });
 
-  it('records a wrong connection as its own step, then retries from the same cell', () => {
+  it('accepts a non-authored connection when the remaining cells still have a full solution', () => {
     const path = [
       { x: 0, y: 0 },
       { x: 1, y: 0 },
@@ -76,25 +120,17 @@ describe('editor level play simulation', () => {
       random: () => 0.99,
     });
 
-    expect(result.totalSteps).toBe(5);
-    expect(result.errorCount).toBe(1);
-    expect(result.steps.map((step) => step.outcome)).toEqual([
-      'error',
-      'connected',
-      'connected',
-      'connected',
-      'connected',
-    ]);
+    expect(result.totalSteps).toBe(4);
+    expect(result.errorCount).toBe(0);
+    expect(result.steps.every((step) => step.outcome === 'connected')).toBe(true);
     expect(result.steps.map((step) => step.attemptedCells[1])).toEqual([
       path[3],
-      path[1],
       path[2],
-      path[3],
+      path[1],
       path[4],
     ]);
-    expect(result.steps.map((step) => step.connectableCount)).toEqual([2, 2, 3, 2, 1]);
+    expect(result.steps.map((step) => step.connectableCount)).toEqual([2, 3, 2, 1]);
     expect(result.steps.map((step) => step.directConnect)).toEqual([
-      false,
       false,
       true,
       false,
@@ -102,18 +138,35 @@ describe('editor level play simulation', () => {
     ]);
     expect(result.steps.map((step) => step.distanceToNextVisibleNumber)).toEqual([
       2,
-      2,
       1,
       2,
       1,
     ]);
-    expect(result.steps.map((step) => step.turnType)).toEqual([
-      'straight',
-      'straight',
-      'straight',
-      'acute',
-      'acute',
-    ]);
+    expect(result.steps[0].availableBranchCount).toBe(2);
+    expect(result.steps[1].availableBranchCount).toBe(0);
+    expect(result.steps[1].reasoningDepth).toBe(0);
+  });
+
+  it('counts empty choices and every exact-length path to the next visible number', () => {
+    const path = [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 2, y: 0 },
+      { x: 1, y: -1 },
+    ];
+    const hidden = new Set([keyOf(path[1]), keyOf(path[3])]);
+
+    const result = simulateLevelPlay({
+      path,
+      hiddenCellKeys: hidden,
+      shape: 'hex',
+      reasoningLevel: 'medium',
+      random: () => 0,
+    });
+
+    expect(result.steps[0].choiceCount).toBe(2);
+    expect(result.steps[0].reasoningBranchCount).toBe(2);
+    expect(result.steps[0].legalReasoningBranchCount).toBe(2);
   });
 
   it('averages matching step indexes across multiple simulations', () => {
@@ -140,12 +193,30 @@ describe('editor level play simulation', () => {
 
     const averaged = averageSimulatedPlayResults([directRun, errorRun]);
 
-    expect(averaged.totalSteps).toBe(4.5);
-    expect(averaged.errorCount).toBe(0.5);
-    expect(averaged.steps).toHaveLength(5);
-    expect(averaged.steps[0].errorRate).toBe(0.5);
-    expect(averaged.steps[1].directConnectRate).toBe(0.5);
-    expect(averaged.steps[4].errorRate).toBe(0);
+    expect(averaged.totalSteps).toBe(4);
+    expect(averaged.errorCount).toBe(0);
+    expect(averaged.steps).toHaveLength(4);
+    expect(averaged.steps[0].errorRate).toBe(0);
+    expect(averaged.steps[1].directConnectRate).toBe(1);
+    expect(averaged.steps[3].errorRate).toBe(0);
+    expect(averaged.steps[0].reasoningDepth).toBe(
+      (directRun.steps[0].reasoningDepth + errorRun.steps[0].reasoningDepth) / 2,
+    );
+    expect(averaged.steps[3].availableBranchCount).toBe(
+      errorRun.steps[3].availableBranchCount,
+    );
+    expect(averaged.steps[0].choiceCount).toBe(
+      (directRun.steps[0].choiceCount + errorRun.steps[0].choiceCount) / 2,
+    );
+    expect(averaged.steps[0].reasoningBranchCount).toBe(
+      (directRun.steps[0].reasoningBranchCount + errorRun.steps[0].reasoningBranchCount) / 2,
+    );
+    expect(averaged.steps[0].legalReasoningBranchCount).toBe(
+      (
+        directRun.steps[0].legalReasoningBranchCount
+        + errorRun.steps[0].legalReasoningBranchCount
+      ) / 2,
+    );
   });
 
   it('formats one row of level base data for spreadsheet paste', () => {
@@ -171,6 +242,7 @@ describe('editor level play simulation', () => {
       averageConnectableCount: 2.345,
       directConnectRatio: 2 / 3,
       averageDistanceToNextVisibleNumber: 1.875,
+      averageReasoningDepth: 2.125,
     });
 
     expect(row).not.toContain('\n');
@@ -194,6 +266,7 @@ describe('editor level play simulation', () => {
       '2.35',
       '66.7%',
       '1.88',
+      '2.13',
     ]);
   });
 
@@ -246,7 +319,72 @@ describe('editor level play simulation', () => {
     expect(result.errorCount).toBe(0);
     expect(result.totalSteps).toBe(path.length - 1);
     expect(result.steps.map((step) => step.attemptedCells[1])).toEqual(path.slice(1));
+    expect(result.steps[0].availableBranchCount).toBe(2);
+    expect(result.steps[0].lengthValidBranchCount).toBe(1);
 
+  });
+
+  it('records isolation-rejected branches separately from length-valid branches', () => {
+    const path = [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 1, y: 1 },
+      { x: 2, y: 2 },
+    ];
+    const result = simulateLevelPlay({
+      path,
+      hiddenCellKeys: new Set([keyOf(path[1]), keyOf(path[2])]),
+      shape: 'square',
+      reasoningLevel: 'medium',
+      random: () => 0.99,
+    });
+
+    expect(result.steps[0].availableBranchCount).toBe(2);
+    expect(result.steps[0].lengthValidBranchCount).toBe(2);
+    expect(result.steps[0].rejectedIsolationBranchCount).toBe(1);
+    expect(result.steps[0].reasoningDepth).toBeGreaterThan(0);
+  });
+
+  it('caps actual reasoning depth by tier and next-visible distance', () => {
+    const path = [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 2, y: 0 },
+      { x: 1, y: 1 },
+      { x: 2, y: 1 },
+    ];
+    const hidden = new Set([keyOf(path[1]), keyOf(path[3])]);
+    const low = simulateLevelPlay({
+      path,
+      hiddenCellKeys: hidden,
+      shape: 'square',
+      reasoningLevel: 'low',
+      random: () => 0.99,
+    });
+    const medium = simulateLevelPlay({
+      path,
+      hiddenCellKeys: hidden,
+      shape: 'square',
+      reasoningLevel: 'medium',
+      random: () => 0.99,
+    });
+    const high = simulateLevelPlay({
+      path,
+      hiddenCellKeys: hidden,
+      shape: 'square',
+      reasoningLevel: 'high',
+      random: () => 0.99,
+    });
+
+    expect(low.steps.every((step) => step.reasoningDepth === 0)).toBe(true);
+    expect(medium.steps.every((step) => (
+      step.reasoningDepth <= 2
+      && step.reasoningDepth <= step.distanceToNextVisibleNumber
+    ))).toBe(true);
+    expect(high.steps.every((step) => (
+      step.reasoningDepth <= 5
+      && step.reasoningDepth <= step.distanceToNextVisibleNumber
+    ))).toBe(true);
   });
 
   it('looks through a three-hidden-cell interval before choosing a connection', () => {
@@ -331,6 +469,8 @@ describe('editor level play simulation', () => {
 
     expect(result.errorCount).toBe(0);
     expect(mediumResult.errorCount).toBeGreaterThan(0);
+    expect(Math.max(...result.steps.map((step) => step.reasoningDepth))).toBeLessThanOrEqual(5);
+    expect(Math.max(...mediumResult.steps.map((step) => step.reasoningDepth))).toBeLessThanOrEqual(2);
     expect(result.steps.map((step) => step.attemptedCells[1])).toEqual(path.slice(1));
   });
 
