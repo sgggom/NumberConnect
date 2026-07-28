@@ -12,6 +12,7 @@ export interface LevelBaseDataExport {
   averageConnectableCount: number;
   directConnectRatio: number;
   averageDistanceToNextVisibleNumber: number;
+  averageReasoningDepth: number;
 }
 
 const roundedAverage = (value: number): number => Math.round(value * 100) / 100;
@@ -28,6 +29,7 @@ export const formatLevelBaseDataTsv = ({
   averageConnectableCount,
   directConnectRatio,
   averageDistanceToNextVisibleNumber,
+  averageReasoningDepth,
 }: LevelBaseDataExport): string => {
   const hiddenPercent = Math.round(metrics.hiddenRatio * 1000) / 10;
   const directConnectPercent = Math.round(directConnectRatio * 1000) / 10;
@@ -51,6 +53,7 @@ export const formatLevelBaseDataTsv = ({
     roundedAverage(averageConnectableCount),
     `${directConnectPercent}%`,
     roundedAverage(averageDistanceToNextVisibleNumber),
+    roundedAverage(averageReasoningDepth),
   ];
 
   return values.join('\t');

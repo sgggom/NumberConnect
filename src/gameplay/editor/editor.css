@@ -23,9 +23,9 @@
 .editor-header { display: grid; grid-template-columns: 52px 1fr auto; align-items: center; gap: 12px; }
 .editor-header h2 { margin: 2px 0 0; }
 .save-chip { width: max-content; padding: 8px 11px; border: 1px solid rgba(88,208,170,.24); border-radius: 999px; color: var(--green); background: rgba(88,208,170,.09); font-size: .72rem; font-weight: 800; }
-.editor-layout { --editor-info-width: 464px; --editor-sidebar-width: 320px; --editor-level-list-width: 280px; min-height: 0; display: grid; grid-template-columns: minmax(416px, var(--editor-info-width)) minmax(0, 1fr) 16px minmax(260px, var(--editor-sidebar-width)) minmax(240px, var(--editor-level-list-width)); gap: 0 12px; }
+.editor-layout { --editor-info-width: 320px; --editor-sidebar-width: 320px; --editor-level-list-width: 280px; min-height: 0; display: grid; grid-template-columns: minmax(288px, var(--editor-info-width)) minmax(0, 1fr) 16px minmax(260px, var(--editor-sidebar-width)) minmax(240px, var(--editor-level-list-width)); gap: 0 12px; }
 .editor-layout.is-resizing { cursor: col-resize; user-select: none; }
-.editor-insights-column { min-width: 0; min-height: 0; display: grid; grid-template-rows: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.editor-insights-column { min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 12px; }
 .editor-info-panel { min-width: 0; min-height: 0; padding: 15px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--line); border-radius: 22px; background: var(--panel); }
 .editor-info-panel__header h3 { margin: 4px 0 0; font-size: 1.05rem; }
 .editor-info-size { padding: 13px 14px; display: grid; gap: 5px; border: 1px solid rgba(88,208,170,.24); border-radius: 13px; background: linear-gradient(135deg, rgba(88,208,170,.12), rgba(101,158,228,.07)); }
@@ -43,6 +43,13 @@
 .editor-simulation-panel { min-width: 0; min-height: 0; padding: 15px; display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); gap: 10px; overflow: hidden; border: 1px solid var(--line); border-radius: 22px; background: linear-gradient(180deg, rgba(24,35,48,.98), rgba(14,24,36,.98)); }
 .editor-simulation-panel__header { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; }
 .editor-simulation-panel__header h3 { margin: 4px 0 0; font-size: 1.05rem; }
+.editor-simulation-launcher-copy { min-width: 0; }
+.editor-simulation-open-button { display: inline-flex; align-items: center; gap: 8px; margin: 0; padding: 0; border: 0; color: inherit; background: transparent; font: inherit; font-size: 1.05rem; font-weight: 800; cursor: pointer; }
+.editor-simulation-open-button:hover { color: #8ad9ff; }
+.editor-simulation-open-button:focus-visible { outline: 2px solid #67c8f7; outline-offset: 5px; border-radius: 3px; }
+.editor-simulation-open-icon { font-size: .9rem; opacity: .72; transition: transform .14s ease, opacity .14s ease; }
+.editor-simulation-open-button:hover .editor-simulation-open-icon { opacity: 1; transform: translate(2px, -2px); }
+#editor-simulation-launcher-state { margin: 6px 0 0; color: var(--muted); font-size: .61rem; font-weight: 700; line-height: 1.45; }
 .editor-simulation-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 7px; }
 .editor-simulation-count { display: grid; grid-template-columns: auto 48px; align-items: center; gap: 5px; color: var(--muted); font-size: .6rem; font-weight: 800; white-space: nowrap; }
 .editor-simulation-count input { width: 48px; height: 32px; padding: 4px 5px; border: 1px solid rgba(126,201,255,.22); border-radius: 8px; color: var(--ink); background: rgba(2,8,15,.42); text-align: center; font: inherit; font-variant-numeric: tabular-nums; }
@@ -60,7 +67,7 @@
 .editor-simulation-results { min-height: 0; overflow: hidden; }
 .editor-simulation-empty { margin: 0; padding: 10px 2px; color: var(--muted); font-size: .65rem; font-weight: 700; line-height: 1.55; }
 .editor-simulation-chart { height: 100%; min-height: 0; margin: 0; padding: 7px 8px 5px; display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 2px; overflow: hidden; border: 1px solid rgba(126,201,255,.14); border-radius: 12px; background: rgba(2,8,15,.3); }
-.editor-simulation-chart svg { width: 100%; height: 100%; min-height: 236px; display: block; overflow: visible; }
+.editor-simulation-chart svg { width: 100%; height: 100%; min-height: 288px; display: block; overflow: visible; }
 .editor-simulation-chart figcaption { color: var(--muted); font-size: .56rem; font-weight: 700; text-align: center; }
 .editor-simulation-chart__band { fill: rgba(255,255,255,.025); stroke: rgba(255,255,255,.07); stroke-width: 1; }
 .editor-simulation-chart__grid { stroke: rgba(174,193,210,.13); stroke-width: 1; vector-effect: non-scaling-stroke; }
@@ -71,6 +78,12 @@
 .editor-simulation-chart__title { fill: var(--ink); font-size: 13px; font-weight: 900; }
 .editor-simulation-chart__axis-label { fill: var(--muted); font-size: 11px; font-weight: 800; }
 .editor-simulation-chart__axis-title { fill: #7ec9ff; font-size: 11px; font-weight: 900; }
+.editor-screen .editor-simulation-panel { min-height: 0; padding: 16px 18px; overflow: visible; }
+.editor-screen .editor-simulation-panel__header { align-items: center; }
+.editor-screen .editor-simulation-panel .editor-simulation-controls,
+.editor-screen .editor-simulation-panel > .editor-simulation-rule,
+.editor-screen .editor-simulation-panel > .editor-simulation-summary,
+.editor-screen .editor-simulation-panel > .editor-simulation-results { display: none; }
 .editor-board-pane { min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 12px; }
 .editor-resizer { position: relative; min-width: 16px; height: 100%; cursor: col-resize; touch-action: none; outline: 0; }
 .editor-resizer::before { content: ""; position: absolute; top: 14px; bottom: 14px; left: 50%; width: 3px; border-radius: 999px; background: rgba(126, 201, 255, .25); transform: translateX(-50%); transition: width .16s ease, background .16s ease, box-shadow .16s ease; }
@@ -202,6 +215,7 @@
   .editor-info-panel__header, .editor-info-size, .editor-info-note { grid-column: 1 / -1; }
   .editor-info-note { margin-top: 0; }
   .editor-simulation-panel { min-height: 340px; }
+  .editor-screen .editor-simulation-panel { min-height: 0; }
   .editor-resizer { display: none; }
   .editor-sidebar { height: max-content; overflow: visible; }
   .editor-level-panel { min-height: 320px; }

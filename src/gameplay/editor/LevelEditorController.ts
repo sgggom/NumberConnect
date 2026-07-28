@@ -4,6 +4,7 @@ import {
   encodeCompactLevelCollection,
 } from '../../game/levelDataFormat';
 import { BoardShape, type LevelData } from '../../game/types';
+import { PathCompletionSolver } from '../../game/pathCompletionSolver';
 import { EditorSplitPaneController } from './EditorSplitPaneController';
 import { calculateSquareGridLayout } from './editorGridLayout';
 import {
@@ -83,6 +84,7 @@ export class LevelEditorController {
   private simulationReasoningLevel: SimulationReasoningLevel = 'medium';
   private simulationSuccessfulCells: EditorCell[] = [];
   private simulationErrorAttempts: SimulationErrorAttempt[] = [];
+  private simulationWindow?: Window;
 
   public constructor(
     private readonly host: HTMLElement,
@@ -108,6 +110,7 @@ export class LevelEditorController {
     this.query('#editor-back-button').addEventListener('click', () => {
       this.cancelPathAnimation();
       this.cancelImageRecognition();
+      this.closeSimulationWindow();
       this.options.onBack();
     });
     this.query<HTMLSelectElement>('#editor-shape').addEventListener('change', (event) => {
@@ -185,6 +188,7 @@ export class LevelEditorController {
     });
     this.query('#editor-simulate-button').addEventListener('click', () => this.simulatePlay());
     this.query('#editor-simulation-export-button').addEventListener('click', () => void this.exportLevelBaseData());
+    this.query('#editor-simulation-open-button').addEventListener('click', () => this.openSimulationWindow());
     this.query('#editor-playtest-button').addEventListener('click', () => this.playtest());
     this.query('#editor-save-button').addEventListener('click', () => this.save());
     this.query('#editor-level-add').addEventListener('click', () => this.save());
@@ -447,12 +451,7 @@ export class LevelEditorController {
     const simulation = this.simulationResult
       && this.simulationSignature === this.currentSimulationSignature()
       ? this.simulationResult
-      : simulateLevelPlay({
-          path: this.model.solutionPath,
-          hiddenCellKeys: this.model.hiddenCellKeys,
-          shape: this.model.shape,
-          reasoningLevel: this.simulationReasoningLevel,
-        });
+      : this.createConfiguredSimulation().result;
     const simulationStepCount = simulation.steps.length;
     const averageConnectableCount = simulationStepCount === 0
       ? 0
@@ -471,6 +470,10 @@ export class LevelEditorController {
           (sum, step) => sum + step.distanceToNextVisibleNumber,
           0,
         ) / simulationStepCount;
+    const averageReasoningDepth = simulationStepCount === 0
+      ? 0
+      : simulation.steps.reduce((sum, step) => sum + step.reasoningDepth, 0)
+        / simulationStepCount;
     const text = formatLevelBaseDataTsv({
       levelId,
       shape: this.shapeLabel(level.boardShape),
@@ -483,6 +486,7 @@ export class LevelEditorController {
       averageConnectableCount,
       directConnectRatio,
       averageDistanceToNextVisibleNumber,
+      averageReasoningDepth,
     });
 
     try {
@@ -515,18 +519,9 @@ export class LevelEditorController {
   }
 
   private initializeSimulation(): boolean {
-    const simulationResults = Array.from({ length: this.simulationRunCount }, () => (
-      simulateLevelPlay({
-        path: this.model.solutionPath,
-        hiddenCellKeys: this.model.hiddenCellKeys,
-        shape: this.model.shape,
-        reasoningLevel: this.simulationReasoningLevel,
-      })
-    ));
-    this.simulationRepresentativeResult = simulationResults[0];
-    this.simulationResult = this.simulationRunCount === 1
-      ? simulationResults[0]
-      : averageSimulatedPlayResults(simulationResults);
+    const configuredSimulation = this.createConfiguredSimulation();
+    this.simulationRepresentativeResult = configuredSimulation.representative;
+    this.simulationResult = configuredSimulation.result;
     this.simulationSignature = this.currentSimulationSignature();
     this.simulationErrorAttempts = [];
     this.simulationSuccessfulCells = [];
@@ -550,6 +545,37 @@ export class LevelEditorController {
     return true;
   }
 
+  private createConfiguredSimulation(): {
+    result: SimulatedPlayResult;
+    representative: SimulatedPlayResult;
+  } {
+    const completionSolver = new PathCompletionSolver(
+      this.model.solutionPath,
+      this.model.shape === 'hex'
+        ? BoardShape.Hex
+        : this.model.shape === 'diamond'
+          ? BoardShape.Diamond
+          : this.model.shape === 'rectangle'
+            ? BoardShape.Rectangle
+            : BoardShape.Square,
+    );
+    const simulationResults = Array.from({ length: this.simulationRunCount }, () => (
+      simulateLevelPlay({
+        path: this.model.solutionPath,
+        hiddenCellKeys: this.model.hiddenCellKeys,
+        shape: this.model.shape,
+        reasoningLevel: this.simulationReasoningLevel,
+        completionSolver,
+      })
+    ));
+    return {
+      representative: simulationResults[0],
+      result: this.simulationRunCount === 1
+        ? simulationResults[0]
+        : averageSimulatedPlayResults(simulationResults),
+    };
+  }
+
   private createSimulationCellEvents(result: SimulatedPlayResult): SimulationCellEvent[] {
     return result.steps.flatMap((step, stepIndex) => step.attemptedCells.slice(1).map((to, offset) => {
       const cellIndex = offset + 1;
@@ -569,12 +595,16 @@ export class LevelEditorController {
     const exportButton = this.query<HTMLButtonElement>('#editor-simulation-export-button');
     const summary = this.query<HTMLElement>('#editor-simulation-summary');
     const results = this.query<HTMLElement>('#editor-simulation-results');
+    const countInput = this.query<HTMLInputElement>('#editor-simulation-count');
+    const reasoningSelect = this.query<HTMLSelectElement>('#editor-simulation-reasoning');
     const controlsUnavailable = !this.model.hasGeneratedPath || this.isPathAnimating || this.isImageRecognizing;
     button.disabled = controlsUnavailable;
     button.textContent = this.simulationResult ? '重新模拟' : '开始模拟';
     exportButton.disabled = controlsUnavailable;
-    this.query<HTMLInputElement>('#editor-simulation-count').disabled = controlsUnavailable;
-    this.query<HTMLSelectElement>('#editor-simulation-reasoning').disabled = controlsUnavailable;
+    countInput.disabled = controlsUnavailable;
+    countInput.value = String(this.simulationRunCount);
+    reasoningSelect.disabled = controlsUnavailable;
+    reasoningSelect.value = this.simulationReasoningLevel;
 
     if (!this.simulationResult) {
       summary.hidden = true;
@@ -585,6 +615,8 @@ export class LevelEditorController {
         : '生成完整路径后，即可查看逐步统计曲线。';
       results.replaceChildren(empty);
       this.renderSimulationOverlay();
+      this.updateSimulationLauncherState();
+      this.syncSimulationWindow();
       return;
     }
 
@@ -599,6 +631,231 @@ export class LevelEditorController {
     this.query('#editor-simulation-error-count').textContent = formatSummaryValue(this.simulationResult.errorCount);
     results.replaceChildren(this.createSimulationChart(this.simulationResult));
     this.renderSimulationOverlay();
+    this.updateSimulationLauncherState();
+    this.syncSimulationWindow();
+  }
+
+  private updateSimulationLauncherState(): void {
+    const state = this.query<HTMLElement>('#editor-simulation-launcher-state');
+    if (!this.model.hasGeneratedPath) {
+      state.textContent = '生成完整路径后，可在独立窗口查看模拟数据';
+      return;
+    }
+    if (!this.simulationResult) {
+      state.textContent = '点击标题，在独立窗口配置并开始模拟';
+      return;
+    }
+    const formatValue = (value: number): string => (
+      Number.isInteger(value) ? String(value) : String(Math.round(value * 100) / 100)
+    );
+    state.textContent = this.simulationRunCount > 1
+      ? `${this.simulationRunCount} 次 · 平均 ${formatValue(this.simulationResult.totalSteps)} 步 · 点击查看曲线`
+      : `${formatValue(this.simulationResult.totalSteps)} 步 · ${formatValue(this.simulationResult.errorCount)} 次错误 · 点击查看曲线`;
+  }
+
+  private openSimulationWindow(): void {
+    if (this.simulationWindow && !this.simulationWindow.closed) {
+      this.simulationWindow.focus();
+      this.syncSimulationWindow();
+      return;
+    }
+
+    const popup = window.open(
+      '',
+      'number-connect-level-simulation',
+      'popup=yes,width=980,height=820,resizable=yes,scrollbars=yes',
+    );
+    if (!popup) {
+      this.setStatus('浏览器阻止了模拟窗口，请允许本站打开弹出式窗口后重试。', true);
+      return;
+    }
+
+    this.simulationWindow = popup;
+    this.initializeSimulationWindow(popup);
+    popup.addEventListener('beforeunload', () => {
+      if (this.simulationWindow === popup) this.simulationWindow = undefined;
+    }, { once: true });
+    this.syncSimulationWindow();
+    popup.focus();
+  }
+
+  private initializeSimulationWindow(popup: Window): void {
+    const popupDocument = popup.document;
+    popupDocument.documentElement.lang = 'zh-CN';
+    popupDocument.title = '模拟关卡 · 数字连线编辑器';
+    popupDocument.head.replaceChildren();
+
+    document.head.querySelectorAll<HTMLLinkElement | HTMLStyleElement>('link[rel="stylesheet"], style')
+      .forEach((source) => {
+        const clone = source.cloneNode(true) as HTMLLinkElement | HTMLStyleElement;
+        if (source instanceof HTMLLinkElement) clone.setAttribute('href', source.href);
+        popupDocument.head.append(clone);
+      });
+
+    const popupStyles = popupDocument.createElement('style');
+    popupStyles.textContent = `
+      :root {
+        color-scheme: dark;
+        --ink: #f7f9ff;
+        --muted: #a9b5c7;
+        --green: #58d0aa;
+        --gold: #f0b84b;
+      }
+      html, body {
+        width: 100%;
+        height: 100%;
+        min-width: 540px;
+        margin: 0;
+        overflow: hidden;
+      }
+      body {
+        color: var(--ink);
+        background:
+          radial-gradient(circle at 12% 0%, rgba(73, 122, 155, .2), transparent 34rem),
+          linear-gradient(160deg, #111a26 0%, #090f17 100%);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      .editor-simulation-popout-shell {
+        width: 100%;
+        height: 100vh;
+        padding: 22px;
+        overflow: hidden;
+        box-sizing: border-box;
+      }
+      .editor-simulation-popout-shell .editor-simulation-panel {
+        width: 100%;
+        height: 100%;
+        min-height: 0;
+        grid-template-rows: auto minmax(0, 1fr);
+        overflow: hidden;
+        box-sizing: border-box;
+      }
+      .editor-simulation-popout-shell .editor-simulation-panel__header {
+        grid-template-columns: minmax(0, 1fr) auto auto;
+        padding-bottom: 10px;
+        border-bottom: 1px solid rgba(255,255,255,.08);
+      }
+      .editor-simulation-popout-scroll {
+        min-width: 0;
+        min-height: 0;
+        padding: 2px 6px 8px 2px;
+        display: grid;
+        grid-template-rows: auto auto auto;
+        align-content: start;
+        gap: 10px;
+        overflow-x: hidden;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        scrollbar-gutter: stable;
+      }
+      .editor-simulation-popout-shell .editor-simulation-results {
+        min-height: 0;
+        overflow: visible;
+      }
+      .editor-simulation-popout-shell .editor-simulation-chart { min-height: 800px; }
+      .editor-simulation-popout-shell .editor-simulation-open-button {
+        cursor: default;
+        pointer-events: none;
+      }
+      .editor-simulation-popout-close {
+        width: 34px;
+        height: 34px;
+        border: 1px solid rgba(255,255,255,.12);
+        border-radius: 10px;
+        color: var(--muted);
+        background: rgba(255,255,255,.04);
+        font-size: 20px;
+        cursor: pointer;
+      }
+      .editor-simulation-popout-close:hover { color: var(--ink); background: rgba(255,255,255,.09); }
+      @media (max-width: 720px) {
+        html, body { min-width: 0; }
+        .editor-simulation-popout-shell { padding: 10px; }
+        .editor-simulation-popout-shell .editor-simulation-panel { min-height: 0; }
+        .editor-simulation-panel__header { grid-template-columns: 1fr; }
+        .editor-simulation-controls { justify-content: flex-start; }
+      }
+    `;
+    popupDocument.head.append(popupStyles);
+
+    const shell = popupDocument.createElement('main');
+    shell.className = 'editor-simulation-popout-shell';
+    popupDocument.body.replaceChildren(shell);
+  }
+
+  private syncSimulationWindow(): void {
+    const popup = this.simulationWindow;
+    if (!popup || popup.closed) {
+      this.simulationWindow = undefined;
+      return;
+    }
+
+    try {
+      const popupDocument = popup.document;
+      const shell = popupDocument.querySelector<HTMLElement>('.editor-simulation-popout-shell');
+      if (!shell) return;
+
+      const previousScrollTop = shell
+        .querySelector<HTMLElement>('.editor-simulation-popout-scroll')
+        ?.scrollTop ?? 0;
+      const panel = this.query<HTMLElement>('.editor-simulation-panel').cloneNode(true) as HTMLElement;
+      panel.classList.add('editor-simulation-panel--popout');
+      const popupCountInput = panel.querySelector<HTMLInputElement>('#editor-simulation-count');
+      const popupReasoningSelect = panel.querySelector<HTMLSelectElement>(
+        '#editor-simulation-reasoning',
+      );
+      if (popupCountInput) popupCountInput.value = String(this.simulationRunCount);
+      if (popupReasoningSelect) popupReasoningSelect.value = this.simulationReasoningLevel;
+
+      const launcherState = panel.querySelector('#editor-simulation-launcher-state');
+      launcherState?.remove();
+      const header = panel.querySelector<HTMLElement>('.editor-simulation-panel__header');
+      const closeButton = popupDocument.createElement('button');
+      closeButton.className = 'editor-simulation-popout-close';
+      closeButton.type = 'button';
+      closeButton.setAttribute('aria-label', '关闭模拟窗口');
+      closeButton.textContent = '×';
+      header?.append(closeButton);
+
+      const scrollContainer = popupDocument.createElement('div');
+      scrollContainer.className = 'editor-simulation-popout-scroll';
+      [
+        panel.querySelector('.editor-simulation-rule'),
+        panel.querySelector('.editor-simulation-summary'),
+        panel.querySelector('.editor-simulation-results'),
+      ].forEach((element) => {
+        if (element) scrollContainer.append(element);
+      });
+      panel.append(scrollContainer);
+      shell.replaceChildren(panel);
+      closeButton.addEventListener('click', () => popup.close());
+
+      popupCountInput?.addEventListener('change', (event) => {
+        const input = event.currentTarget as HTMLInputElement;
+        this.simulationRunCount = Math.max(1, Math.min(100, Math.round(Number(input.value) || 1)));
+        this.clearSimulationResult();
+        this.renderSimulationPanel();
+      });
+      popupReasoningSelect?.addEventListener('change', (event) => {
+        this.simulationReasoningLevel = (event.currentTarget as HTMLSelectElement)
+          .value as SimulationReasoningLevel;
+        this.clearSimulationResult();
+        this.renderSimulationPanel();
+      });
+      panel.querySelector('#editor-simulate-button')?.addEventListener('click', () => this.simulatePlay());
+      panel.querySelector('#editor-simulation-export-button')?.addEventListener(
+        'click',
+        () => void this.exportLevelBaseData(),
+      );
+      scrollContainer.scrollTop = previousScrollTop;
+    } catch {
+      this.simulationWindow = undefined;
+    }
+  }
+
+  private closeSimulationWindow(): void {
+    if (this.simulationWindow && !this.simulationWindow.closed) this.simulationWindow.close();
+    this.simulationWindow = undefined;
   }
 
   private createSimulationChart(result: SimulatedPlayResult): HTMLElement {
@@ -606,12 +863,12 @@ export class LevelEditorController {
     figure.className = 'editor-simulation-chart';
     figure.setAttribute(
       'aria-label',
-      `本关${this.simulationRunCount > 1 ? `${this.simulationRunCount} 次模拟平均 ` : ''}共 ${result.totalSteps} 步；曲线依次展示拐弯类型、可连接数量、直接连接和距离下个显示数字。`,
+      `本关${this.simulationRunCount > 1 ? `${this.simulationRunCount} 次模拟平均 ` : ''}共 ${result.totalSteps} 步；曲线依次展示可连接数量、直接连接、距离下个显示数字、推理深度、选择数量、路径推理分支数量和合法推理分支数量。`,
     );
 
     const svgNamespace = 'http://www.w3.org/2000/svg';
     const svg = document.createElementNS(svgNamespace, 'svg');
-    svg.setAttribute('viewBox', '0 0 600 410');
+    svg.setAttribute('viewBox', '0 0 600 680');
     svg.setAttribute('role', 'img');
     svg.setAttribute('aria-hidden', 'true');
 
@@ -632,40 +889,32 @@ export class LevelEditorController {
     const bandHeight = 72;
     const bandGap = 18;
     const chartTop = 24;
-    const chartBottom = chartTop + bandHeight * 4 + bandGap * 3;
+    const chartBottom = chartTop + bandHeight * 7 + bandGap * 6;
     const stepCount = Math.max(1, result.steps.length);
     const xAt = (index: number): number => (
       stepCount === 1
         ? plotLeft + plotWidth / 2
         : plotLeft + index / (stepCount - 1) * plotWidth
     );
-    const turnValues = {
-      straight: 0,
-      acute: 1,
-      'right-angle': 2,
-      obtuse: 3,
-    } as const;
     const maxConnectable = Math.max(1, ...result.steps.map((step) => step.connectableCount));
     const maxVisibleDistance = Math.max(
       1,
       ...result.steps.map((step) => step.distanceToNextVisibleNumber),
     );
+    const maxReasoningDepth = Math.max(1, ...result.steps.map((step) => step.reasoningDepth));
+    const maxChoiceCount = Math.max(1, ...result.steps.map((step) => step.choiceCount));
+    const maxReasoningBranchCount = Math.max(
+      1,
+      ...result.steps.map((step) => step.reasoningBranchCount),
+    );
+    const maxLegalReasoningBranchCount = Math.max(
+      1,
+      ...result.steps.map((step) => step.legalReasoningBranchCount),
+    );
     const chartNumberLabel = (value: number): string => (
       Number.isInteger(value) ? String(value) : String(Math.round(value * 100) / 100)
     );
     const bands = [
-      {
-        title: '拐弯类型',
-        color: '#f3c24b',
-        values: result.steps.map((step) => step.turnValue ?? turnValues[step.turnType]),
-        maximum: 3,
-        labels: [
-          { value: 3, label: '钝角' },
-          { value: 2, label: '直角' },
-          { value: 1, label: '锐角' },
-          { value: 0, label: '直线' },
-        ],
-      },
       {
         title: '可连接数量',
         color: '#58d0aa',
@@ -697,6 +946,49 @@ export class LevelEditorController {
               { value: 1, label: '1' },
             ]
           : [{ value: 1, label: '1' }],
+      },
+      {
+        title: '推理深度',
+        color: '#ff8fc7',
+        values: result.steps.map((step) => step.reasoningDepth),
+        maximum: maxReasoningDepth,
+        labels: [
+          { value: maxReasoningDepth, label: chartNumberLabel(maxReasoningDepth) },
+          { value: 0, label: '0' },
+        ],
+      },
+      {
+        title: '选择数量',
+        color: '#ff9b73',
+        values: result.steps.map((step) => step.choiceCount),
+        maximum: maxChoiceCount,
+        labels: [
+          { value: maxChoiceCount, label: chartNumberLabel(maxChoiceCount) },
+          { value: 0, label: '0' },
+        ],
+      },
+      {
+        title: '路径推理分支数量',
+        color: '#f6d365',
+        values: result.steps.map((step) => step.reasoningBranchCount),
+        maximum: maxReasoningBranchCount,
+        labels: [
+          { value: maxReasoningBranchCount, label: chartNumberLabel(maxReasoningBranchCount) },
+          { value: 0, label: '0' },
+        ],
+      },
+      {
+        title: '合法推理分支数量',
+        color: '#a7e36d',
+        values: result.steps.map((step) => step.legalReasoningBranchCount),
+        maximum: maxLegalReasoningBranchCount,
+        labels: [
+          {
+            value: maxLegalReasoningBranchCount,
+            label: chartNumberLabel(maxLegalReasoningBranchCount),
+          },
+          { value: 0, label: '0' },
+        ],
       },
     ];
 
@@ -802,7 +1094,7 @@ export class LevelEditorController {
     const caption = document.createElement('figcaption');
     caption.textContent = this.simulationRunCount > 1
       ? `${this.simulationRunCount} 次模拟的逐步平均值；红点表示该步至少一次连接错误。`
-      : '四组曲线共享横轴；红点表示该步连接错误。';
+      : '七组曲线共享横轴；红点表示该步连接错误。';
     figure.append(svg, caption);
     return figure;
   }
@@ -1202,6 +1494,7 @@ export class LevelEditorController {
       this.setStatus('请先生成覆盖全部格子的路径。', true);
       return;
     }
+    this.closeSimulationWindow();
     this.setStatus('正在进入试玩，退出后将返回当前编辑状态。');
     this.options.onPlaytest(level);
   }

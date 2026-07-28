@@ -1243,7 +1243,8 @@ input[type="range"] { width: 100%; accent-color: var(--green); }
 .switch:checked { background: #42ad8b; }
 .switch:checked::after { transform: translateX(20px); }
 .switch:disabled { cursor: not-allowed; opacity: .42; }
-.settings-actions { display: grid; grid-template-columns: 1fr; gap: 10px; padding: 15px 18px 18px; border-top: 1px solid var(--line); background: rgba(241,245,249,.68); }
+.settings-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 15px 18px 18px; border-top: 1px solid var(--line); background: rgba(241,245,249,.68); }
+.settings-actions .button { min-width: 0; }
 .settings-dialog .button--secondary { color: var(--ink); background: #edf2f7; border-color: rgba(74,101,130,.16); }
 
 .video-stats-dialog {

@@ -1,6 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { findPureLuckAlternative } from '../../game/pureLuck';
-import { BoardShape, cellKey } from '../../game/types';
 import {
   countEditorPathCrossings,
   findEditorPath,
@@ -33,7 +31,7 @@ describe('level editor path generation', () => {
   it('uses algorithm 2 and the requested generation defaults for a new editor level', () => {
     const model = new LevelEditorModel();
 
-    expect(model.algorithmSelection.id).toBe('algorithm-2');
+    expect(model.algorithmSelection.id).toBe('algorithm-4');
     expect(model.algorithmSelection.parameters).toMatchObject({
       targetCrossings: 20,
       turnProbability: 40,
@@ -60,7 +58,7 @@ describe('level editor path generation', () => {
     expect(path).toHaveLength(active.size);
   });
 
-  it('algorithm 2 saves a fixed hidden layout with no equivalent complete path', () => {
+  it('algorithm 2 saves a fixed hidden layout without enforcing uniqueness', () => {
     const model = new LevelEditorModel();
     for (let index = 0; index < 5; index += 1) model.changeSize(-1);
     model.fill();
@@ -70,9 +68,10 @@ describe('level editor path generation', () => {
     const level = model.createLevel(101);
     expect(level?.algorithm?.id).toBe('algorithm-2');
     expect(level?.algorithm?.parameters.turnProbability).toBe(40);
+    expect(level?.algorithm?.parameters.pathMode).toBe('single-stroke-multiple-solutions');
     expect(level?.hiddenCells).toBeDefined();
-    const hidden = new Set(level?.hiddenCells?.map(cellKey));
-    expect(findPureLuckAlternative(level?.solutionPath ?? [], hidden, BoardShape.Square)).toBeNull();
+    expect(level?.hiddenCells?.length).toBeGreaterThan(0);
+    expect(model.createLevel(102)?.hiddenCells).toEqual(level?.hiddenCells);
   });
 
   it('varied generation honors the crossing ceiling while preferring turns', () => {

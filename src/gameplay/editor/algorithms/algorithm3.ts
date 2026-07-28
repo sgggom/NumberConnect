@@ -1,5 +1,6 @@
-import { BoardShape, type Cell } from '../../../game/types';
-import { selectUnambiguousHiddenCells } from '../../../game/unambiguousHidden';
+import { createRandom, shuffle } from '../../../game/random';
+import { BoardShape, cellKey, type Cell } from '../../../game/types';
+import { largestHiddenClusterSize } from '../../../game/unambiguousHidden';
 import { editorPathCrossingCellIndexes } from '../findEditorPath';
 import type { EditorCell, EditorShape } from '../types';
 import { generateAlgorithm2Path } from './algorithm2';
@@ -16,7 +17,7 @@ export const createAlgorithm3Selection = (): Algorithm3Selection => ({
   id: 'algorithm-3',
   parameters: {
     topology: 'board-shape',
-    pathMode: 'single-stroke-no-luck-feature-hidden',
+    pathMode: 'single-stroke-multiple-solutions-feature-hidden',
     targetCrossings: 20,
     turnProbability: 40,
     straightHiddenProbability: 50,
@@ -102,6 +103,73 @@ const toCell = (key: string): Cell => {
   return { x, y };
 };
 
+const canHideIndex = (
+  pathCount: number,
+  hiddenIndices: ReadonlySet<number>,
+  index: number,
+  maxHiddenRun: number,
+): boolean => {
+  if (index <= 0 || index >= pathCount - 1 || hiddenIndices.has(index)) return false;
+  let runLength = 1;
+  for (let cursor = index - 1; cursor >= 0 && hiddenIndices.has(cursor); cursor -= 1) runLength += 1;
+  for (let cursor = index + 1; cursor < pathCount && hiddenIndices.has(cursor); cursor += 1) runLength += 1;
+  return runLength <= Math.max(1, Math.floor(maxHiddenRun));
+};
+
+export interface Algorithm3HiddenSelection {
+  hiddenCells: Set<string>;
+  targetCount: number;
+}
+
+export const selectAlgorithm3HiddenCells = (
+  path: ReadonlyArray<EditorCell>,
+  shape: EditorShape,
+  parameters: Pick<
+    Algorithm3Parameters,
+    | 'straightHiddenProbability'
+    | 'turnHiddenProbability'
+    | 'crossingHiddenProbability'
+    | 'hiddenPercent'
+    | 'maxHiddenClusterSize'
+  >,
+  seed: number,
+): Algorithm3HiddenSelection => {
+  const targetCount = Math.min(
+    Math.max(0, path.length - 2),
+    Math.max(0, Math.round(path.length * parameters.hiddenPercent / 100)),
+  );
+  if (targetCount === 0 || path.length < 3) {
+    return { hiddenCells: new Set(), targetCount };
+  }
+
+  const probabilities = algorithm3CandidateProbabilities(path, shape, parameters);
+  const random = createRandom(seed ^ 0x6c8e9cf5);
+  const candidates: number[] = [];
+  for (let index = 1; index < path.length - 1; index += 1) {
+    const probability = Math.max(0, Math.min(100, Number(probabilities[index]) || 0));
+    if (random() * 100 < probability) candidates.push(index);
+  }
+  shuffle(candidates, random);
+
+  const hiddenIndices = new Set<number>();
+  const boardShape = boardShapeOf(shape);
+  const clusterLimit = Math.max(1, Math.floor(parameters.maxHiddenClusterSize));
+  for (const index of candidates) {
+    if (hiddenIndices.size >= targetCount) break;
+    if (!canHideIndex(path.length, hiddenIndices, index, clusterLimit)) continue;
+    const candidateHiddenCells = new Set(
+      [...hiddenIndices, index].map((hiddenIndex) => cellKey(path[hiddenIndex])),
+    );
+    if (largestHiddenClusterSize(path, candidateHiddenCells, boardShape) > clusterLimit) continue;
+    hiddenIndices.add(index);
+  }
+
+  return {
+    hiddenCells: new Set([...hiddenIndices].map((index) => cellKey(path[index]))),
+    targetCount,
+  };
+};
+
 export const runAlgorithm3 = (
   context: EditorAlgorithmContext,
   selection: Algorithm3Selection,
@@ -114,15 +182,7 @@ export const runAlgorithm3 = (
     ^ Math.imul(context.columns + 1, 19349663)
     ^ path.length
     ^ 0x3a17f19d;
-  const hidden = selectUnambiguousHiddenCells(path, boardShapeOf(context.shape), {
-    hiddenPercent: selection.parameters.hiddenPercent,
-    maxHiddenRun: selection.parameters.maxHiddenClusterSize,
-    maxHiddenClusterSize: selection.parameters.maxHiddenClusterSize,
-    maxVisibleRun: Math.max(1, path.length),
-    seed,
-    attempts: 1,
-    candidateProbabilities: algorithm3CandidateProbabilities(path, context.shape, selection.parameters),
-  });
+  const hidden = selectAlgorithm3HiddenCells(path, context.shape, selection.parameters, seed);
 
   return {
     path,

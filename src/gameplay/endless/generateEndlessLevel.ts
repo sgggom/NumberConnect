@@ -6,7 +6,7 @@ import {
 } from '../editor/algorithms';
 
 const GENERATION_ATTEMPTS = 3;
-// Algorithm 2's default cap keeps its uniqueness check fast enough for live stage transitions.
+// Keep hidden runs short enough for readable live stage transitions.
 const REALTIME_MAX_HIDDEN_RUN = 3;
 
 const createFallbackPath = (rows: number, columns: number, seed: number) => {

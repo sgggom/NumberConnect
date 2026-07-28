@@ -3,6 +3,7 @@ import type { EditorShape } from '../types';
 import { createAlgorithm1Selection, runAlgorithm1 } from './algorithm1';
 import { createAlgorithm2Selection, runAlgorithm2 } from './algorithm2';
 import { createAlgorithm3Selection, runAlgorithm3 } from './algorithm3';
+import { createAlgorithm4Selection, runAlgorithm4 } from './algorithm4';
 import type {
   EditorAlgorithmContext,
   EditorAlgorithmDescriptor,
@@ -10,7 +11,7 @@ import type {
   EditorAlgorithmSelection,
 } from './types';
 
-export const DEFAULT_EDITOR_ALGORITHM_ID: EditorAlgorithmId = 'algorithm-2';
+export const DEFAULT_EDITOR_ALGORITHM_ID: EditorAlgorithmId = 'algorithm-4';
 const LEGACY_EDITOR_ALGORITHM_ID: EditorAlgorithmId = 'algorithm-1';
 
 export const EDITOR_ALGORITHMS: readonly EditorAlgorithmDescriptor[] = [
@@ -22,12 +23,17 @@ export const EDITOR_ALGORITHMS: readonly EditorAlgorithmDescriptor[] = [
   {
     id: 'algorithm-2',
     label: '算法2',
-    description: '在不死局且交叉不超过上限的前提下随机选择方向和完整路径，并消除纯运气解。',
+    description: '在不死局且交叉不超过上限的前提下随机选择方向和完整路径，允许同一组显示数字对应多条完整解。',
   },
   {
     id: 'algorithm-3',
     label: '算法3',
-    description: '沿用算法2的路径生成，并按直线、拐弯和交叉位置的独立概率选择隐藏数字。',
+    description: '沿用算法2的路径生成，按直线、拐弯和交叉位置的独立概率选择隐藏数字，并允许多条完整解。',
+  },
+  {
+    id: 'algorithm-4',
+    label: '算法4',
+    description: '沿用算法2的路径生成，分散隐藏种子后向邻格扩张，并均衡每个显示数字周围的隐藏数量。',
   },
 ];
 
@@ -39,6 +45,8 @@ export const createEditorAlgorithm = (id: EditorAlgorithmId): EditorAlgorithmSel
       return createAlgorithm2Selection();
     case 'algorithm-3':
       return createAlgorithm3Selection();
+    case 'algorithm-4':
+      return createAlgorithm4Selection();
   }
 };
 
@@ -73,7 +81,7 @@ export const normalizeEditorAlgorithm = (
       ...defaults,
       parameters: {
         topology: 'board-shape',
-        pathMode: 'single-stroke-no-luck',
+        pathMode: 'single-stroke-multiple-solutions',
         targetCrossings: normalizedInteger(
           value.parameters?.targetCrossings,
           defaults.parameters.targetCrossings,
@@ -113,7 +121,7 @@ export const normalizeEditorAlgorithm = (
       ...defaults,
       parameters: {
         topology: 'board-shape',
-        pathMode: 'single-stroke-no-luck-feature-hidden',
+        pathMode: 'single-stroke-multiple-solutions-feature-hidden',
         targetCrossings: normalizedInteger(
           value.parameters?.targetCrossings,
           defaults.parameters.targetCrossings,
@@ -159,6 +167,46 @@ export const normalizeEditorAlgorithm = (
       },
     };
   }
+  if (value?.id === 'algorithm-4') {
+    const defaults = createAlgorithm4Selection();
+    return {
+      ...defaults,
+      parameters: {
+        topology: 'board-shape',
+        pathMode: 'single-stroke-multiple-solutions',
+        targetCrossings: normalizedInteger(
+          value.parameters?.targetCrossings,
+          defaults.parameters.targetCrossings,
+          0,
+          99,
+        ),
+        turnProbability: normalizedInteger(
+          value.parameters?.turnProbability,
+          defaults.parameters.turnProbability,
+          0,
+          100,
+        ),
+        hiddenPercent: normalizedInteger(
+          value.parameters?.hiddenPercent,
+          defaults.parameters.hiddenPercent,
+          0,
+          90,
+        ),
+        maxHiddenRun: normalizedInteger(
+          value.parameters?.maxHiddenRun,
+          defaults.parameters.maxHiddenRun,
+          1,
+          8,
+        ),
+        maxVisibleRun: normalizedInteger(
+          value.parameters?.maxVisibleRun,
+          defaults.parameters.maxVisibleRun,
+          1,
+          12,
+        ),
+      },
+    };
+  }
   return createEditorAlgorithm(LEGACY_EDITOR_ALGORITHM_ID);
 };
 
@@ -192,6 +240,13 @@ export const resolveEditorAlgorithmForShape = (
             },
           }
         : selection;
+    case 'algorithm-4':
+      return shape === 'hex'
+        ? {
+            ...selection,
+            parameters: { ...selection.parameters, targetCrossings: 0 },
+          }
+        : selection;
   }
 };
 
@@ -207,6 +262,8 @@ export const runEditorAlgorithm = (
       return runAlgorithm2(context, resolved);
     case 'algorithm-3':
       return runAlgorithm3(context, resolved);
+    case 'algorithm-4':
+      return runAlgorithm4(context, resolved);
   }
 };
 

@@ -1,7 +1,169 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ConnectionProgress } from '../game/connectionProgress';
+import { PathCompletionSolver } from '../game/pathCompletionSolver';
+import { BoardShape } from '../game/types';
 
 describe('connection progress', () => {
+  it('uses the current complete path without running a new search for normal moves', () => {
+    const cells = [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 2, y: 0 },
+      { x: 3, y: 0 },
+    ];
+    const solver = new PathCompletionSolver(cells, BoardShape.Square);
+    const findCompletion = vi.spyOn(solver, 'findCompletion');
+    const progress = new ConnectionProgress(cells.length, [0, 3], [], solver);
+
+    progress.begin(0);
+    expect(progress.extend(1)).toMatchObject({ type: 'advanced' });
+    expect(progress.extend(2)).toMatchObject({ type: 'advanced' });
+    expect(findCompletion).not.toHaveBeenCalled();
+  });
+
+  it('accepts an alternate connection when the remaining board still has a full solution', () => {
+    const cells = [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 0, y: 1 },
+      { x: 1, y: 1 },
+    ];
+    const progress = new ConnectionProgress(
+      cells.length,
+      [0, 3],
+      [],
+      new PathCompletionSolver(cells, BoardShape.Square),
+    );
+
+    progress.begin(0);
+    expect(progress.extend(2)).toMatchObject({ type: 'advanced' });
+    expect(progress.displayNumber(2)).toBe(2);
+    expect(progress.extend(1)).toMatchObject({ type: 'advanced' });
+    expect(progress.displayNumber(1)).toBe(3);
+    expect(progress.extend(3)).toMatchObject({ type: 'advanced', complete: true });
+    expect(progress.connectedNodePairs()).toEqual([[0, 2], [1, 2], [1, 3]]);
+  });
+
+  it('undoes connected edges one step at a time and restores the previous endpoint', () => {
+    const progress = new ConnectionProgress(4, [0, 3]);
+
+    progress.begin(0);
+    progress.extend(1);
+    progress.extend(2);
+
+    expect(progress.canUndoStep).toBe(true);
+    expect(progress.undoLastStep()).toBe(2);
+    expect(progress.activeIndex).toBe(1);
+    expect(progress.isEdgeConnected(0)).toBe(true);
+    expect(progress.isEdgeConnected(1)).toBe(false);
+    expect(progress.isVisible(2)).toBe(false);
+
+    expect(progress.undoLastStep()).toBe(0);
+    expect(progress.activeIndex).toBe(0);
+    expect(progress.isEdgeConnected(0)).toBe(false);
+    expect(progress.isVisible(1)).toBe(false);
+    expect(progress.canUndoStep).toBe(false);
+    expect(progress.undoLastStep()).toBeUndefined();
+  });
+
+  it('restores the prior solution order after undoing an alternate connection', () => {
+    const cells = [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 0, y: 1 },
+      { x: 1, y: 1 },
+    ];
+    const progress = new ConnectionProgress(
+      cells.length,
+      [0, 3],
+      [],
+      new PathCompletionSolver(cells, BoardShape.Square),
+    );
+
+    progress.begin(0);
+    progress.extend(2);
+    expect(progress.displayNumber(2)).toBe(2);
+
+    expect(progress.undoLastStep()).toBe(0);
+    expect(progress.displayNumber(1)).toBe(2);
+    expect(progress.isVisible(2)).toBe(false);
+    expect(progress.extend(1)).toMatchObject({ type: 'advanced', index: 1 });
+  });
+
+  it('keeps power-up reveals made after a connection when that connection is undone', () => {
+    const progress = new ConnectionProgress(5, [0, 4]);
+
+    progress.begin(0);
+    progress.extend(1);
+    progress.revealIndices([3]);
+    progress.undoLastStep();
+
+    expect(progress.isVisible(1)).toBe(false);
+    expect(progress.isVisible(3)).toBe(true);
+    expect(progress.begin(3)).toMatchObject({ type: 'started', index: 3 });
+  });
+
+  it('keeps a revealed alternate-path number fixed when undoing the branch that exposed it', () => {
+    const cells = [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 0, y: 1 },
+      { x: 1, y: 1 },
+    ];
+    const progress = new ConnectionProgress(
+      cells.length,
+      [0, 3],
+      [],
+      new PathCompletionSolver(cells, BoardShape.Square),
+    );
+
+    progress.begin(0);
+    progress.extend(2);
+    progress.revealIndices([1]);
+    expect(progress.displayNumber(1)).toBe(3);
+
+    progress.undoLastStep();
+    expect(progress.isVisible(1)).toBe(true);
+    expect(progress.isVisible(2)).toBe(false);
+    expect(progress.displayNumber(1)).toBe(3);
+    expect(progress.extend(2)).toMatchObject({ type: 'advanced', index: 2 });
+  });
+
+  it('moves the click anchor back so an undone step can be connected again', () => {
+    const progress = new ConnectionProgress(5, [0, 4]);
+
+    progress.enableClickMode();
+    progress.clickForward(1);
+    progress.clickForward(2);
+    expect(progress.undoLastStep()).toBe(2);
+    expect(progress.currentClickIndex).toBe(1);
+    expect(progress.clickForward(2).at(-1)).toMatchObject({
+      type: 'advanced',
+      index: 2,
+      progress: 3,
+    });
+  });
+
+  it('rejects an adjacent connection when no complete one-stroke solution remains', () => {
+    const cells = [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 2, y: 0 },
+      { x: 1, y: 1 },
+      { x: 0, y: 2 },
+    ];
+    const progress = new ConnectionProgress(
+      cells.length,
+      [0, 2, 4],
+      [],
+      new PathCompletionSolver(cells, BoardShape.Square),
+    );
+
+    progress.begin(0);
+    expect(progress.extend(3)).toMatchObject({ type: 'wrong', reason: 'no-completion' });
+    expect(progress.extend(1)).toMatchObject({ type: 'advanced' });
+  });
+
   it('starts from any visible number and connects forward', () => {
     const progress = new ConnectionProgress(6, [0, 3, 5]);
 
@@ -36,6 +198,18 @@ describe('connection progress', () => {
     expect(swapped.extend(1)).toMatchObject({ type: 'advanced' });
     expect(swapped.extend(3)).toMatchObject({ type: 'advanced', complete: true });
     expect(swapped.connectedNodePairs()).toEqual([[0, 2], [1, 2], [1, 3]]);
+  });
+
+  it('unlocks a swappable hidden pair after its chosen edge is undone', () => {
+    const progress = new ConnectionProgress(4, [0, 3], [[1, 2]]);
+
+    progress.begin(0);
+    progress.extend(2);
+    expect(progress.displayNumber(2)).toBe(2);
+
+    progress.undoLastStep();
+    expect(progress.displayNumber(1)).toBe(2);
+    expect(progress.extend(1)).toMatchObject({ type: 'advanced', index: 1 });
   });
 
   it('accepts the swapped hidden pair when connecting backward', () => {
