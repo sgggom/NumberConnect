@@ -40,6 +40,7 @@ import {
   isUiTheme,
   usesClickInput,
   type BoardNeighborhoodPreview,
+  type BoardHoldScore,
   type BoardSessionInput,
   type Cell,
   type EndlessStageSettings,
@@ -309,6 +310,14 @@ class NumberConnectApp {
   private readonly playLevelButton = query<HTMLButtonElement>('#play-level-button');
   private readonly levelLabel = query<HTMLElement>('#play-level-label');
   private readonly progressLabel = query<HTMLElement>('#play-progress');
+  private readonly holdScoreFormula = query<HTMLElement>('#hold-score-formula');
+  private readonly holdScoreTotal = query<HTMLElement>('#hold-score-total');
+  private readonly holdScoreRaw = query<HTMLElement>('#hold-score-raw');
+  private readonly holdScoreChoice = query<HTMLElement>('#hold-score-choice');
+  private readonly holdScoreQuantity = query<HTMLElement>('#hold-score-quantity');
+  private readonly holdScoreDistance = query<HTMLElement>('#hold-score-distance');
+  private readonly holdScoreBranch = query<HTMLElement>('#hold-score-branch');
+  private readonly holdScoreBranchCount = query<HTMLElement>('#hold-score-branch-count');
   private readonly livesLabel = query<HTMLElement>('#play-lives');
   private readonly powerUpStatus = query<HTMLElement>('#power-up-status');
   private readonly undoStepButton = query<HTMLButtonElement>('#undo-step-button');
@@ -763,6 +772,20 @@ class NumberConnectApp {
       this.repositionTouchPreview();
     }
     if (shouldAnimateIn) this.animateTouchPreviewIn(activePreview);
+  }
+
+  private renderHoldScore(score: BoardHoldScore | null): void {
+    const visible = score !== null && this.currentScreen === 'play';
+    this.holdScoreFormula.classList.toggle('is-inactive', !visible);
+    this.holdScoreFormula.setAttribute('aria-hidden', String(!visible));
+    if (!score) return;
+    this.holdScoreTotal.textContent = String(score.total);
+    this.holdScoreRaw.textContent = String(score.rawTotal);
+    this.holdScoreChoice.textContent = String(score.choiceScore);
+    this.holdScoreQuantity.textContent = String(score.choiceQuantity);
+    this.holdScoreDistance.textContent = String(score.nextNumberDistance);
+    this.holdScoreBranch.textContent = String(score.reasoningBranchScore);
+    this.holdScoreBranchCount.textContent = String(score.reasoningBranchCount);
   }
 
   private renderTouchPreviewState(): void {
@@ -1667,6 +1690,7 @@ class NumberConnectApp {
         void this.handleComplete();
       },
       onNeighborhoodPreview: (preview) => this.handleNeighborhoodPreview(preview),
+      onHoldScore: (score) => this.renderHoldScore(score),
     };
   }
 

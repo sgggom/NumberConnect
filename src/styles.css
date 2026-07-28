@@ -1056,7 +1056,7 @@ html[data-theme="night"] .primary-tab-button.is-active::before { background: var
     linear-gradient(160deg, #fbfdff 0%, #f2f6fb 55%, #f8f5fc 100%);
 }
 .game-header { display: grid; grid-template-columns: 52px 1fr 52px; align-items: start; width: min(100%, 920px); margin: 0 auto; }
-.game-heading { grid-column: 2; grid-row: 1; display: grid; justify-items: center; gap: 5px; text-align: center; }
+.game-heading { grid-column: 2; grid-row: 1; position: relative; display: grid; justify-items: center; gap: 5px; text-align: center; }
 .play-level-button { margin: 0; padding: 0; color: #25364a; background: transparent; font-size: clamp(1.1rem, 4cqw, 1.45rem); font-weight: 700; line-height: normal; }
 .play-level-button:disabled { cursor: default; }
 .play-settings-image-button { grid-column: 3; grid-row: 1; align-self: start; justify-self: center; }
@@ -1066,6 +1066,14 @@ html[data-theme="night"] .primary-tab-button.is-active::before { background: var
 .life-counter { min-width: 0; padding: 0; border: 0; color: #ff7692; background: transparent; text-align: center; font-size: .9rem; font-weight: 900; letter-spacing: .06em; line-height: 1; box-shadow: none; }
 .progress-counter { min-height: 0; margin: 0; padding: 0; display: flex; align-items: center; justify-content: center; border: 0; color: #62758c; background: transparent; line-height: 1; }
 .progress-counter b { min-width: 42px; color: #3978b8; text-align: center; font-size: .78rem; font-variant-numeric: tabular-nums; }
+.hold-score-formula { width: max-content; max-width: calc(100vw - 24px); margin: 0; position: absolute; z-index: 4; top: calc(100% + 3px); left: 50%; display: flex; align-items: center; justify-content: center; gap: 4px; color: #7b8998; font-size: clamp(.58rem, 2.35cqw, .78rem); font-weight: 800; line-height: 1.15; white-space: nowrap; transform: translateX(-50%); }
+.hold-score-formula.is-inactive { visibility: hidden; }
+.hold-score-formula b { font: inherit; font-variant-numeric: tabular-nums; }
+.hold-score-formula small { font: inherit; opacity: .82; }
+.hold-score-total { color: #ffffff; text-shadow: 0 1px 3px rgba(25,45,68,.72); }
+.hold-score-choice { color: #2fa85a; }
+.hold-score-distance { color: #d89b00; }
+.hold-score-branch { color: #5689d8; }
 .game-host { width: calc(100% + 28px); min-height: 0; height: 100%; margin: 0 -14px; overflow: hidden; background: transparent; touch-action: none; }
 .game-host canvas { display: block; width: 100% !important; height: 100% !important; }
 .play-screen.is-click-input .game-host canvas { cursor: pointer; }
