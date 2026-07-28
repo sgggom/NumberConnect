@@ -1066,11 +1066,14 @@ html[data-theme="night"] .primary-tab-button.is-active::before { background: var
 .life-counter { min-width: 0; padding: 0; border: 0; color: #ff7692; background: transparent; text-align: center; font-size: .9rem; font-weight: 900; letter-spacing: .06em; line-height: 1; box-shadow: none; }
 .progress-counter { min-height: 0; margin: 0; padding: 0; display: flex; align-items: center; justify-content: center; border: 0; color: #62758c; background: transparent; line-height: 1; }
 .progress-counter b { min-width: 42px; color: #3978b8; text-align: center; font-size: .78rem; font-variant-numeric: tabular-nums; }
-.hold-score-formula { width: max-content; max-width: calc(100vw - 24px); margin: 0; position: absolute; z-index: 4; top: calc(100% + 3px); left: 50%; display: flex; align-items: center; justify-content: center; gap: 4px; color: #7b8998; font-size: clamp(.58rem, 2.35cqw, .78rem); font-weight: 800; line-height: 1.15; white-space: nowrap; transform: translateX(-50%); }
+.hold-score-formula { width: max-content; max-width: calc(100vw - 24px); margin: 0; position: absolute; z-index: 4; top: calc(100% + 3px); left: 50%; display: grid; justify-items: center; gap: 2px; color: #7b8998; font-size: clamp(.58rem, 2.35cqw, .78rem); font-weight: 800; line-height: 1.15; white-space: nowrap; transform: translateX(-50%); }
 .hold-score-formula.is-inactive { visibility: hidden; }
 .hold-score-formula b { font: inherit; font-variant-numeric: tabular-nums; }
 .hold-score-formula small { font: inherit; opacity: .82; }
+.hold-score-summary, .hold-score-breakdown { display: flex; align-items: center; justify-content: center; gap: 4px; }
 .hold-score-total { color: #ffffff; text-shadow: 0 1px 3px rgba(25,45,68,.72); }
+.hold-score-actual { color: #ffffff; text-shadow: 0 1px 3px rgba(25,45,68,.52); }
+.hold-score-experience { color: #9b67d5; }
 .hold-score-choice { color: #2fa85a; }
 .hold-score-distance { color: #d89b00; }
 .hold-score-branch { color: #5689d8; }

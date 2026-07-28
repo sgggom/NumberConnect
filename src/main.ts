@@ -313,6 +313,8 @@ class NumberConnectApp {
   private readonly holdScoreFormula = query<HTMLElement>('#hold-score-formula');
   private readonly holdScoreTotal = query<HTMLElement>('#hold-score-total');
   private readonly holdScoreRaw = query<HTMLElement>('#hold-score-raw');
+  private readonly holdScoreActual = query<HTMLElement>('#hold-score-actual');
+  private readonly holdScoreExperience = query<HTMLElement>('#hold-score-experience');
   private readonly holdScoreChoice = query<HTMLElement>('#hold-score-choice');
   private readonly holdScoreQuantity = query<HTMLElement>('#hold-score-quantity');
   private readonly holdScoreDistance = query<HTMLElement>('#hold-score-distance');
@@ -781,6 +783,8 @@ class NumberConnectApp {
     if (!score) return;
     this.holdScoreTotal.textContent = String(score.total);
     this.holdScoreRaw.textContent = String(score.rawTotal);
+    this.holdScoreActual.textContent = String(score.actualScore);
+    this.holdScoreExperience.textContent = String(score.experienceScore);
     this.holdScoreChoice.textContent = String(score.choiceScore);
     this.holdScoreQuantity.textContent = String(score.choiceQuantity);
     this.holdScoreDistance.textContent = String(score.nextNumberDistance);

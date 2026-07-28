@@ -120,7 +120,10 @@ export const calculateHeldCellScore = (
       reasoningBranchCount: 0,
       reasoningBranchScore: 0,
       rawTotal: 0,
+      actualScore: 0,
+      experienceScore: 0,
       total: 0,
+      badgeScore: 0,
     };
   }
 
@@ -174,6 +177,9 @@ export const calculateHeldCellScore = (
     );
   const reasoningBranchScore = Math.max(0, reasoningBranchCount - 1);
   const rawTotal = choiceScore * nextNumberDistance * reasoningBranchScore;
+  const actualScore = scoreDigitCount(rawTotal);
+  const experienceScore = nextNumberDistance + choiceScore + reasoningBranchScore;
+  const total = actualScore + experienceScore;
 
   return {
     choiceQuantity,
@@ -182,7 +188,10 @@ export const calculateHeldCellScore = (
     reasoningBranchCount,
     reasoningBranchScore,
     rawTotal,
-    total: scoreDigitCount(rawTotal),
+    actualScore,
+    experienceScore,
+    total,
+    badgeScore: scoreDigitCount(total),
   };
 };
 

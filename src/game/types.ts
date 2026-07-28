@@ -121,7 +121,10 @@ export interface BoardHoldScore {
   reasoningBranchCount: number;
   reasoningBranchScore: number;
   rawTotal: number;
+  actualScore: number;
+  experienceScore: number;
   total: number;
+  badgeScore: number;
 }
 
 export interface EndlessStageSettings {
