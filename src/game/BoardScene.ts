@@ -1,7 +1,10 @@
 import Phaser from 'phaser';
 import { beadClusterPose, beadRewardTiming } from '../gameplay/beads/beadRewardAnimation';
 import { COLLECTION_ARTWORK_NAMES } from '../gameplay/collection/collectionArtwork';
-import { buildBoardNeighborhoodPreview } from './boardNeighborhood';
+import {
+  buildBoardNeighborhoodPreview,
+  calculateHeldCellScore,
+} from './boardNeighborhood';
 import {
   baseCellRadiusForStep,
   CELL_GLOW_RADIUS_MARGIN,
@@ -53,6 +56,7 @@ interface BoardView {
   solutionLines: Phaser.GameObjects.Graphics;
   lines: Phaser.GameObjects.Graphics;
   pointerLine: Phaser.GameObjects.Graphics;
+  choiceScore: Phaser.GameObjects.Text;
   cells: Map<string, CellView>;
   radius: number;
   step: number;
@@ -1089,12 +1093,24 @@ export class BoardScene extends Phaser.Scene {
       });
     });
 
+    const choiceScore = this.add.text(0, 0, '', {
+      fontFamily: 'Nunito Sans, sans-serif',
+      fontStyle: '900',
+      fontSize: `${Math.max(11, Math.min(18, numberFontSize * 0.58))}px`,
+      color: '#ffffff',
+      stroke: '#26374a',
+      strokeThickness: Math.max(2, numberFontSize * 0.09),
+      align: 'center',
+    }).setOrigin(0.5).setVisible(false);
+    root.add(choiceScore);
+
     return {
       root,
       panel,
       solutionLines,
       lines,
       pointerLine,
+      choiceScore,
       cells,
       radius,
       step,
@@ -1333,6 +1349,7 @@ export class BoardScene extends Phaser.Scene {
       return;
     }
     if (this.session && usesClickInput(this.session.inputMode)) {
+      this.showHeldCellChoiceScore(index);
       const actions = this.connection.clickForward(index);
       actions.forEach((action, actionIndex) => {
         this.handleConnectionAction(action, actionIndex === actions.length - 1);
@@ -1350,6 +1367,7 @@ export class BoardScene extends Phaser.Scene {
     this.wrongFeedbackActive = false;
     this.handleConnectionAction(this.connection.begin(index, this.solutionRevealed));
     this.emitNeighborhoodPreview(index, pointer);
+    this.showHeldCellChoiceScore(index);
     if (this.view) {
       this.drawPointerLine(
         (pointer.x - this.view.root.x) / Math.max(0.01, Math.abs(this.view.root.scaleX)),
@@ -1406,7 +1424,10 @@ export class BoardScene extends Phaser.Scene {
       }
     }
     const previewIndex = closest?.index ?? this.neighborhoodPreviewIndex;
-    if (!this.locked && previewIndex !== undefined) this.emitNeighborhoodPreview(previewIndex, pointer);
+    if (!this.locked && previewIndex !== undefined) {
+      this.emitNeighborhoodPreview(previewIndex, pointer);
+      this.showHeldCellChoiceScore(previewIndex);
+    }
     this.drawPointerLine(localX, localY);
   }
 
@@ -1544,11 +1565,61 @@ export class BoardScene extends Phaser.Scene {
 
   private clearNeighborhoodPreview(): void {
     this.neighborhoodPreviewIndex = undefined;
+    this.hideHeldCellChoiceScore();
     if (this.session?.boardZoomEnabled && this.connection && this.view) {
       this.emitNeighborhoodPreview(null);
     } else {
       this.session?.onNeighborhoodPreview?.(null);
     }
+  }
+
+  private showHeldCellChoiceScore(index: number): void {
+    if (!this.session || !this.connection || !this.view) return;
+    const heldCell = this.session.level.solutionPath[index];
+    const heldCellView = heldCell
+      ? this.view.cells.get(cellKey(heldCell))
+      : undefined;
+    if (!heldCellView) {
+      this.hideHeldCellChoiceScore();
+      return;
+    }
+
+    const score = calculateHeldCellScore(
+      this.session.level,
+      index,
+      (candidateIndex) => {
+        const candidate = this.session?.level.solutionPath[candidateIndex];
+        return Boolean(
+          candidate
+          && !this.solutionRevealed
+          && this.session?.hiddenCells.has(cellKey(candidate))
+          && this.connection?.isNodeConnected(candidateIndex) !== true
+        );
+      },
+      (candidateIndex) => (
+        this.solutionRevealed
+        || this.connection?.isVisible(candidateIndex) === true
+      ),
+      (candidateIndex) => (
+        this.connection?.displayNumber(candidateIndex) ?? candidateIndex + 1
+      ),
+      (candidateIndex) => (
+        this.connection?.canCompleteAfterStep(index, candidateIndex) !== true
+      ),
+    );
+    this.view.choiceScore
+      .setText(String(score.total))
+      .setPosition(
+        heldCellView.x - this.view.radius * 0.72,
+        heldCellView.y - this.view.radius * 0.72,
+      )
+      .setVisible(true);
+    this.session.onHoldScore?.(score);
+  }
+
+  private hideHeldCellChoiceScore(): void {
+    this.view?.choiceScore.setVisible(false);
+    this.session?.onHoldScore?.(null);
   }
 
   private drawPointerLine(localX: number, localY: number): void {
@@ -1713,6 +1784,9 @@ export class BoardScene extends Phaser.Scene {
     this.view = this.buildView(this.session, 0);
     this.applyBoardViewport();
     this.refreshView();
+    if (this.neighborhoodPreviewIndex !== undefined) {
+      this.showHeldCellChoiceScore(this.neighborhoodPreviewIndex);
+    }
     this.locked = this.paused || this.connection?.complete === true;
   }
 }

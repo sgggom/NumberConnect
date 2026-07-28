@@ -3,6 +3,7 @@ import {
   cellKey,
   type BoardNeighborhoodPreview,
   type BoardNeighborhoodPreviewPointer,
+  type BoardHoldScore,
   type LevelData,
 } from './types';
 
@@ -15,6 +16,175 @@ interface BoardNeighborhoodPreviewOptions {
   originClientX?: number;
   originClientY?: number;
 }
+
+export const scoreDigitCount = (score: number): number => {
+  const normalizedScore = Math.max(0, Math.floor(score));
+  return normalizedScore === 0 ? 0 : String(normalizedScore).length;
+};
+
+const countExactLengthBranches = (
+  level: NeighborhoodLevel,
+  startIndex: number,
+  targetIndex: number,
+  intermediateCount: number,
+  isAvailable: (index: number) => boolean,
+): number => {
+  const indexByCell = new Map(
+    level.solutionPath.map((cell, index) => [cellKey(cell), index]),
+  );
+  const neighborsByIndex = level.solutionPath.map((cell) => (
+    neighborCells(cell, level.boardShape).flatMap((neighbor) => {
+      const index = indexByCell.get(cellKey(neighbor));
+      return index === undefined ? [] : [index];
+    })
+  ));
+
+  const minimumStepsToTarget = Array.from(
+    { length: level.solutionPath.length },
+    () => Number.POSITIVE_INFINITY,
+  );
+  minimumStepsToTarget[targetIndex] = 0;
+  const queue = [targetIndex];
+  for (let cursor = 0; cursor < queue.length; cursor += 1) {
+    const current = queue[cursor];
+    for (const neighbor of neighborsByIndex[current]) {
+      if (minimumStepsToTarget[neighbor] !== Number.POSITIVE_INFINITY) continue;
+      minimumStepsToTarget[neighbor] = minimumStepsToTarget[current] + 1;
+      queue.push(neighbor);
+    }
+  }
+
+  const visited = new Set([startIndex]);
+  const search = (currentIndex: number, usedIntermediateCount: number): number => {
+    const remainingIntermediateCount = intermediateCount - usedIntermediateCount;
+    if (remainingIntermediateCount === 0) {
+      return neighborsByIndex[currentIndex].includes(targetIndex) ? 1 : 0;
+    }
+
+    let branchCount = 0;
+    for (const nextIndex of neighborsByIndex[currentIndex]) {
+      if (
+        nextIndex === targetIndex
+        || visited.has(nextIndex)
+        || !isAvailable(nextIndex)
+      ) {
+        continue;
+      }
+      const movesRemainingAfterNext = remainingIntermediateCount;
+      if (minimumStepsToTarget[nextIndex] > movesRemainingAfterNext) continue;
+      visited.add(nextIndex);
+      branchCount += search(nextIndex, usedIntermediateCount + 1);
+      visited.delete(nextIndex);
+    }
+    return branchCount;
+  };
+
+  return search(startIndex, 0);
+};
+
+export const countAvailableNeighborhoodChoices = (
+  level: NeighborhoodLevel,
+  centerIndex: number,
+  isAvailable: (index: number) => boolean,
+): number => {
+  const centerCell = level.solutionPath[centerIndex];
+  if (!centerCell) return 0;
+
+  const indexByCell = new Map(
+    level.solutionPath.map((cell, index) => [cellKey(cell), index]),
+  );
+  return neighborCells(centerCell, level.boardShape).reduce((count, neighbor) => {
+    const neighborIndex = indexByCell.get(cellKey(neighbor));
+    return count + (
+      neighborIndex !== undefined && isAvailable(neighborIndex)
+        ? 1
+        : 0
+    );
+  }, 0);
+};
+
+export const calculateHeldCellScore = (
+  level: NeighborhoodLevel,
+  centerIndex: number,
+  isAvailable: (index: number) => boolean,
+  isVisible: (index: number) => boolean,
+  displayNumber: (index: number) => number,
+  isInfeasible: (index: number) => boolean = () => false,
+): BoardHoldScore => {
+  const centerCell = level.solutionPath[centerIndex];
+  if (!centerCell) {
+    return {
+      choiceQuantity: 0,
+      choiceScore: 0,
+      nextNumberDistance: 0,
+      reasoningBranchCount: 0,
+      reasoningBranchScore: 0,
+      rawTotal: 0,
+      total: 0,
+    };
+  }
+
+  const indexByCell = new Map(
+    level.solutionPath.map((cell, index) => [cellKey(cell), index]),
+  );
+  const hiddenChoiceIndices = neighborCells(centerCell, level.boardShape).flatMap((neighbor) => {
+    const index = indexByCell.get(cellKey(neighbor));
+    return index !== undefined && isAvailable(index) ? [index] : [];
+  });
+  const currentNumber = displayNumber(centerIndex);
+  const nextVisible = level.solutionPath.reduce<
+    { index: number; number: number } | undefined
+  >(
+    (next, _, index) => {
+      if (!isVisible(index)) return next;
+      const candidateNumber = displayNumber(index);
+      if (candidateNumber <= currentNumber) return next;
+      return next === undefined || candidateNumber < next.number
+        ? { index, number: candidateNumber }
+        : next;
+    },
+    undefined,
+  );
+  const nextNumberDistance = nextVisible === undefined
+    ? 0
+    : Math.max(0, nextVisible.number - currentNumber - 1);
+  const immediateNextIndex = level.solutionPath.findIndex(
+    (_, index) => displayNumber(index) === currentNumber + 1,
+  );
+  const immediateNextCell = level.solutionPath[immediateNextIndex];
+  const immediateNextIsNeighbor = immediateNextCell
+    ? neighborCells(centerCell, level.boardShape)
+      .some((neighbor) => cellKey(neighbor) === cellKey(immediateNextCell))
+    : false;
+  const choiceIndices = new Set(hiddenChoiceIndices);
+  if (immediateNextIsNeighbor) choiceIndices.add(immediateNextIndex);
+  const choiceQuantity = choiceIndices.size;
+  const choiceScore = [...choiceIndices].reduce(
+    (count, candidateIndex) => count + Number(isInfeasible(candidateIndex)),
+    0,
+  );
+  const reasoningBranchCount = nextVisible === undefined
+    ? 0
+    : countExactLengthBranches(
+      level,
+      centerIndex,
+      nextVisible.index,
+      nextNumberDistance,
+      isAvailable,
+    );
+  const reasoningBranchScore = Math.max(0, reasoningBranchCount - 1);
+  const rawTotal = choiceScore * nextNumberDistance * reasoningBranchScore;
+
+  return {
+    choiceQuantity,
+    choiceScore,
+    nextNumberDistance,
+    reasoningBranchCount,
+    reasoningBranchScore,
+    rawTotal,
+    total: scoreDigitCount(rawTotal),
+  };
+};
 
 export const buildBoardNeighborhoodPreview = (
   level: NeighborhoodLevel,

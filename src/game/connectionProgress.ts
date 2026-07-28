@@ -283,6 +283,26 @@ export class ConnectionProgress {
     return this.connectedNodes.has(index);
   }
 
+  public canCompleteAfterStep(from: number, to: number): boolean {
+    if (!this.inBounds(from) || !this.inBounds(to) || from === to) return false;
+    if (!this.completionSolver) return true;
+    const connectionKey = edgeKey(from, to);
+    if (this.connectedEdges.has(connectionKey)) return true;
+
+    return this.completionSolver.findCompletion({
+      fixedPositions: this.fixedPositions,
+      requiredEdges: [
+        ...this.connectedEdges.values(),
+        [from, to],
+      ],
+      directedStep: {
+        from,
+        to,
+        direction: from === this.active ? this.direction : undefined,
+      },
+    }) !== null;
+  }
+
   public suggestedNextHint(): ConnectionHint | undefined {
     if (this.active === undefined) return undefined;
     const directions: Direction[] = this.direction === undefined ? [1, -1] : [this.direction];

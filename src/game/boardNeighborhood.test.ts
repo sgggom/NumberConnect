@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { buildBoardNeighborhoodPreview } from './boardNeighborhood';
+import {
+  buildBoardNeighborhoodPreview,
+  calculateHeldCellScore,
+  countAvailableNeighborhoodChoices,
+  scoreDigitCount,
+} from './boardNeighborhood';
 import { BoardShape, type Cell } from './types';
 
 const squareCells = (size = 3): Cell[] => Array.from({ length: size }, (_, y) => (
@@ -122,5 +127,170 @@ describe('board neighborhood preview', () => {
       0,
       0,
     )).toBeUndefined();
+  });
+});
+
+describe('available neighborhood choices', () => {
+  it('counts only available cells surrounding the held cell', () => {
+    const available = new Set([0, 1, 2, 3, 5, 8]);
+
+    expect(countAvailableNeighborhoodChoices(
+      { boardShape: BoardShape.Square, solutionPath: squareCells() },
+      4,
+      (index) => available.has(index),
+    )).toBe(6);
+  });
+
+  it('does not count available cells outside the held cell neighborhood', () => {
+    const available = new Set([0, 3, 15]);
+
+    expect(countAvailableNeighborhoodChoices(
+      { boardShape: BoardShape.Square, solutionPath: squareCells(4) },
+      5,
+      (index) => available.has(index),
+    )).toBe(1);
+  });
+
+  it('returns zero for an invalid held cell', () => {
+    expect(countAvailableNeighborhoodChoices(
+      { boardShape: BoardShape.Square, solutionPath: squareCells() },
+      99,
+      () => true,
+    )).toBe(0);
+  });
+});
+
+describe('held cell score', () => {
+  it('converts the raw score into its digit count', () => {
+    expect([0, 1, 9, 10, 99, 100].map(scoreDigitCount)).toEqual([0, 1, 1, 2, 2, 3]);
+  });
+
+  it('multiplies the choice count by the amount of numbers between visible numbers', () => {
+    const solutionPath = squareCells();
+    const available = new Set([0, 1, 2, 3, 5]);
+    const visibleNumbers = new Set([5, 8]);
+
+    expect(calculateHeldCellScore(
+      { boardShape: BoardShape.Square, solutionPath },
+      4,
+      (index) => available.has(index),
+      (index) => visibleNumbers.has(index + 1),
+      (index) => index + 1,
+      (index) => index === 0 || index === 2,
+    )).toEqual({
+      choiceQuantity: 5,
+      choiceScore: 2,
+      nextNumberDistance: 2,
+      reasoningBranchCount: 4,
+      reasoningBranchScore: 3,
+      rawTotal: 12,
+      total: 2,
+    });
+  });
+
+  it('scores zero when the next number is already displayed', () => {
+    expect(calculateHeldCellScore(
+      { boardShape: BoardShape.Square, solutionPath: squareCells() },
+      4,
+      (index) => index !== 5,
+      (index) => index === 4 || index === 5,
+      (index) => index + 1,
+    )).toEqual({
+      choiceQuantity: 8,
+      choiceScore: 0,
+      nextNumberDistance: 0,
+      reasoningBranchCount: 1,
+      reasoningBranchScore: 0,
+      rawTotal: 0,
+      total: 0,
+    });
+  });
+
+  it('does not include the next displayed number when it is outside the surrounding ring', () => {
+    const solutionPath = squareCells(4);
+    const available = new Set([0, 1, 2, 6]);
+
+    expect(calculateHeldCellScore(
+      { boardShape: BoardShape.Square, solutionPath },
+      5,
+      (index) => available.has(index),
+      (index) => index === 5 || index === 15,
+      (index) => index + 1,
+    )).toEqual({
+      choiceQuantity: 4,
+      choiceScore: 0,
+      nextNumberDistance: 9,
+      reasoningBranchCount: 0,
+      reasoningBranchScore: 0,
+      rawTotal: 0,
+      total: 0,
+    });
+  });
+
+  it('does not count a nearby target number when the immediate next number is hidden', () => {
+    const solutionPath = squareCells();
+
+    expect(calculateHeldCellScore(
+      { boardShape: BoardShape.Square, solutionPath },
+      4,
+      (index) => index === 5,
+      (index) => index === 4 || index === 7,
+      (index) => index + 1,
+    )).toEqual({
+      choiceQuantity: 1,
+      choiceScore: 0,
+      nextNumberDistance: 2,
+      reasoningBranchCount: 0,
+      reasoningBranchScore: 0,
+      rawTotal: 0,
+      total: 0,
+    });
+  });
+
+  it('counts the immediate next number when it is displayed and adjacent', () => {
+    const solutionPath = squareCells();
+
+    expect(calculateHeldCellScore(
+      { boardShape: BoardShape.Square, solutionPath },
+      4,
+      () => false,
+      (index) => index === 4 || index === 5,
+      (index) => index + 1,
+    )).toEqual({
+      choiceQuantity: 1,
+      choiceScore: 0,
+      nextNumberDistance: 0,
+      reasoningBranchCount: 1,
+      reasoningBranchScore: 0,
+      rawTotal: 0,
+      total: 0,
+    });
+  });
+
+  it('counts every exact-length path to the next displayed number', () => {
+    const solutionPath: Cell[] = [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 2, y: 0 },
+      { x: 3, y: 0 },
+      { x: 0, y: 1 },
+    ];
+
+    expect(calculateHeldCellScore(
+      { boardShape: BoardShape.Rectangle, solutionPath },
+      0,
+      (index) => index === 1 || index === 2 || index === 4,
+      (index) => index === 0 || index === 3,
+      (index) => index + 1,
+      (index) => index === 4,
+    )).toEqual({
+      choiceQuantity: 2,
+      choiceScore: 1,
+      nextNumberDistance: 2,
+      reasoningBranchCount: 1,
+      reasoningBranchScore: 0,
+      rawTotal: 0,
+      total: 0,
+    });
   });
 });

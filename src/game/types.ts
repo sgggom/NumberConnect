@@ -114,6 +114,16 @@ export interface BoardNeighborhoodPreview {
   viewport?: BoardViewportPreview;
 }
 
+export interface BoardHoldScore {
+  choiceQuantity: number;
+  choiceScore: number;
+  nextNumberDistance: number;
+  reasoningBranchCount: number;
+  reasoningBranchScore: number;
+  rawTotal: number;
+  total: number;
+}
+
 export interface EndlessStageSettings {
   rows: number;
   columns: number;
@@ -139,6 +149,7 @@ export interface BoardSessionInput {
   onWrong: (message: string) => void;
   onComplete: () => void;
   onNeighborhoodPreview?: (preview: BoardNeighborhoodPreview | null) => void;
+  onHoldScore?: (score: BoardHoldScore | null) => void;
 }
 
 export const RECTANGLE_SIZES: ReadonlyArray<Readonly<Cell>> = [

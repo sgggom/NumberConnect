@@ -160,6 +160,8 @@ describe('connection progress', () => {
     );
 
     progress.begin(0);
+    expect(progress.canCompleteAfterStep(0, 3)).toBe(false);
+    expect(progress.canCompleteAfterStep(0, 1)).toBe(true);
     expect(progress.extend(3)).toMatchObject({ type: 'wrong', reason: 'no-completion' });
     expect(progress.extend(1)).toMatchObject({ type: 'advanced' });
   });
