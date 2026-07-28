@@ -1608,7 +1608,7 @@ export class BoardScene extends Phaser.Scene {
       ),
     );
     this.view.choiceScore
-      .setText(String(score.total))
+      .setText(String(score.badgeScore))
       .setPosition(
         heldCellView.x - this.view.radius * 0.72,
         heldCellView.y - this.view.radius * 0.72,

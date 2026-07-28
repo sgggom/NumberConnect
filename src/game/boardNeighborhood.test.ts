@@ -176,15 +176,18 @@ describe('held cell score', () => {
       (index) => available.has(index),
       (index) => visibleNumbers.has(index + 1),
       (index) => index + 1,
-      (index) => index === 0 || index === 2,
+      (index) => index === 0 || index === 1 || index === 2,
     )).toEqual({
       choiceQuantity: 5,
-      choiceScore: 2,
+      choiceScore: 3,
       nextNumberDistance: 2,
       reasoningBranchCount: 4,
       reasoningBranchScore: 3,
-      rawTotal: 12,
-      total: 2,
+      rawTotal: 18,
+      actualScore: 2,
+      experienceScore: 8,
+      total: 10,
+      badgeScore: 2,
     });
   });
 
@@ -202,7 +205,10 @@ describe('held cell score', () => {
       reasoningBranchCount: 1,
       reasoningBranchScore: 0,
       rawTotal: 0,
+      actualScore: 0,
+      experienceScore: 0,
       total: 0,
+      badgeScore: 0,
     });
   });
 
@@ -223,7 +229,10 @@ describe('held cell score', () => {
       reasoningBranchCount: 0,
       reasoningBranchScore: 0,
       rawTotal: 0,
-      total: 0,
+      actualScore: 0,
+      experienceScore: 9,
+      total: 9,
+      badgeScore: 1,
     });
   });
 
@@ -243,7 +252,10 @@ describe('held cell score', () => {
       reasoningBranchCount: 0,
       reasoningBranchScore: 0,
       rawTotal: 0,
-      total: 0,
+      actualScore: 0,
+      experienceScore: 2,
+      total: 2,
+      badgeScore: 1,
     });
   });
 
@@ -263,7 +275,10 @@ describe('held cell score', () => {
       reasoningBranchCount: 1,
       reasoningBranchScore: 0,
       rawTotal: 0,
+      actualScore: 0,
+      experienceScore: 0,
       total: 0,
+      badgeScore: 0,
     });
   });
 
@@ -290,7 +305,10 @@ describe('held cell score', () => {
       reasoningBranchCount: 1,
       reasoningBranchScore: 0,
       rawTotal: 0,
-      total: 0,
+      actualScore: 0,
+      experienceScore: 3,
+      total: 3,
+      badgeScore: 1,
     });
   });
 });
