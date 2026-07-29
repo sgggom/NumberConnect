@@ -312,14 +312,11 @@ class NumberConnectApp {
   private readonly progressLabel = query<HTMLElement>('#play-progress');
   private readonly holdScoreFormula = query<HTMLElement>('#hold-score-formula');
   private readonly holdScoreTotal = query<HTMLElement>('#hold-score-total');
-  private readonly holdScoreRaw = query<HTMLElement>('#hold-score-raw');
   private readonly holdScoreActual = query<HTMLElement>('#hold-score-actual');
-  private readonly holdScoreExperience = query<HTMLElement>('#hold-score-experience');
-  private readonly holdScoreChoice = query<HTMLElement>('#hold-score-choice');
-  private readonly holdScoreQuantity = query<HTMLElement>('#hold-score-quantity');
-  private readonly holdScoreDistance = query<HTMLElement>('#hold-score-distance');
-  private readonly holdScoreBranch = query<HTMLElement>('#hold-score-branch');
-  private readonly holdScoreBranchCount = query<HTMLElement>('#hold-score-branch-count');
+  private readonly holdScoreBadge = query<HTMLElement>('#hold-score-badge');
+  private readonly holdScoreDigits = query<HTMLElement>('#hold-score-digits');
+  private readonly holdScoreExtra = query<HTMLElement>('#hold-score-extra');
+  private readonly holdScoreFeasible = query<HTMLElement>('#hold-score-feasible');
   private readonly livesLabel = query<HTMLElement>('#play-lives');
   private readonly powerUpStatus = query<HTMLElement>('#power-up-status');
   private readonly undoStepButton = query<HTMLButtonElement>('#undo-step-button');
@@ -782,14 +779,11 @@ class NumberConnectApp {
     this.holdScoreFormula.setAttribute('aria-hidden', String(!visible));
     if (!score) return;
     this.holdScoreTotal.textContent = String(score.total);
-    this.holdScoreRaw.textContent = String(score.rawTotal);
     this.holdScoreActual.textContent = String(score.actualScore);
-    this.holdScoreExperience.textContent = String(score.experienceScore);
-    this.holdScoreChoice.textContent = String(score.choiceScore);
-    this.holdScoreQuantity.textContent = String(score.choiceQuantity);
-    this.holdScoreDistance.textContent = String(score.nextNumberDistance);
-    this.holdScoreBranch.textContent = String(score.reasoningBranchScore);
-    this.holdScoreBranchCount.textContent = String(score.reasoningBranchCount);
+    this.holdScoreBadge.textContent = String(score.badgeScore);
+    this.holdScoreDigits.textContent = String(score.totalDigitScore);
+    this.holdScoreExtra.textContent = String(score.extraScore);
+    this.holdScoreFeasible.textContent = String(score.feasibleChoiceCount);
   }
 
   private renderTouchPreviewState(): void {
