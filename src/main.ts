@@ -63,14 +63,14 @@ import { LevelEditorController } from './gameplay/editor';
 import {
   advanceBeadProgress,
   advanceBeadSequence,
-  beadClusterPose,
-  beadRewardTiming,
+  loadBeadJar,
   loadBeadPatterns,
   loadBeadSequence,
   loadCompletedBeadPatternIds,
   markBeadPatternCompleted,
   nextBeads,
   orderedBeads,
+  saveBeadJar,
   saveBeadProgress,
   type BeadPatternData,
   type BeadPixel,
@@ -239,11 +239,6 @@ const roundedRoutePath = (points: RoutePoint[], radius = 20): string => {
 type ResultContext = 'normal' | 'collection' | 'daily' | 'endless-stage' | 'life-depleted' | 'editor-playtest';
 type PlayContext = 'normal' | 'collection' | 'daily' | 'editor-playtest' | 'bead';
 
-interface BeadFlightCluster {
-  layer: HTMLElement;
-  gems: HTMLElement[];
-}
-
 interface ClientPoint {
   x: number;
   y: number;
@@ -359,6 +354,10 @@ class NumberConnectApp {
   private readonly beadProgressText = query<HTMLElement>('#bead-progress-text');
   private readonly beadProgressFill = query<HTMLElement>('#bead-progress-fill');
   private readonly beadStatus = query<HTMLElement>('#bead-screen-status');
+  private readonly beadPlacementOverlay = query<HTMLElement>('#bead-placement-overlay');
+  private readonly beadJarButton = query<HTMLButtonElement>('#bead-jar-button');
+  private readonly beadJarContents = query<HTMLElement>('#bead-jar-contents');
+  private readonly beadJarCount = query<HTMLElement>('#bead-jar-count');
   private readonly beadStartButton = query<HTMLButtonElement>('#bead-start-button');
   private readonly beadGalleryButton = query<HTMLButtonElement>('#bead-gallery-button');
   private readonly beadGalleryCount = query<HTMLElement>('#bead-gallery-count');
@@ -431,7 +430,14 @@ class NumberConnectApp {
   private beadPattern?: BeadPatternData;
   private beadProgress?: BeadProgress;
   private currentBeadReward: BeadPixel[] = [];
+  private beadJar: BeadPixel[] = [];
   private beadRewardAnimating = false;
+  private beadJarInFlight = 0;
+  private readonly completedBeadFlights = new Set<number>();
+  private beadPatternFinishing = false;
+  private beadJarPressHeld = false;
+  private beadJarLongPressTriggered = false;
+  private beadJarPressTimer?: number;
   private collectionCompletedCount = loadCollectionCompletedCount();
   private currentCollectionIndex = 0;
   private dailyCalendarMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1, 12);
@@ -520,6 +526,7 @@ class NumberConnectApp {
     this.beadPatterns = beadPatterns;
     this.beadPattern = beadSequence.pattern;
     this.beadProgress = beadSequence.progress;
+    this.beadJar = loadBeadJar(beadSequence.pattern, beadSequence.progress);
     this.completedBeadPatternIds = new Set(loadCompletedBeadPatternIds(beadPatterns));
     this.refreshLevels();
     this.bindLobby();
@@ -557,6 +564,14 @@ class NumberConnectApp {
     query('#collection-gallery-button').addEventListener('click', () => this.openBeadGallery());
     this.beadBackButton.addEventListener('click', () => this.closeBeadMode());
     this.beadStartButton.addEventListener('click', () => void this.startBeadLevel());
+    this.beadJarButton.addEventListener('pointerdown', (event) => this.handleBeadJarPointerDown(event));
+    this.beadJarButton.addEventListener('pointerup', (event) => this.handleBeadJarPointerUp(event));
+    this.beadJarButton.addEventListener('pointercancel', () => this.cancelBeadJarPress());
+    this.beadJarButton.addEventListener('lostpointercapture', () => this.cancelBeadJarPress());
+    this.beadJarButton.addEventListener('click', (event) => {
+      if (event.detail === 0) void this.placeNextBeadFromJar();
+    });
+    this.beadJarButton.addEventListener('contextmenu', (event) => event.preventDefault());
     this.beadGalleryButton.addEventListener('click', () => this.openBeadGallery());
     query('#bead-gallery-close').addEventListener('click', () => this.beadGalleryDialog.close());
     query('#bead-gallery-detail-back').addEventListener('click', () => this.showBeadGalleryList());
@@ -1392,6 +1407,13 @@ class NumberConnectApp {
     this.settingsDialog.addEventListener('change', () => this.applySettingsChange());
     query('#video-stats-button').addEventListener('click', () => this.openVideoStats());
     query('#video-stats-reset').addEventListener('click', () => this.resetVideoStats());
+    query('#settings-clear-data-button').addEventListener('click', () => this.clearAllLocalData());
+    query('#settings-quick-complete-row').addEventListener('click', () => {
+      if (this.settingsContext !== 'play') return;
+      this.settingsDialog.close();
+      this.boardScene.setPaused(false);
+      this.boardScene.quickComplete();
+    });
     this.settingsRestartButton.addEventListener('click', () => this.restartFromSettings());
     query('#settings-lobby-button').addEventListener('click', () => {
       this.settingsDialog.close();
@@ -1611,6 +1633,10 @@ class NumberConnectApp {
 
   private async startBeadLevel(): Promise<void> {
     if (!this.beadPattern || !this.beadProgress) return;
+    if (this.beadJar.length > 0) {
+      this.renderBeadScreen(undefined, '请先把玻璃瓶中的拼豆放入图纸。');
+      return;
+    }
     const level = this.createNormalLevel();
     const reward = nextBeads(this.beadPattern, this.beadProgress, level.solutionPath.length);
     if (reward.length === 0) {
@@ -2287,71 +2313,17 @@ class NumberConnectApp {
       await this.boardScene.showCompletion();
       if (this.playContext !== 'bead' || !this.beadPattern || !this.beadProgress) return;
 
-      const previousCollected = this.beadProgress.collected;
       const reward = [...this.currentBeadReward];
       const rewardCount = reward.length;
-      const completedPattern = this.beadPattern;
-      this.beadProgress = advanceBeadProgress(this.beadPattern, this.beadProgress, rewardCount);
-      saveBeadProgress(this.beadProgress);
+      this.beadJar = [...this.beadJar, ...reward];
+      saveBeadJar(this.beadPattern.id, this.beadJar);
       this.currentBeadReward = [];
       this.selectNextNormalLevel();
-      const flightCluster = this.createBeadFlightCluster(reward);
-      this.beadRewardAnimating = true;
-      this.beadBackButton.disabled = true;
-      this.beadGalleryButton.disabled = true;
       this.showScreen('bead');
       this.renderBeadScreen(
         undefined,
-        `${rewardCount} 颗拼豆正在归位…`,
-        previousCollected,
+        `本关获得 ${rewardCount} 颗拼豆，已收进玻璃瓶。`,
       );
-      this.beadStartButton.disabled = true;
-      this.beadStartButton.textContent = '拼豆正在归位…';
-
-      try {
-        await nextFrame();
-        await nextFrame();
-        await this.animateBeadFlightCluster(
-          flightCluster,
-          reward,
-          completedPattern,
-          previousCollected,
-        );
-
-        const patternCompleted = this.beadProgress.collected >= orderedBeads(completedPattern).length;
-        this.renderBeadScreen(
-          undefined,
-          patternCompleted
-            ? `${completedPattern.name}完成！`
-            : `本关获得 ${rewardCount} 颗拼豆，已放入图纸。`,
-        );
-
-        if (patternCompleted) {
-          this.completedBeadPatternIds = new Set(markBeadPatternCompleted(
-            this.beadPatterns,
-            completedPattern.id,
-          ));
-          const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-          if (!reducedMotion) await waitFor(620);
-          const nextSequence = advanceBeadSequence(
-            this.beadPatterns,
-            completedPattern,
-            this.beadProgress,
-          );
-          this.beadPattern = nextSequence.pattern;
-          this.beadProgress = nextSequence.progress;
-          this.beadScreen.scrollTop = 0;
-          this.renderBeadScreen(
-            undefined,
-            `${completedPattern.name}已收藏，下一个图案：${nextSequence.pattern.name}`,
-          );
-        }
-      } finally {
-        flightCluster.layer.remove();
-        this.beadRewardAnimating = false;
-        this.beadBackButton.disabled = false;
-        this.beadGalleryButton.disabled = false;
-      }
       return;
     }
     if (this.playContext === 'editor-playtest') {
@@ -2567,6 +2539,7 @@ class NumberConnectApp {
               ? '返回每日挑战'
               : '返回大厅';
     query<HTMLElement>('#settings-solution-row').hidden = context !== 'play';
+    query<HTMLElement>('#settings-quick-complete-row').hidden = context !== 'play';
     this.settingsDialog.showModal();
   }
 
@@ -2579,6 +2552,16 @@ class NumberConnectApp {
     this.videoViews = [];
     saveVideoViews(this.videoViews);
     this.renderVideoStats();
+  }
+
+  private clearAllLocalData(): void {
+    const confirmed = window.confirm(
+      '确定清除全部本地数据吗？\\n\\n关卡进度、拼豆收藏、设置、自制关卡和统计数据都将被永久删除。',
+    );
+    if (!confirmed) return;
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    window.location.reload();
   }
 
   private renderVideoStats(): void {
@@ -3059,6 +3042,7 @@ class NumberConnectApp {
     this.playContext = 'bead';
     this.renderBeadScreen();
     this.showScreen('bead');
+    if (this.beadJar.length > 0) requestAnimationFrame(() => this.beadJarButton.focus());
   }
 
   private openBeadGallery(): void {
@@ -3122,118 +3106,245 @@ class NumberConnectApp {
 
   private closeBeadMode(): void {
     if (this.beadRewardAnimating) return;
+    this.cancelBeadJarPress();
     this.playContext = 'normal';
     this.showScreen('lobby');
   }
 
-  private createBeadFlightCluster(reward: readonly BeadPixel[]): BeadFlightCluster {
+  private handleBeadJarPointerDown(event: PointerEvent): void {
+    if (this.beadJar.length === 0 || this.beadRewardAnimating) return;
+    event.preventDefault();
+    this.cancelBeadJarPress();
+    this.beadJarPressHeld = true;
+    this.beadJarLongPressTriggered = false;
+    this.beadJarButton.classList.add('is-pressing');
+    this.beadJarButton.setPointerCapture(event.pointerId);
+    this.beadJarPressTimer = window.setTimeout(() => {
+      this.beadJarPressTimer = undefined;
+      if (!this.beadJarPressHeld) return;
+      this.beadJarLongPressTriggered = true;
+      void this.drainBeadJarWhileHeld();
+    }, 340);
+  }
+
+  private handleBeadJarPointerUp(event: PointerEvent): void {
+    if (!this.beadJarPressHeld) return;
+    event.preventDefault();
+    const wasLongPress = this.beadJarLongPressTriggered;
+    this.beadJarPressHeld = false;
+    this.beadJarButton.classList.remove('is-pressing');
+    if (this.beadJarPressTimer !== undefined) {
+      window.clearTimeout(this.beadJarPressTimer);
+      this.beadJarPressTimer = undefined;
+    }
+    if (this.beadJarButton.hasPointerCapture(event.pointerId)) {
+      this.beadJarButton.releasePointerCapture(event.pointerId);
+    }
+    if (!wasLongPress) void this.placeNextBeadFromJar();
+  }
+
+  private cancelBeadJarPress(): void {
+    this.beadJarPressHeld = false;
+    this.beadJarLongPressTriggered = false;
+    this.beadJarButton.classList.remove('is-pressing');
+    if (this.beadJarPressTimer !== undefined) {
+      window.clearTimeout(this.beadJarPressTimer);
+      this.beadJarPressTimer = undefined;
+    }
+  }
+
+  private async drainBeadJarWhileHeld(): Promise<void> {
+    while (this.beadJarPressHeld && this.beadJar.length - this.beadJarInFlight > 0) {
+      void this.placeNextBeadFromJar();
+      await waitFor(100);
+    }
+  }
+
+  private async placeNextBeadFromJar(): Promise<boolean> {
+    const rapidPlacement = this.beadJarLongPressTriggered && this.beadJarPressHeld;
+    if (
+      (this.beadRewardAnimating && !rapidPlacement)
+      || this.beadJar.length - this.beadJarInFlight <= 0
+      || !this.beadPattern
+      || !this.beadProgress
+    ) return false;
+    const flightOrder = this.beadProgress.collected + this.beadJarInFlight;
+    const bead = this.beadJar[this.beadJarInFlight];
+    const target = this.beadBoard.querySelector<HTMLElement>(
+      `[data-bead-order="${flightOrder}"]`,
+    );
+    if (!target) return false;
+    this.beadJarInFlight += 1;
+    this.beadRewardAnimating = true;
+    this.renderBeadJar();
+
     const layer = document.createElement('div');
     layer.className = 'bead-flight-layer';
     layer.setAttribute('aria-hidden', 'true');
-    const centerX = this.appShell.clientWidth * 0.5;
-    const centerY = this.appShell.clientHeight * 0.5;
-    const gems = reward.map((bead, index) => {
-      const pose = beadClusterPose(index, reward.length);
-      const gem = document.createElement('i');
-      gem.className = 'bead-flight-gem';
-      gem.style.setProperty('--bead-color', bead.color);
-      gem.style.left = `${centerX + pose.x}px`;
-      gem.style.top = `${centerY + pose.y}px`;
-      gem.style.transform = `translate(-50%, -50%) rotate(${pose.rotation}deg) scale(${pose.scale})`;
-      layer.append(gem);
-      return gem;
-    });
-    this.appShell.append(layer);
-    return { layer, gems };
-  }
-
-  private async animateBeadFlightCluster(
-    cluster: BeadFlightCluster,
-    reward: readonly BeadPixel[],
-    pattern: BeadPatternData,
-    previousCollected: number,
-  ): Promise<void> {
-    const targetCells = reward.map((_, index) => this.beadBoard.querySelector<HTMLElement>(
-      `[data-bead-order="${previousCollected + index}"]`,
-    ));
-    const focusCell = targetCells[Math.floor(targetCells.length * 0.5)];
-    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (focusCell) {
-      focusCell.scrollIntoView({ block: 'center', inline: 'nearest', behavior: reducedMotion ? 'auto' : 'smooth' });
-      if (!reducedMotion) await waitFor(360);
-    }
-
-    const timing = beadRewardTiming(reward.length, reducedMotion);
+    const gem = document.createElement('i');
+    gem.className = 'bead-flight-gem';
+    gem.style.setProperty('--bead-color', bead.color);
     const appRect = this.appShell.getBoundingClientRect();
+    const jarRect = this.beadJarButton.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
     const scale = this.uiVisualScale();
-    const totalBeads = orderedBeads(pattern).length;
-    let landed = 0;
-
-    const flights = cluster.gems.map(async (gem, index) => {
-      const target = targetCells[index];
-      if (!target) {
-        gem.remove();
-        return;
-      }
-      const pose = beadClusterPose(index, reward.length);
-      const startX = Number.parseFloat(gem.style.left);
-      const startY = Number.parseFloat(gem.style.top);
-      const targetRect = target.getBoundingClientRect();
-      const targetX = (targetRect.left - appRect.left + targetRect.width * 0.5) / scale;
-      const targetY = (targetRect.top - appRect.top + targetRect.height * 0.5) / scale;
-      const deltaX = targetX - startX;
-      const deltaY = targetY - startY;
-      const landingScale = Math.max(0.24, Math.min(0.78, targetRect.width / scale / 26));
-      const flightDistance = Math.hypot(deltaX, deltaY);
-      const curveDirection = index % 2 === 0 ? -1 : 1;
-      const curveOffset = curveDirection * Math.min(38, 18 + flightDistance * 0.04);
-      const transform = (x: number, y: number, rotation: number, scale: number): string => (
-        `translate(calc(-50% + ${x}px), calc(-50% + ${y}px)) rotate(${rotation}deg) scale(${scale})`
-      );
-      const flightKeyframe = (progress: number): Keyframe => {
-        const curve = curveOffset * 4 * progress * (1 - progress);
-        const scale = pose.scale + (landingScale - pose.scale) * progress;
-        return {
-          transform: transform(
-            deltaX * progress + curve,
-            deltaY * progress,
-            pose.rotation * (1 - progress),
-            scale,
-          ),
-          offset: progress,
-        };
-      };
+    const startX = (jarRect.left - appRect.left + jarRect.width * 0.14) / scale;
+    const startY = (jarRect.top - appRect.top + jarRect.height * 0.68) / scale;
+    const targetX = (targetRect.left - appRect.left + targetRect.width * 0.5) / scale;
+    const targetY = (targetRect.top - appRect.top + targetRect.height * 0.5) / scale;
+    const deltaX = targetX - startX;
+    const deltaY = targetY - startY;
+    const landingScale = Math.max(0.24, Math.min(0.78, targetRect.width / scale / 26));
+    gem.style.left = `${startX}px`;
+    gem.style.top = `${startY}px`;
+    gem.style.transform = 'translate(-50%, -50%) rotate(-12deg) scale(.8)';
+    layer.append(gem);
+    this.appShell.append(layer);
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    try {
       const animation = gem.animate([
-        flightKeyframe(0),
-        flightKeyframe(0.25),
-        flightKeyframe(0.5),
-        flightKeyframe(0.75),
-        flightKeyframe(1),
+        { transform: 'translate(-50%, -50%) rotate(-12deg) scale(.8)', offset: 0 },
+        {
+          transform: `translate(calc(-50% + ${deltaX * 0.48}px), calc(-50% + ${deltaY * 0.48 - 48}px)) rotate(16deg) scale(1.06)`,
+          offset: 0.48,
+        },
+        {
+          transform: `translate(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px)) rotate(0deg) scale(${landingScale})`,
+          offset: 1,
+        },
       ], {
-        duration: timing.flightDuration,
-        delay: index * timing.stagger,
+        duration: reducedMotion ? 1 : 500,
         easing: 'cubic-bezier(.2,.72,.2,1)',
         fill: 'forwards',
       });
-
       try {
         await animation.finished;
       } catch {
         // A canceled animation still settles its bead into the saved position.
       }
       target.classList.add('is-filled');
-      gem.remove();
-      landed += 1;
-      const displayedCollected = Math.min(totalBeads, previousCollected + landed);
-      const percent = totalBeads === 0 ? 100 : Math.round(displayedCollected / totalBeads * 100);
-      this.beadProgressText.textContent = `${displayedCollected} / ${totalBeads}`;
-      this.beadProgressFill.style.width = `${percent}%`;
-      this.beadProgressFill.parentElement?.setAttribute('aria-valuenow', String(percent));
-      this.beadStatus.textContent = `拼豆归位 ${landed} / ${reward.length}`;
-    });
+      this.completedBeadFlights.add(flightOrder);
+    } finally {
+      layer.remove();
+    }
 
-    await Promise.all(flights);
-    targetCells.forEach((cell) => cell?.classList.add('is-filled'));
+    await this.flushCompletedBeadFlights();
+    return true;
+  }
+
+  private async flushCompletedBeadFlights(): Promise<void> {
+    if (!this.beadPattern || !this.beadProgress) return;
+    let changed = false;
+    while (this.completedBeadFlights.has(this.beadProgress.collected)) {
+      this.completedBeadFlights.delete(this.beadProgress.collected);
+      this.beadProgress = advanceBeadProgress(this.beadPattern, this.beadProgress, 1);
+      this.beadJar.shift();
+      this.beadJarInFlight = Math.max(0, this.beadJarInFlight - 1);
+      changed = true;
+    }
+    this.beadRewardAnimating = this.beadJarInFlight > 0;
+    if (!changed) return;
+    saveBeadProgress(this.beadProgress);
+    saveBeadJar(this.beadPattern.id, this.beadJar);
+
+    const completed = this.beadProgress.collected >= orderedBeads(this.beadPattern).length;
+    if (completed && this.beadJar.length === 0 && !this.beadPatternFinishing) {
+      this.beadPatternFinishing = true;
+      try {
+        await this.finishBeadPatternFromJar(this.beadPattern);
+      } finally {
+        this.beadPatternFinishing = false;
+      }
+      return;
+    }
+    this.updateBeadPlacementUi(
+      this.beadJar.length > 0
+        ? `再放 ${this.beadJar.length} 颗，瓶子就空了。`
+        : '瓶中的拼豆已全部归位。',
+    );
+  }
+
+  private async finishBeadPatternFromJar(completedPattern: BeadPatternData): Promise<void> {
+    if (!this.beadProgress) return;
+    this.completedBeadPatternIds = new Set(markBeadPatternCompleted(
+      this.beadPatterns,
+      completedPattern.id,
+    ));
+    this.renderBeadScreen(undefined, `${completedPattern.name}完成！`);
+    if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) await waitFor(620);
+    if (this.beadPattern?.id !== completedPattern.id || this.beadJar.length > 0) return;
+    const nextSequence = advanceBeadSequence(
+      this.beadPatterns,
+      completedPattern,
+      this.beadProgress,
+    );
+    this.beadPattern = nextSequence.pattern;
+    this.beadProgress = nextSequence.progress;
+    this.beadJar = loadBeadJar(nextSequence.pattern, nextSequence.progress);
+    this.beadScreen.scrollTop = 0;
+    this.renderBeadScreen(
+      undefined,
+      `${completedPattern.name}已收藏，下一个图案：${nextSequence.pattern.name}`,
+    );
+  }
+
+  private renderBeadJar(): void {
+    const count = Math.max(0, this.beadJar.length - this.beadJarInFlight);
+    const placementRequired = this.beadJar.length > 0;
+    this.beadScreen.classList.toggle('is-bead-placement-required', placementRequired);
+    this.beadScreen.setAttribute('aria-busy', String(placementRequired));
+    this.beadPlacementOverlay.hidden = !placementRequired;
+    this.beadJarButton.hidden = !placementRequired;
+    this.beadBackButton.disabled = placementRequired;
+    this.beadGalleryButton.disabled = placementRequired;
+    this.beadJarCount.textContent = String(count);
+    this.beadJarButton.disabled = count === 0;
+    this.beadJarButton.setAttribute(
+      'aria-label',
+      count === 0
+        ? '拼豆瓶是空的'
+        : `拼豆瓶中有${count}颗，点击放置一颗，长按连续放置`,
+    );
+    const hint = this.beadJarButton.querySelector('small');
+    if (hint) hint.textContent = count === 0
+      ? '通关获得的拼豆会收集在这里'
+      : '点击放 1 颗 · 长按连续放置';
+
+    const preview = this.beadJar.slice(this.beadJarInFlight, this.beadJarInFlight + 20);
+    const gems = preview.map((bead, index) => {
+      const gem = document.createElement('i');
+      const row = Math.floor(index / 5);
+      const column = index % 5;
+      gem.className = 'bead-jar-gem';
+      gem.style.setProperty('--bead-color', bead.color);
+      gem.style.left = `${column * 10 + (row % 2) * 3}px`;
+      gem.style.top = `${27 - row * 7 + (column % 2) * 2}px`;
+      gem.style.transform = `rotate(${(index * 37) % 42 - 21}deg) scale(${0.72 + index % 3 * 0.08})`;
+      return gem;
+    });
+    this.beadJarContents.replaceChildren(...gems);
+  }
+
+  private updateBeadPlacementUi(message: string): void {
+    if (!this.beadPattern || !this.beadProgress) return;
+    const total = orderedBeads(this.beadPattern).length;
+    const collected = Math.min(total, this.beadProgress.collected);
+    const percent = total === 0 ? 100 : Math.round(collected / total * 100);
+    this.beadProgressText.textContent = `${collected} / ${total}`;
+    this.beadProgressFill.style.width = `${percent}%`;
+    this.beadProgressFill.parentElement?.setAttribute('aria-valuenow', String(percent));
+    this.beadBoard.setAttribute(
+      'aria-label',
+      `${this.beadPattern.width}乘${this.beadPattern.height}${this.beadPattern.name}拼豆图纸，已完成${percent}%`,
+    );
+    this.beadStatus.textContent = message;
+    this.beadStartButton.disabled = this.beadJar.length > 0 || collected >= total;
+    this.beadStartButton.textContent = this.beadJar.length > 0
+      ? `先放完瓶中的 ${this.beadJar.length} 颗`
+      : collected >= total
+        ? '图案已完成'
+        : `进入关卡 · 可获得 ${Math.min(total - collected, this.createNormalLevel().solutionPath.length)} 颗`;
+    this.renderBeadJar();
   }
 
   private syncBeadCellSize(pattern: BeadPatternData | undefined = this.beadPattern): void {
@@ -3287,8 +3398,10 @@ class NumberConnectApp {
 
     const percent = beads.length === 0 ? 100 : Math.round(collected / beads.length * 100);
     const remaining = beads.length - collected;
+    const waitingInJar = Math.min(remaining, this.beadJar.length);
+    const availableToEarn = Math.max(0, remaining - waitingInJar);
     const levelSize = this.levels.length > 0 ? this.createNormalLevel().solutionPath.length : 0;
-    const nextReward = Math.min(remaining, levelSize);
+    const nextReward = Math.min(availableToEarn, levelSize);
     this.beadBoard.style.gridTemplateColumns = `repeat(${pattern.width}, 1fr)`;
     this.beadBoard.style.gridTemplateRows = `repeat(${pattern.height}, 1fr)`;
     this.beadBoard.style.aspectRatio = `${pattern.width} / ${pattern.height}`;
@@ -3303,11 +3416,20 @@ class NumberConnectApp {
     this.beadProgressFill.style.width = `${percent}%`;
     const progressbar = this.beadProgressFill.parentElement;
     progressbar?.setAttribute('aria-valuenow', String(percent));
-    this.beadStatus.textContent = message ?? (remaining > 0 ? `还差 ${remaining} 颗拼豆完成图案` : '图案完成！所有拼豆都已归位。');
-    this.beadStartButton.disabled = remaining === 0;
+    this.beadStatus.textContent = message ?? (
+      waitingInJar > 0
+        ? `瓶中还有 ${waitingInJar} 颗，点击玻璃瓶放入图纸。`
+        : remaining > 0
+          ? `还差 ${remaining} 颗拼豆完成图案`
+          : '图案完成！所有拼豆都已归位。'
+    );
+    this.beadStartButton.disabled = remaining === 0 || waitingInJar > 0;
     this.beadStartButton.textContent = remaining === 0
       ? '图案已完成'
+      : waitingInJar > 0
+        ? `先放完瓶中的 ${waitingInJar} 颗`
       : `进入关卡 · 可获得 ${nextReward} 颗`;
+    this.renderBeadJar();
     this.beadGalleryCount.textContent = String(this.completedBeadPatternIds.size);
   }
 

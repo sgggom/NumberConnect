@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   advanceBeadProgress,
   advanceBeadSequence,
+  loadBeadJar,
   loadBeadProgress,
   loadBeadSequence,
   loadCompletedBeadPatternIds,
@@ -11,6 +12,7 @@ import {
   parseBeadPattern,
   parseBeadPatternManifest,
   saveBeadProgress,
+  saveBeadJar,
   type BeadPatternData,
 } from '../gameplay/beads';
 
@@ -53,6 +55,21 @@ describe('bead progression', () => {
     expect(completed.collected).toBe(4);
     saveBeadProgress(completed, storage);
     expect(loadBeadProgress(pattern, storage)).toEqual(completed);
+  });
+
+  it('persists jar beads and drops beads already placed in the pattern', () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: vi.fn((key: string) => values.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => { values.set(key, value); }),
+    };
+    const reward = orderedBeads(pattern).slice(1, 4);
+    saveBeadJar(pattern.id, reward, storage);
+
+    expect(loadBeadJar(pattern, { patternId: pattern.id, collected: 1 }, storage)).toEqual(reward);
+    expect(loadBeadJar(pattern, { patternId: pattern.id, collected: 3 }, storage)).toEqual([
+      reward[2],
+    ]);
   });
 
   it('rejects incomplete pattern rows and metadata inside the data file', () => {

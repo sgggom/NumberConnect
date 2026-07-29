@@ -37,6 +37,7 @@ interface StorageLike {
 
 const PROGRESS_KEY = 'number-connect.bead-progress.v1';
 const COLLECTION_KEY = 'number-connect.bead-collection.v1';
+const JAR_KEY = 'number-connect.bead-jar.v1';
 const COLOR_PATTERN = /^#[0-9a-f]{6}$/i;
 
 const browserStorage = (): StorageLike | undefined => {
@@ -195,6 +196,50 @@ export const saveBeadProgress = (
     storage?.setItem(PROGRESS_KEY, JSON.stringify(progress));
   } catch {
     // Progress persistence is optional when storage is unavailable.
+  }
+};
+
+export const loadBeadJar = (
+  pattern: BeadPatternData,
+  progress: BeadProgress,
+  storage: StorageLike | undefined = browserStorage(),
+): BeadPixel[] => {
+  try {
+    const parsed = JSON.parse(storage?.getItem(JAR_KEY) ?? '{}') as {
+      patternId?: unknown;
+      beads?: unknown;
+    };
+    if (parsed.patternId !== pattern.id || !Array.isArray(parsed.beads)) return [];
+    const ordered = orderedBeads(pattern);
+    const beadOrder = new Map(ordered.map((bead, index) => [`${bead.x},${bead.y}`, index]));
+    return parsed.beads.filter((value): value is BeadPixel => {
+      if (!value || typeof value !== 'object') return false;
+      const bead = value as Partial<BeadPixel>;
+      if (
+        !Number.isInteger(bead.x)
+        || !Number.isInteger(bead.y)
+        || typeof bead.color !== 'string'
+        || !COLOR_PATTERN.test(bead.color)
+      ) return false;
+      const index = beadOrder.get(`${bead.x},${bead.y}`);
+      return index !== undefined
+        && index >= progress.collected
+        && ordered[index].color.toUpperCase() === bead.color.toUpperCase();
+    });
+  } catch {
+    return [];
+  }
+};
+
+export const saveBeadJar = (
+  patternId: string,
+  beads: readonly BeadPixel[],
+  storage: StorageLike | undefined = browserStorage(),
+): void => {
+  try {
+    storage?.setItem(JAR_KEY, JSON.stringify({ patternId, beads }));
+  } catch {
+    // Pending bead persistence is optional when storage is unavailable.
   }
 };
 
