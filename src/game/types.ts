@@ -117,13 +117,14 @@ export interface BoardNeighborhoodPreview {
 export interface BoardHoldScore {
   choiceQuantity: number;
   choiceScore: number;
+  feasibleChoiceCount: number;
+  extraScore: number;
   nextNumberDistance: number;
   reasoningBranchCount: number;
   reasoningBranchScore: number;
-  rawTotal: number;
   actualScore: number;
-  experienceScore: number;
   total: number;
+  totalDigitScore: number;
   badgeScore: number;
 }
 

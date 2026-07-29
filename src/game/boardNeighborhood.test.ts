@@ -180,14 +180,15 @@ describe('held cell score', () => {
     )).toEqual({
       choiceQuantity: 5,
       choiceScore: 3,
+      feasibleChoiceCount: 2,
+      extraScore: 0.4,
       nextNumberDistance: 2,
       reasoningBranchCount: 4,
       reasoningBranchScore: 3,
-      rawTotal: 18,
-      actualScore: 2,
-      experienceScore: 8,
-      total: 10,
-      badgeScore: 2,
+      actualScore: 18,
+      total: 18,
+      totalDigitScore: 2,
+      badgeScore: 2.4,
     });
   });
 
@@ -201,13 +202,14 @@ describe('held cell score', () => {
     )).toEqual({
       choiceQuantity: 8,
       choiceScore: 0,
+      feasibleChoiceCount: 8,
+      extraScore: 0,
       nextNumberDistance: 0,
       reasoningBranchCount: 1,
       reasoningBranchScore: 0,
-      rawTotal: 0,
       actualScore: 0,
-      experienceScore: 0,
       total: 0,
+      totalDigitScore: 0,
       badgeScore: 0,
     });
   });
@@ -225,14 +227,15 @@ describe('held cell score', () => {
     )).toEqual({
       choiceQuantity: 4,
       choiceScore: 0,
+      feasibleChoiceCount: 4,
+      extraScore: 0.8,
       nextNumberDistance: 9,
       reasoningBranchCount: 0,
       reasoningBranchScore: 0,
-      rawTotal: 0,
       actualScore: 0,
-      experienceScore: 9,
-      total: 9,
-      badgeScore: 1,
+      total: 0,
+      totalDigitScore: 0,
+      badgeScore: 0.8,
     });
   });
 
@@ -248,14 +251,15 @@ describe('held cell score', () => {
     )).toEqual({
       choiceQuantity: 1,
       choiceScore: 0,
+      feasibleChoiceCount: 1,
+      extraScore: 0.2,
       nextNumberDistance: 2,
       reasoningBranchCount: 0,
       reasoningBranchScore: 0,
-      rawTotal: 0,
       actualScore: 0,
-      experienceScore: 2,
-      total: 2,
-      badgeScore: 1,
+      total: 0,
+      totalDigitScore: 0,
+      badgeScore: 0.2,
     });
   });
 
@@ -271,13 +275,14 @@ describe('held cell score', () => {
     )).toEqual({
       choiceQuantity: 1,
       choiceScore: 0,
+      feasibleChoiceCount: 1,
+      extraScore: 0,
       nextNumberDistance: 0,
       reasoningBranchCount: 1,
       reasoningBranchScore: 0,
-      rawTotal: 0,
       actualScore: 0,
-      experienceScore: 0,
       total: 0,
+      totalDigitScore: 0,
       badgeScore: 0,
     });
   });
@@ -301,14 +306,15 @@ describe('held cell score', () => {
     )).toEqual({
       choiceQuantity: 2,
       choiceScore: 1,
+      feasibleChoiceCount: 1,
+      extraScore: 0.2,
       nextNumberDistance: 2,
       reasoningBranchCount: 1,
       reasoningBranchScore: 0,
-      rawTotal: 0,
       actualScore: 0,
-      experienceScore: 3,
-      total: 3,
-      badgeScore: 1,
+      total: 0,
+      totalDigitScore: 0,
+      badgeScore: 0.2,
     });
   });
 });
