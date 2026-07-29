@@ -63,17 +63,18 @@ import { LevelEditorController } from './gameplay/editor';
 import {
   advanceBeadProgress,
   advanceBeadSequence,
-  loadBeadJar,
+  beadJarLaunchInterval,
+  loadBeadJarQueue,
   loadBeadPatterns,
   loadBeadSequence,
   loadCompletedBeadPatternIds,
   markBeadPatternCompleted,
-  nextBeads,
+  nextBeadsAcrossPatterns,
   orderedBeads,
-  saveBeadJar,
+  saveBeadJarQueue,
   saveBeadProgress,
+  type BeadJarItem,
   type BeadPatternData,
-  type BeadPixel,
   type BeadProgress,
 } from './gameplay/beads';
 import {
@@ -109,6 +110,8 @@ const TOUCH_PREVIEW_EXIT_DURATION_MS = 170;
 const PRIMARY_ACTION_TRANSITION_DURATION_MS = 320;
 const POWER_UP_FLIGHT_DURATION_MS = 420;
 const POWER_UP_RETURN_DURATION_MS = 360;
+const BEAD_FLIGHT_DURATION_MS = 500;
+const BEAD_RAPID_DEFAULT_INTERVAL_MS = 100;
 const COLLECTION_MIN_LEVELS = 7;
 const COLLECTION_PROGRESS_KEY = 'number-connect.collection-route.v1';
 const DAILY_COMPLETION_KEY = 'number-connect.daily-completed.v1';
@@ -429,10 +432,11 @@ class NumberConnectApp {
   private completedBeadPatternIds = new Set<string>();
   private beadPattern?: BeadPatternData;
   private beadProgress?: BeadProgress;
-  private currentBeadReward: BeadPixel[] = [];
-  private beadJar: BeadPixel[] = [];
+  private currentBeadReward: BeadJarItem[] = [];
+  private beadJar: BeadJarItem[] = [];
   private beadRewardAnimating = false;
   private beadJarInFlight = 0;
+  private beadJarLaunchIntervalMs = BEAD_RAPID_DEFAULT_INTERVAL_MS;
   private readonly completedBeadFlights = new Set<number>();
   private beadPatternFinishing = false;
   private beadJarPressHeld = false;
@@ -526,7 +530,7 @@ class NumberConnectApp {
     this.beadPatterns = beadPatterns;
     this.beadPattern = beadSequence.pattern;
     this.beadProgress = beadSequence.progress;
-    this.beadJar = loadBeadJar(beadSequence.pattern, beadSequence.progress);
+    this.beadJar = loadBeadJarQueue(beadPatterns, beadSequence.progress);
     this.completedBeadPatternIds = new Set(loadCompletedBeadPatternIds(beadPatterns));
     this.refreshLevels();
     this.bindLobby();
@@ -1638,7 +1642,12 @@ class NumberConnectApp {
       return;
     }
     const level = this.createNormalLevel();
-    const reward = nextBeads(this.beadPattern, this.beadProgress, level.solutionPath.length);
+    const reward = nextBeadsAcrossPatterns(
+      this.beadPatterns,
+      this.beadPattern,
+      this.beadProgress,
+      level.solutionPath.length,
+    );
     if (reward.length === 0) {
       this.renderBeadScreen(undefined, '图案已经全部完成。');
       return;
@@ -2316,7 +2325,7 @@ class NumberConnectApp {
       const reward = [...this.currentBeadReward];
       const rewardCount = reward.length;
       this.beadJar = [...this.beadJar, ...reward];
-      saveBeadJar(this.beadPattern.id, this.beadJar);
+      saveBeadJarQueue(this.beadJar);
       this.currentBeadReward = [];
       this.selectNextNormalLevel();
       this.showScreen('bead');
@@ -3123,6 +3132,9 @@ class NumberConnectApp {
       this.beadJarPressTimer = undefined;
       if (!this.beadJarPressHeld) return;
       this.beadJarLongPressTriggered = true;
+      this.beadJarLaunchIntervalMs = beadJarLaunchInterval(
+        this.beadJar.slice(this.beadJarInFlight),
+      );
       this.beadJarButton.classList.add('is-long-pressing');
       void this.drainBeadJarWhileHeld();
     }, 340);
@@ -3133,6 +3145,7 @@ class NumberConnectApp {
     event.preventDefault();
     const wasLongPress = this.beadJarLongPressTriggered;
     this.beadJarPressHeld = false;
+    this.beadJarLaunchIntervalMs = BEAD_RAPID_DEFAULT_INTERVAL_MS;
     this.beadJarButton.classList.remove('is-pressing', 'is-long-pressing');
     if (this.beadJarPressTimer !== undefined) {
       window.clearTimeout(this.beadJarPressTimer);
@@ -3147,6 +3160,7 @@ class NumberConnectApp {
   private cancelBeadJarPress(): void {
     this.beadJarPressHeld = false;
     this.beadJarLongPressTriggered = false;
+    this.beadJarLaunchIntervalMs = BEAD_RAPID_DEFAULT_INTERVAL_MS;
     this.beadJarButton.classList.remove('is-pressing', 'is-long-pressing');
     if (this.beadJarPressTimer !== undefined) {
       window.clearTimeout(this.beadJarPressTimer);
@@ -3156,8 +3170,14 @@ class NumberConnectApp {
 
   private async drainBeadJarWhileHeld(): Promise<void> {
     while (this.beadJarPressHeld && this.beadJar.length - this.beadJarInFlight > 0) {
+      const nextBead = this.beadJar[this.beadJarInFlight];
+      if (
+        this.beadPatternFinishing
+        || !nextBead
+        || nextBead.patternId !== this.beadPattern?.id
+      ) break;
       void this.placeNextBeadFromJar();
-      await waitFor(100);
+      await waitFor(this.beadJarLaunchIntervalMs);
     }
   }
 
@@ -3168,9 +3188,11 @@ class NumberConnectApp {
       || this.beadJar.length - this.beadJarInFlight <= 0
       || !this.beadPattern
       || !this.beadProgress
+      || this.beadPatternFinishing
     ) return false;
     const flightOrder = this.beadProgress.collected + this.beadJarInFlight;
     const bead = this.beadJar[this.beadJarInFlight];
+    if (!bead || bead.patternId !== this.beadPattern.id) return false;
     const target = this.beadBoard.querySelector<HTMLElement>(
       `[data-bead-order="${flightOrder}"]`,
     );
@@ -3218,7 +3240,7 @@ class NumberConnectApp {
           offset: 1,
         },
       ], {
-        duration: reducedMotion ? 1 : 500,
+        duration: reducedMotion ? 1 : BEAD_FLIGHT_DURATION_MS,
         easing: 'cubic-bezier(.2,.72,.2,1)',
         fill: 'forwards',
       });
@@ -3303,15 +3325,22 @@ class NumberConnectApp {
     this.beadRewardAnimating = this.beadJarInFlight > 0;
     if (!changed) return;
     saveBeadProgress(this.beadProgress);
-    saveBeadJar(this.beadPattern.id, this.beadJar);
+    saveBeadJarQueue(this.beadJar);
 
     const completed = this.beadProgress.collected >= orderedBeads(this.beadPattern).length;
-    if (completed && this.beadJar.length === 0 && !this.beadPatternFinishing) {
+    if (completed && !this.beadPatternFinishing) {
       this.beadPatternFinishing = true;
       try {
-        await this.finishBeadPatternFromJar(this.beadPattern);
+        if (this.beadJar.length > 0) {
+          await this.continueBeadJarIntoNextPattern(this.beadPattern);
+        } else {
+          await this.finishBeadPatternFromJar(this.beadPattern);
+        }
       } finally {
         this.beadPatternFinishing = false;
+        if (this.beadJarPressHeld && this.beadJarLongPressTriggered && this.beadJar.length > 0) {
+          void this.drainBeadJarWhileHeld();
+        }
       }
       return;
     }
@@ -3338,12 +3367,64 @@ class NumberConnectApp {
     );
     this.beadPattern = nextSequence.pattern;
     this.beadProgress = nextSequence.progress;
-    this.beadJar = loadBeadJar(nextSequence.pattern, nextSequence.progress);
     this.beadScreen.scrollTop = 0;
     this.renderBeadScreen(
       undefined,
       `${completedPattern.name}已收藏，下一个图案：${nextSequence.pattern.name}`,
     );
+  }
+
+  private async continueBeadJarIntoNextPattern(completedPattern: BeadPatternData): Promise<void> {
+    if (!this.beadProgress) return;
+    this.completedBeadPatternIds = new Set(markBeadPatternCompleted(
+      this.beadPatterns,
+      completedPattern.id,
+    ));
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (!reducedMotion) {
+      const outgoing = this.beadBoard.animate([
+        { opacity: 1, transform: 'translate3d(0,0,0)' },
+        { opacity: 0, transform: 'translate3d(-112%,0,0)' },
+      ], {
+        duration: 260,
+        easing: 'cubic-bezier(.4,0,.8,.25)',
+        fill: 'forwards',
+      });
+      try {
+        await outgoing.finished;
+      } catch {
+        // A canceled transition still advances to the queued pattern.
+      } finally {
+        outgoing.cancel();
+      }
+    }
+
+    const nextSequence = advanceBeadSequence(
+      this.beadPatterns,
+      completedPattern,
+      this.beadProgress,
+    );
+    this.beadPattern = nextSequence.pattern;
+    this.beadProgress = nextSequence.progress;
+    this.beadScreen.scrollTop = 0;
+    this.renderBeadScreen(
+      undefined,
+      `${completedPattern.name}已完成，继续拼${nextSequence.pattern.name}。`,
+    );
+
+    if (!reducedMotion) {
+      try {
+        await this.beadBoard.animate([
+          { opacity: 0, transform: 'translate3d(112%,0,0)' },
+          { opacity: 1, transform: 'translate3d(0,0,0)' },
+        ], {
+          duration: 300,
+          easing: 'cubic-bezier(.22,1,.36,1)',
+        }).finished;
+      } catch {
+        // The new pattern remains active if the entrance animation is canceled.
+      }
+    }
   }
 
   private renderBeadJar(): void {
@@ -3456,7 +3537,10 @@ class NumberConnectApp {
 
     const percent = beads.length === 0 ? 100 : Math.round(collected / beads.length * 100);
     const remaining = beads.length - collected;
-    const waitingInJar = Math.min(remaining, this.beadJar.length);
+    const waitingInJar = Math.min(
+      remaining,
+      this.beadJar.filter((bead) => bead.patternId === pattern.id).length,
+    );
     const availableToEarn = Math.max(0, remaining - waitingInJar);
     const levelSize = this.levels.length > 0 ? this.createNormalLevel().solutionPath.length : 0;
     const nextReward = Math.min(availableToEarn, levelSize);

@@ -12,6 +12,10 @@ export interface BeadPixel {
   color: string;
 }
 
+export interface BeadJarItem extends BeadPixel {
+  patternId: string;
+}
+
 export interface BeadProgress {
   patternId: string;
   collected: number;
@@ -243,6 +247,61 @@ export const saveBeadJar = (
   }
 };
 
+export const loadBeadJarQueue = (
+  patterns: readonly BeadPatternData[],
+  progress: BeadProgress,
+  storage: StorageLike | undefined = browserStorage(),
+): BeadJarItem[] => {
+  try {
+    const parsed = JSON.parse(storage?.getItem(JAR_KEY) ?? '{}') as {
+      patternId?: unknown;
+      beads?: unknown;
+    };
+    if (!Array.isArray(parsed.beads)) return [];
+    const patternById = new Map(patterns.map((pattern) => [pattern.id, pattern]));
+    return parsed.beads.flatMap((value): BeadJarItem[] => {
+      if (!value || typeof value !== 'object') return [];
+      const bead = value as Partial<BeadJarItem>;
+      const patternId = typeof bead.patternId === 'string'
+        ? bead.patternId
+        : typeof parsed.patternId === 'string'
+          ? parsed.patternId
+          : undefined;
+      const pattern = patternId ? patternById.get(patternId) : undefined;
+      if (
+        !pattern
+        || typeof bead.x !== 'number'
+        || !Number.isInteger(bead.x)
+        || typeof bead.y !== 'number'
+        || !Number.isInteger(bead.y)
+        || typeof bead.color !== 'string'
+        || !COLOR_PATTERN.test(bead.color)
+      ) return [];
+      const ordered = orderedBeads(pattern);
+      const index = ordered.findIndex((candidate) => candidate.x === bead.x && candidate.y === bead.y);
+      const minimumIndex = pattern.id === progress.patternId ? progress.collected : 0;
+      if (
+        index < minimumIndex
+        || ordered[index]?.color.toUpperCase() !== bead.color.toUpperCase()
+      ) return [];
+      return [{ patternId: pattern.id, x: bead.x, y: bead.y, color: bead.color }];
+    });
+  } catch {
+    return [];
+  }
+};
+
+export const saveBeadJarQueue = (
+  beads: readonly BeadJarItem[],
+  storage: StorageLike | undefined = browserStorage(),
+): void => {
+  try {
+    storage?.setItem(JAR_KEY, JSON.stringify({ version: 2, beads }));
+  } catch {
+    // Pending bead persistence is optional when storage is unavailable.
+  }
+};
+
 const readCompletedPatternIds = (storage: StorageLike | undefined): string[] => {
   try {
     const parsed = JSON.parse(storage?.getItem(COLLECTION_KEY) ?? '[]') as unknown;
@@ -305,6 +364,62 @@ export const nextBeads = (
   const start = Math.max(0, Math.min(beads.length, Math.floor(progress.collected)));
   const count = Math.max(0, Math.floor(maximum));
   return beads.slice(start, start + count);
+};
+
+export const nextBeadsAcrossPatterns = (
+  patterns: readonly BeadPatternData[],
+  pattern: BeadPatternData,
+  progress: BeadProgress,
+  maximum: number,
+): BeadJarItem[] => {
+  if (patterns.length === 0) return [];
+  const startIndex = Math.max(0, patterns.findIndex((candidate) => candidate.id === pattern.id));
+  const result: BeadJarItem[] = [];
+  const requested = Math.max(0, Math.floor(maximum));
+
+  for (let offset = 0; offset < patterns.length && result.length < requested; offset += 1) {
+    const candidate = patterns[(startIndex + offset) % patterns.length];
+    const start = offset === 0 && candidate.id === progress.patternId
+      ? Math.max(0, progress.collected)
+      : 0;
+    const available = orderedBeads(candidate).slice(start, start + requested - result.length);
+    result.push(...available.map((bead) => ({ ...bead, patternId: candidate.id })));
+  }
+  return result;
+};
+
+export const beadJarLaunchInterval = (
+  beads: readonly BeadJarItem[],
+  options: {
+    totalDurationMs?: number;
+    flightDurationMs?: number;
+    patternTransitionDurationMs?: number;
+    defaultIntervalMs?: number;
+    renderReserveMs?: number;
+  } = {},
+): number => {
+  if (beads.length <= 1) return 0;
+  const totalDurationMs = options.totalDurationMs ?? 4_000;
+  const flightDurationMs = options.flightDurationMs ?? 500;
+  const patternTransitionDurationMs = options.patternTransitionDurationMs ?? 560;
+  const defaultIntervalMs = options.defaultIntervalMs ?? 100;
+  const renderReserveMs = options.renderReserveMs ?? 150;
+  let segmentCount = 1;
+  for (let index = 1; index < beads.length; index += 1) {
+    if (beads[index].patternId !== beads[index - 1].patternId) segmentCount += 1;
+  }
+
+  // Every pattern segment waits for its final bead flight before the next
+  // board can slide in. Only launch gaps inside a segment can be shortened.
+  const launchGapCount = beads.length - segmentCount;
+  if (launchGapCount <= 0) return 0;
+  const fixedDuration = (
+    segmentCount * flightDurationMs
+    + (segmentCount - 1) * patternTransitionDurationMs
+    + renderReserveMs
+  );
+  const fittedInterval = (totalDurationMs - fixedDuration) / launchGapCount;
+  return Math.max(0, Math.min(defaultIntervalMs, fittedInterval));
 };
 
 export const advanceBeadProgress = (
