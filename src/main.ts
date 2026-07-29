@@ -3123,6 +3123,7 @@ class NumberConnectApp {
       this.beadJarPressTimer = undefined;
       if (!this.beadJarPressHeld) return;
       this.beadJarLongPressTriggered = true;
+      this.beadJarButton.classList.add('is-long-pressing');
       void this.drainBeadJarWhileHeld();
     }, 340);
   }
@@ -3132,7 +3133,7 @@ class NumberConnectApp {
     event.preventDefault();
     const wasLongPress = this.beadJarLongPressTriggered;
     this.beadJarPressHeld = false;
-    this.beadJarButton.classList.remove('is-pressing');
+    this.beadJarButton.classList.remove('is-pressing', 'is-long-pressing');
     if (this.beadJarPressTimer !== undefined) {
       window.clearTimeout(this.beadJarPressTimer);
       this.beadJarPressTimer = undefined;
@@ -3146,7 +3147,7 @@ class NumberConnectApp {
   private cancelBeadJarPress(): void {
     this.beadJarPressHeld = false;
     this.beadJarLongPressTriggered = false;
-    this.beadJarButton.classList.remove('is-pressing');
+    this.beadJarButton.classList.remove('is-pressing', 'is-long-pressing');
     if (this.beadJarPressTimer !== undefined) {
       window.clearTimeout(this.beadJarPressTimer);
       this.beadJarPressTimer = undefined;
@@ -3185,11 +3186,12 @@ class NumberConnectApp {
     gem.className = 'bead-flight-gem';
     gem.style.setProperty('--bead-color', bead.color);
     const appRect = this.appShell.getBoundingClientRect();
-    const jarRect = this.beadJarButton.getBoundingClientRect();
+    const jarImage = this.beadJarButton.querySelector<HTMLImageElement>('img');
+    const jarRect = (jarImage ?? this.beadJarButton).getBoundingClientRect();
     const targetRect = target.getBoundingClientRect();
     const scale = this.uiVisualScale();
-    const startX = (jarRect.left - appRect.left + jarRect.width * 0.14) / scale;
-    const startY = (jarRect.top - appRect.top + jarRect.height * 0.68) / scale;
+    const startX = (jarRect.left - appRect.left + jarRect.width * 0.5) / scale;
+    const startY = (jarRect.top - appRect.top + jarRect.height * 0.66) / scale;
     const targetX = (targetRect.left - appRect.left + targetRect.width * 0.5) / scale;
     const targetY = (targetRect.top - appRect.top + targetRect.height * 0.5) / scale;
     const deltaX = targetX - startX;
@@ -3197,15 +3199,18 @@ class NumberConnectApp {
     const landingScale = Math.max(0.24, Math.min(0.78, targetRect.width / scale / 26));
     gem.style.left = `${startX}px`;
     gem.style.top = `${startY}px`;
-    gem.style.transform = 'translate(-50%, -50%) rotate(-12deg) scale(.8)';
+    gem.style.transform = `translate(-50%, -50%) rotate(-12deg) scale(${landingScale})`;
     layer.append(gem);
     this.appShell.append(layer);
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     try {
       const animation = gem.animate([
-        { transform: 'translate(-50%, -50%) rotate(-12deg) scale(.8)', offset: 0 },
         {
-          transform: `translate(calc(-50% + ${deltaX * 0.48}px), calc(-50% + ${deltaY * 0.48 - 48}px)) rotate(16deg) scale(1.06)`,
+          transform: `translate(-50%, -50%) rotate(-12deg) scale(${landingScale})`,
+          offset: 0,
+        },
+        {
+          transform: `translate(calc(-50% + ${deltaX * 0.48}px), calc(-50% + ${deltaY * 0.48 - 48}px)) rotate(16deg) scale(${landingScale})`,
           offset: 0.48,
         },
         {
@@ -3223,6 +3228,7 @@ class NumberConnectApp {
         // A canceled animation still settles its bead into the saved position.
       }
       target.classList.add('is-filled');
+      this.emitBeadPlacementSparkles(target);
       this.completedBeadFlights.add(flightOrder);
     } finally {
       layer.remove();
@@ -3230,6 +3236,58 @@ class NumberConnectApp {
 
     await this.flushCompletedBeadFlights();
     return true;
+  }
+
+  private emitBeadPlacementSparkles(target: HTMLElement): void {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const appRect = this.appShell.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const scale = this.uiVisualScale();
+    const burst = document.createElement('span');
+    burst.className = 'bead-placement-burst';
+    burst.setAttribute('aria-hidden', 'true');
+    burst.style.left = `${(targetRect.left - appRect.left + targetRect.width * 0.5) / scale}px`;
+    burst.style.top = `${(targetRect.top - appRect.top + targetRect.height * 0.5) / scale}px`;
+    this.appShell.append(burst);
+
+    const particleCount = 1 + Math.floor(Math.random() * 3);
+    const animations: Animation[] = [];
+    for (let index = 0; index < particleCount; index += 1) {
+      const particle = document.createElement('i');
+      particle.className = 'bead-placement-spark';
+      particle.style.setProperty('--sparkle-size', `${5 + Math.random() * 4}px`);
+      burst.append(particle);
+
+      const angle = Math.random() * Math.PI * 2;
+      const distance = 13 + Math.random() * 15;
+      const offsetX = Math.cos(angle) * distance;
+      const offsetY = Math.sin(angle) * distance - 5;
+      const rotation = 28 + Math.random() * 54;
+      animations.push(particle.animate([
+        {
+          opacity: 0,
+          transform: 'translate(-50%, -50%) scale(.25) rotate(0deg)',
+          offset: 0,
+        },
+        {
+          opacity: 1,
+          transform: `translate(calc(-50% + ${offsetX * 0.22}px), calc(-50% + ${offsetY * 0.22}px)) scale(1) rotate(${rotation * 0.24}deg)`,
+          offset: 0.42,
+        },
+        {
+          opacity: 0,
+          transform: `translate(calc(-50% + ${offsetX}px), calc(-50% + ${offsetY}px)) scale(.45) rotate(${rotation}deg)`,
+          offset: 1,
+        },
+      ], {
+        duration: 700 + Math.random() * 250,
+        easing: 'cubic-bezier(.35,0,.25,1)',
+        fill: 'forwards',
+      }));
+    }
+
+    void Promise.allSettled(animations.map((animation) => animation.finished))
+      .then(() => burst.remove());
   }
 
   private async flushCompletedBeadFlights(): Promise<void> {
@@ -3361,7 +3419,7 @@ class NumberConnectApp {
     const rowGap = numberValue(styles.rowGap);
     const columnTrack = (contentWidth - columnGap * Math.max(0, pattern.width - 1)) / pattern.width;
     const rowTrack = (contentHeight - rowGap * Math.max(0, pattern.height - 1)) / pattern.height;
-    const dotSize = Math.max(1, Math.min(columnTrack, rowTrack) * 0.94);
+    const dotSize = Math.max(1, Math.min(columnTrack, rowTrack));
     this.beadBoard.style.setProperty('--bead-dot-size', `${dotSize.toFixed(3)}px`);
   }
 
