@@ -299,6 +299,7 @@
       </section>
 
       <section id="bead-screen" class="screen bead-screen" hidden aria-labelledby="bead-screen-title">
+        <div id="bead-placement-overlay" class="bead-placement-overlay" aria-hidden="true" hidden></div>
         <header class="bead-screen-header">
           <button id="bead-back-button" class="icon-button" type="button" aria-label="返回大厅">←</button>
           <div>
@@ -314,6 +315,12 @@
             <strong id="bead-progress-text">0 / 0</strong>
           </div>
           <div id="bead-pattern-board" class="bead-pattern-board" role="img" aria-label="20乘20拼豆图纸"></div>
+          <button id="bead-jar-button" class="bead-jar-button" type="button" aria-label="拼豆瓶是空的" disabled>
+            <span id="bead-jar-contents" class="bead-jar-contents" aria-hidden="true"></span>
+            <img src="./ui/beads/open-glass-jar.svg" alt="" draggable="false" />
+            <strong><b id="bead-jar-count">0</b> 颗</strong>
+            <small>点击放 1 颗 · 长按连续放置</small>
+          </button>
           <div class="bead-progress-track" role="progressbar" aria-label="拼豆完成进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="bead-progress-fill"></i></div>
           <p id="bead-screen-status" class="bead-screen-status" aria-live="polite">正在读取拼豆图纸…</p>
           <button id="bead-start-button" class="button bead-start-button" type="button">进入普通关卡</button>
@@ -384,7 +391,9 @@
           <label id="settings-solution-row" class="setting-row" hidden><span><b>显示答案</b><small>显示隐藏数字和完整连线</small></span><input id="solution-toggle" class="switch" type="checkbox" /></label>
           <div class="setting-row setting-row--preview-size"><span><b>关卡小窗</b><small>选择局部小窗，或放大棋盘并使用全局缩略图</small></span><div id="touch-preview-size" class="setting-segmented" role="radiogroup" aria-label="关卡小窗模式"><label><input type="radio" name="touch-preview-size" value="off" /><span>关闭</span></label><label><input type="radio" name="touch-preview-size" value="small" checked /><span>小</span></label><label><input type="radio" name="touch-preview-size" value="medium" /><span>中</span></label><label><input type="radio" name="touch-preview-size" value="large" /><span>大</span></label><label><input type="radio" name="touch-preview-size" value="zoom" /><span>放大</span></label></div></div>
           <label class="setting-row"><span><b>小窗跟手</b><small>让关卡小窗始终显示在触摸位置上方</small></span><input id="settings-touch-preview-follow" class="switch" type="checkbox" /></label>
+          <button id="settings-quick-complete-row" class="setting-row setting-row--button setting-row--quick-complete" type="button" hidden><span><b>快速完成</b><small>自动沿正确路径连接所有格子</small></span><strong>立即完成 ›</strong></button>
           <button id="video-stats-button" class="setting-row setting-row--button" type="button"><span><b>视频统计</b><small>查看奖励视频的触发点位</small></span><strong id="video-stats-count">0 次 ›</strong></button>
+          <button id="settings-clear-data-button" class="setting-row setting-row--button setting-row--danger" type="button"><span><b>清除数据</b><small>删除全部进度、设置和自制关卡</small></span><strong>全部清除 ›</strong></button>
         </div>
         <footer id="settings-actions" class="settings-actions" hidden>
           <button id="settings-lobby-button" class="button button--secondary" type="button">返回大厅</button>

@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">半透明开口玻璃瓶</title>
+  <desc id="desc">透明背景上的浅蓝色圆润开口玻璃瓶</desc>
+  <defs>
+    <linearGradient id="glassBody" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#8fd6ef" stop-opacity=".34"/>
+      <stop offset=".12" stop-color="#dff7ff" stop-opacity=".14"/>
+      <stop offset=".42" stop-color="#ffffff" stop-opacity=".05"/>
+      <stop offset=".72" stop-color="#c5effd" stop-opacity=".12"/>
+      <stop offset="1" stop-color="#65b4d5" stop-opacity=".32"/>
+    </linearGradient>
+    <linearGradient id="glassEdge" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#effcff" stop-opacity=".92"/>
+      <stop offset=".45" stop-color="#78c7e4" stop-opacity=".76"/>
+      <stop offset="1" stop-color="#347f9f" stop-opacity=".88"/>
+    </linearGradient>
+    <linearGradient id="rimGlass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f4fdff" stop-opacity=".94"/>
+      <stop offset=".45" stop-color="#a9e2f4" stop-opacity=".58"/>
+      <stop offset="1" stop-color="#4c9fbe" stop-opacity=".78"/>
+    </linearGradient>
+    <radialGradient id="bottomGlass" cx=".5" cy=".2" r=".85">
+      <stop offset="0" stop-color="#ffffff" stop-opacity=".03"/>
+      <stop offset=".68" stop-color="#a6def1" stop-opacity=".16"/>
+      <stop offset="1" stop-color="#4d9fbe" stop-opacity=".42"/>
+    </radialGradient>
+    <linearGradient id="shine" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ffffff" stop-opacity=".08"/>
+      <stop offset=".46" stop-color="#ffffff" stop-opacity=".72"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity=".06"/>
+    </linearGradient>
+    <filter id="softBlur" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="9"/>
+    </filter>
+    <mask id="rimCutout">
+      <rect width="1024" height="1024" fill="#000"/>
+      <ellipse cx="512" cy="252" rx="184" ry="72" fill="#fff"/>
+      <ellipse cx="512" cy="250" rx="132" ry="42" fill="#000"/>
+    </mask>
+    <clipPath id="bodyClip">
+      <path d="M342 294C329 326 291 337 263 368C231 404 218 449 218 507V757C218 862 302 920 512 920C722 920 806 862 806 757V507C806 449 793 404 761 368C733 337 695 326 682 294Z"/>
+    </clipPath>
+  </defs>
+
+  <!-- rear inner wall, visible through the open mouth -->
+  <path d="M378 252V319C378 350 438 373 512 373C586 373 646 350 646 319V252"
+        fill="#8fd2e8" fill-opacity=".09"
+        stroke="#438eac" stroke-opacity=".38" stroke-width="14"/>
+  <ellipse cx="512" cy="319" rx="134" ry="50"
+           fill="#c8edf7" fill-opacity=".07"
+           stroke="#5ba6c2" stroke-opacity=".3" stroke-width="9"/>
+
+  <!-- main translucent vessel -->
+  <path d="M342 294C329 326 291 337 263 368C231 404 218 449 218 507V757C218 862 302 920 512 920C722 920 806 862 806 757V507C806 449 793 404 761 368C733 337 695 326 682 294Z"
+        fill="url(#glassBody)"
+        stroke="url(#glassEdge)" stroke-width="22" stroke-linejoin="round"/>
+  <path d="M359 313C345 344 310 354 282 384C256 413 245 454 245 510V746C245 832 313 882 512 882C711 882 779 832 779 746V510C779 454 768 413 742 384C714 354 679 344 665 313"
+        fill="none" stroke="#dff8ff" stroke-opacity=".52" stroke-width="8"/>
+
+  <!-- subtle light passing through the glass -->
+  <g clip-path="url(#bodyClip)">
+    <path d="M304 387C328 348 365 346 387 367V792C387 830 361 854 329 837C307 825 294 794 294 751V491C294 446 294 407 304 387Z"
+          fill="url(#shine)" opacity=".62" filter="url(#softBlur)"/>
+    <path d="M700 359C746 389 763 438 763 505V762C763 818 728 851 690 866"
+          fill="none" stroke="#247b9e" stroke-opacity=".18" stroke-width="38" filter="url(#softBlur)"/>
+    <ellipse cx="512" cy="834" rx="278" ry="95" fill="url(#bottomGlass)"/>
+  </g>
+
+  <!-- thick glass base -->
+  <ellipse cx="512" cy="816" rx="266" ry="88"
+           fill="#b8e7f5" fill-opacity=".08"
+           stroke="#76bdd7" stroke-opacity=".34" stroke-width="13"/>
+  <ellipse cx="512" cy="834" rx="235" ry="62"
+           fill="#ccecf5" fill-opacity=".06"
+           stroke="#2f819f" stroke-opacity=".38" stroke-width="10"/>
+  <path d="M260 802C279 875 365 899 512 899C659 899 745 875 764 802"
+        fill="none" stroke="#e9fbff" stroke-opacity=".52" stroke-width="9" stroke-linecap="round"/>
+
+  <!-- neck highlights -->
+  <path d="M354 288V315C354 346 425 374 512 374C599 374 670 346 670 315V288"
+        fill="none" stroke="#87cde5" stroke-opacity=".66" stroke-width="17"/>
+  <path d="M374 291V312C374 335 435 354 512 354"
+        fill="none" stroke="#f4fdff" stroke-opacity=".72" stroke-width="8" stroke-linecap="round"/>
+
+  <!-- open glass rim with a true transparent center -->
+  <rect x="310" y="167" width="404" height="165" fill="url(#rimGlass)" mask="url(#rimCutout)"/>
+  <ellipse cx="512" cy="252" rx="184" ry="72"
+           fill="none" stroke="#438fae" stroke-opacity=".88" stroke-width="15"/>
+  <ellipse cx="512" cy="250" rx="132" ry="42"
+           fill="none" stroke="#276f8e" stroke-opacity=".76" stroke-width="12"/>
+  <path d="M350 229C381 181 461 174 533 181"
+        fill="none" stroke="#ffffff" stroke-opacity=".8" stroke-width="11" stroke-linecap="round"/>
+  <path d="M396 246C428 222 476 214 523 216"
+        fill="none" stroke="#dff8ff" stroke-opacity=".72" stroke-width="7" stroke-linecap="round"/>
+</svg>

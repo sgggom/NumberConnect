@@ -1,5 +1,4 @@
 import Phaser from 'phaser';
-import { beadClusterPose, beadRewardTiming } from '../gameplay/beads/beadRewardAnimation';
 import { COLLECTION_ARTWORK_NAMES } from '../gameplay/collection/collectionArtwork';
 import {
   buildBoardNeighborhoodPreview,
@@ -83,8 +82,6 @@ const hexagonPoints = (radius: number): Phaser.Geom.Point[] => Array.from({ leng
   const angle = Phaser.Math.DegToRad(index * 60);
   return new Phaser.Geom.Point(radius + Math.cos(angle) * radius, radius + Math.sin(angle) * radius);
 });
-
-const colorNumber = (hexColor: string): number => Number.parseInt(hexColor.slice(1), 16);
 
 const METABALL_BLEND = 0.5;
 const METABALL_HANDLE_LENGTH_RATE = 2.4;
@@ -294,6 +291,8 @@ export class BoardScene extends Phaser.Scene {
     }
     this.load.audio('wrong', './audio/wrong_move.mp3');
     this.load.audio('victory', './audio/victory_bgm.mp3');
+    this.load.image('bead-gem', './ui/beads/bead-gem.png');
+    this.load.svg('bead-jar', './ui/beads/open-glass-jar.svg', { width: 512, height: 512 });
     for (const name of COLLECTION_ARTWORK_NAMES) {
       this.load.image(`background-${name}`, `./level-backgrounds/${name}.png`);
     }
@@ -396,6 +395,39 @@ export class BoardScene extends Phaser.Scene {
     this.clearNeighborhoodPreview();
     this.refreshView();
     this.session.onProgress(progress, this.session.level.solutionPath.length);
+    return true;
+  }
+
+  public quickComplete(): boolean {
+    if (
+      !this.session
+      || !this.view
+      || !this.connection
+      || this.transitioning
+      || this.connection.complete
+    ) return false;
+
+    this.cancelAutoClickSequence();
+    const entranceWasAnimating = this.entranceAnimating;
+    this.cancelBoardEntrance();
+    if (entranceWasAnimating) this.finishBoardEntrance(this.view, this.entranceAnimationToken);
+    this.finishPointerInteraction();
+    this.clearNeighborhoodPreview();
+    this.stopHintPulse();
+    this.paused = false;
+    this.locked = false;
+    this.connection = this.createConnectionProgress(this.session);
+    this.session.onProgress(0, this.session.level.solutionPath.length);
+    this.handleConnectionAction(this.connection.begin(0, true), false);
+    for (let nextIndex = 1; nextIndex < this.session.level.solutionPath.length; nextIndex += 1) {
+      const action = this.connection.extend(nextIndex);
+      this.handleConnectionAction(action, false);
+      if (
+        action.type === 'wrong'
+        || action.type === 'ignored'
+        || (action.type === 'advanced' && action.complete)
+      ) break;
+    }
     return true;
   }
 
@@ -817,24 +849,13 @@ export class BoardScene extends Phaser.Scene {
       const gemColor = gemColors[index] ?? fallbackColor;
       const gem = this.add.container(cellView.x, cellView.y);
       const beadRadius = view.radius * 0.82;
-      const shadow = this.add.circle(0, view.radius * 0.1, beadRadius * 1.04, 0x07101a, 0.3);
-      const body = this.add.circle(0, 0, beadRadius, colorNumber(gemColor), 1);
-      body.setStrokeStyle(Math.max(1, view.radius * 0.07), 0xffffff, 0.24);
-      const softHighlight = this.add.circle(
-        -view.radius * 0.18,
-        -view.radius * 0.2,
-        Math.max(3, view.radius * 0.27),
-        0xffffff,
-        0.16,
-      );
-      const shine = this.add.circle(
-        -view.radius * 0.27,
-        -view.radius * 0.3,
-        Math.max(2, view.radius * 0.14),
-        0xffffff,
-        0.76,
-      );
-      gem.add([shadow, body, softHighlight, shine]);
+      const textureSize = beadRadius * 2.58;
+      const shadow = this.add.image(0, view.radius * 0.1, this.coloredBeadTexture('#07101A'))
+        .setDisplaySize(textureSize, textureSize)
+        .setAlpha(0.34);
+      const body = this.add.image(0, 0, this.coloredBeadTexture(gemColor))
+        .setDisplaySize(textureSize, textureSize);
+      gem.add([shadow, body]);
       gem.setScale(0, 1);
       view.root.add(gem);
       gems.push(gem);
@@ -866,7 +887,6 @@ export class BoardScene extends Phaser.Scene {
     });
 
     await Promise.all(flips);
-    const timing = beadRewardTiming(gems.length, reducedMotion);
     this.tweens.add({
       targets: view.panel,
       alpha: 0.38,
@@ -874,36 +894,122 @@ export class BoardScene extends Phaser.Scene {
       ease: 'Sine.easeOut',
     });
 
-    const gathers = gems.map((gem, index) => {
-      const pose = beadClusterPose(index, gems.length);
+    const jarSize = Math.max(150, Math.min(230, view.panelWidth * 0.58, view.panelHeight * 0.48));
+    const jarX = view.centerX;
+    const jarY = view.centerY + Math.min(view.panelHeight * 0.22, jarSize * 0.55);
+    const jar = this.add.image(jarX, jarY, 'bead-jar').setDisplaySize(jarSize, jarSize);
+    const jarScaleX = jar.scaleX;
+    const jarScaleY = jar.scaleY;
+    jar.setScale(jarScaleX * 0.24, jarScaleY * 0.24).setAlpha(0);
+    view.root.add(jar);
+
+    await new Promise<void>((resolve) => {
+      this.tweens.add({
+        targets: jar,
+        alpha: 1,
+        scaleX: jarScaleX,
+        scaleY: jarScaleY,
+        duration: reducedMotion ? 1 : 300,
+        ease: 'Back.easeOut',
+        easeParams: [1.25],
+        onComplete: () => resolve(),
+      });
+    });
+
+    const columns = Math.max(5, Math.ceil(Math.sqrt(gems.length * 1.15)));
+    const stored = gems.map((gem, index) => {
+      const random = (salt: number): number => {
+        const raw = Math.sin((index + 1) * 12.9898 + salt * 78.233) * 43758.5453;
+        return raw - Math.floor(raw);
+      };
+      const targetX = jarX + (random(1.7) - 0.5) * jarSize * 0.36;
+      const targetY = jarY + jarSize * (0.08 + Math.pow(random(2.9), 0.62) * 0.25);
+      const mouthX = jarX + (random(4.1) - 0.5) * jarSize * 0.1;
+      const mouthY = jarY - jarSize * 0.255;
+      const startX = gem.x;
+      const startY = gem.y;
+      const startScaleX = gem.scaleX;
+      const startScaleY = gem.scaleY;
+      const mouthProgress = 0.68;
+      const inverseMouthProgress = 1 - mouthProgress;
+      const controlWeight = 2 * inverseMouthProgress * mouthProgress;
+      const controlX = (
+        mouthX
+        - inverseMouthProgress * inverseMouthProgress * startX
+        - mouthProgress * mouthProgress * targetX
+      ) / controlWeight;
+      const controlY = (
+        mouthY
+        - inverseMouthProgress * inverseMouthProgress * startY
+        - mouthProgress * mouthProgress * targetY
+      ) / controlWeight;
+      const storedScale = Math.max(0.22, Math.min(0.39, 2.55 / columns))
+        * (0.84 + random(5.3) * 0.28);
+      const storedAngle = random(6.7) * 76 - 38;
       return new Promise<void>((resolve) => {
+        const flight = { progress: 0 };
         this.tweens.add({
-          targets: gem,
-          x: view.centerX + pose.x,
-          y: view.centerY + pose.y,
-          angle: pose.rotation,
-          scale: pose.scale,
-          delay: reducedMotion ? 0 : index * 8,
-          duration: reducedMotion ? 1 : 560,
-          ease: 'Cubic.easeInOut',
+          targets: flight,
+          progress: 1,
+          delay: reducedMotion ? 0 : index * 11,
+          duration: reducedMotion ? 1 : 680,
+          ease: 'Sine.easeInOut',
+          onUpdate: () => {
+            const progress = flight.progress;
+            const inverse = 1 - progress;
+            gem.setPosition(
+              inverse * inverse * startX
+                + 2 * inverse * progress * controlX
+                + progress * progress * targetX,
+              inverse * inverse * startY
+                + 2 * inverse * progress * controlY
+                + progress * progress * targetY,
+            );
+            gem.setScale(
+              startScaleX + (storedScale - startScaleX) * progress,
+              startScaleY + (storedScale - startScaleY) * progress,
+            );
+            gem.setAngle(storedAngle * progress);
+          },
           onComplete: () => resolve(),
         });
       });
     });
-    await Promise.all(gathers);
+    await Promise.all(stored);
 
     await new Promise<void>((resolve) => {
       this.tweens.add({
-        targets: gems,
-        scaleX: `+=0.05`,
-        scaleY: `-=0.04`,
+        targets: jar,
+        scaleX: jarScaleX * 1.035,
+        scaleY: jarScaleY * 0.975,
         yoyo: true,
-        duration: timing.settleDuration * 0.5,
+        duration: reducedMotion ? 1 : 180,
         ease: 'Sine.easeOut',
         onComplete: () => resolve(),
       });
     });
-    if (!reducedMotion) await new Promise<void>((resolve) => { this.time.delayedCall(220, resolve); });
+    if (!reducedMotion) await new Promise<void>((resolve) => { this.time.delayedCall(360, resolve); });
+  }
+
+  private coloredBeadTexture(color: string): string {
+    const normalizedColor = color.toUpperCase();
+    const textureKey = `bead-gem-${normalizedColor.replace('#', '')}`;
+    if (this.textures.exists(textureKey)) return textureKey;
+
+    const texture = this.textures.createCanvas(textureKey, 64, 64);
+    if (!texture) return 'bead-gem';
+    const source = this.textures.get('bead-gem').getSourceImage() as CanvasImageSource;
+    const context = texture.context;
+    context.clearRect(0, 0, 64, 64);
+    context.drawImage(source, 0, 0, 64, 64);
+    context.globalCompositeOperation = 'multiply';
+    context.fillStyle = normalizedColor;
+    context.fillRect(0, 0, 64, 64);
+    context.globalCompositeOperation = 'destination-in';
+    context.drawImage(source, 0, 0, 64, 64);
+    context.globalCompositeOperation = 'source-over';
+    texture.refresh();
+    return textureKey;
   }
 
   private createConnectionProgress(session: BoardSessionInput): ConnectionProgress {
