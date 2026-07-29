@@ -2,17 +2,21 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   advanceBeadProgress,
   advanceBeadSequence,
+  beadJarLaunchInterval,
   loadBeadJar,
+  loadBeadJarQueue,
   loadBeadProgress,
   loadBeadSequence,
   loadCompletedBeadPatternIds,
   markBeadPatternCompleted,
   nextBeads,
+  nextBeadsAcrossPatterns,
   orderedBeads,
   parseBeadPattern,
   parseBeadPatternManifest,
   saveBeadProgress,
   saveBeadJar,
+  saveBeadJarQueue,
   type BeadPatternData,
 } from '../gameplay/beads';
 
@@ -70,6 +74,81 @@ describe('bead progression', () => {
     expect(loadBeadJar(pattern, { patternId: pattern.id, collected: 3 }, storage)).toEqual([
       reward[2],
     ]);
+  });
+
+  it('continues a level reward into the next pattern without wasting beads', () => {
+    const secondPattern: BeadPatternData = {
+      ...pattern,
+      id: 'second-pattern',
+      name: 'Second',
+    };
+    expect(nextBeadsAcrossPatterns(
+      [pattern, secondPattern],
+      pattern,
+      { patternId: pattern.id, collected: 3 },
+      3,
+    )).toEqual([
+      { patternId: pattern.id, x: 1, y: 1, color: '#FFFFFF' },
+      { patternId: secondPattern.id, x: 0, y: 0, color: '#FF0000' },
+      { patternId: secondPattern.id, x: 2, y: 0, color: '#00FF00' },
+    ]);
+  });
+
+  it('persists a jar queue containing beads from multiple patterns', () => {
+    const secondPattern: BeadPatternData = {
+      ...pattern,
+      id: 'second-pattern',
+      name: 'Second',
+    };
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: vi.fn((key: string) => values.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => { values.set(key, value); }),
+    };
+    const queue = nextBeadsAcrossPatterns(
+      [pattern, secondPattern],
+      pattern,
+      { patternId: pattern.id, collected: 3 },
+      3,
+    );
+    saveBeadJarQueue(queue, storage);
+
+    expect(loadBeadJarQueue(
+      [pattern, secondPattern],
+      { patternId: pattern.id, collected: 3 },
+      storage,
+    )).toEqual(queue);
+  });
+
+  it('keeps the normal rapid-placement speed for a small jar', () => {
+    const queue = Array.from({ length: 10 }, (_, index) => ({
+      patternId: pattern.id,
+      x: index,
+      y: 0,
+      color: '#FF0000',
+    }));
+
+    expect(beadJarLaunchInterval(queue)).toBe(100);
+  });
+
+  it('accelerates a large cross-pattern jar to fit within four seconds', () => {
+    const queue = Array.from({ length: 56 }, (_, index) => ({
+      patternId: index < 20 ? pattern.id : 'second-pattern',
+      x: index,
+      y: 0,
+      color: '#FF0000',
+    }));
+    const interval = beadJarLaunchInterval(queue);
+    const segmentCount = 2;
+    const projectedDuration = (
+      (queue.length - segmentCount) * interval
+      + segmentCount * 500
+      + (segmentCount - 1) * 560
+      + 150
+    );
+
+    expect(interval).toBeLessThan(100);
+    expect(projectedDuration).toBeLessThanOrEqual(4_000);
   });
 
   it('rejects incomplete pattern rows and metadata inside the data file', () => {
