@@ -4,6 +4,9 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OUTPUT = join(ROOT, 'public', 'bead-patterns');
+const BEAD_GEM_DATA_URI = `data:image/png;base64,${readFileSync(
+  join(ROOT, 'public', 'ui', 'beads', 'bead-gem.png'),
+).toString('base64')}`;
 mkdirSync(OUTPUT, { recursive: true });
 
 const createCanvas = (width, height) => Array.from({ length: height }, () => Array(width).fill(null));
@@ -368,6 +371,8 @@ const toJson = (pattern) => {
 
 const toSvg = (pattern) => {
   const cell = 14;
+  const beadSize = 13;
+  const beadOffset = (cell - beadSize) / 2;
   const padding = 14;
   const width = pattern.width * cell + padding * 2;
   const height = pattern.height * cell + padding * 2;
@@ -376,16 +381,22 @@ const toSvg = (pattern) => {
     for (let x = 0; x < pattern.width; x += 1) {
       const color = pattern.grid[y][x];
       if (!color) continue;
-      const cx = padding + x * cell + cell / 2;
-      const cy = padding + y * cell + cell / 2;
-      beads.push(`<circle cx="${cx}" cy="${cy}" r="5.6" fill="${color}" stroke="#ffffff" stroke-opacity=".16" stroke-width=".8"/>`);
-      beads.push(`<circle cx="${cx - 1.8}" cy="${cy - 2}" r="1.25" fill="#ffffff" fill-opacity=".48"/>`);
+      const left = padding + x * cell + beadOffset;
+      const top = padding + y * cell + beadOffset;
+      beads.push(`<g transform="translate(${left} ${top})">`);
+      beads.push(`  <rect width="${beadSize}" height="${beadSize}" fill="${color}" mask="url(#bead-gem-mask)"/>`);
+      beads.push(`  <use href="#bead-gem-texture" opacity=".2"/>`);
+      beads.push('</g>');
     }
   }
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">
-  <defs><pattern id="pegs" width="${cell}" height="${cell}" patternUnits="userSpaceOnUse"><circle cx="${cell / 2}" cy="${cell / 2}" r="5" fill="#172434"/></pattern></defs>
+  <defs>
+    <image id="bead-gem-texture" href="${BEAD_GEM_DATA_URI}" width="${beadSize}" height="${beadSize}"/>
+    <mask id="bead-gem-mask" x="0" y="0" width="${beadSize}" height="${beadSize}" maskUnits="userSpaceOnUse" style="mask-type:alpha">
+      <use href="#bead-gem-texture"/>
+    </mask>
+  </defs>
   <rect width="${width}" height="${height}" rx="22" fill="#0b1420"/>
-  <rect x="${padding}" y="${padding}" width="${pattern.width * cell}" height="${pattern.height * cell}" fill="url(#pegs)"/>
   ${beads.join('\n  ')}
 </svg>
 `;

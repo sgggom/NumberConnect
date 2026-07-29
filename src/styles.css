@@ -989,15 +989,22 @@ html[data-theme="night"] .primary-tab-button.is-active::before { background: var
 .bead-pattern-heading h3 { margin: 0; font-size: 1.25rem; }
 .bead-pattern-heading > strong { color: #ffb3d5; font-size: .84rem; white-space: nowrap; }
 .bead-pattern-board { width: min(100%, 330px); aspect-ratio: 1; margin: 0 auto; padding: 8px; display: grid; grid-template-columns: repeat(20, 1fr); grid-template-rows: repeat(20, 1fr); gap: 1px; border: 1px solid rgba(255,255,255,.11); border-radius: 20px; background: rgba(6,12,20,.52); box-shadow: inset 0 0 30px rgba(0,0,0,.28); }
-.bead-pattern-cell { width: var(--bead-dot-size, 100%); height: var(--bead-dot-size, 100%); min-width: 0; position: relative; place-self: center; border-radius: 50%; background: rgba(255,255,255,.035); box-shadow: inset 0 0 0 1px rgba(255,255,255,.025); }
-.bead-pattern-cell.is-target { background: color-mix(in srgb, var(--bead-color) 16%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bead-color) 42%, transparent); }
-.bead-pattern-cell.is-filled { isolation: isolate; border-radius: 0; background: none; box-shadow: none; filter: drop-shadow(0 1px 2px color-mix(in srgb, var(--bead-color) 54%, transparent)); }
-.bead-pattern-cell.is-filled::before,
+.bead-pattern-cell { width: var(--bead-dot-size, 100%); height: var(--bead-dot-size, 100%); min-width: 0; position: relative; isolation: isolate; place-self: center; background: none; }
+.bead-pattern-cell::before,
 .bead-flight-gem::before,
-.bead-jar-gem::before { content: ""; position: absolute; inset: 0; background: var(--bead-color); -webkit-mask: url("/ui/beads/bead-gem.png") center / contain no-repeat; mask: url("/ui/beads/bead-gem.png") center / contain no-repeat; }
+.bead-jar-gem::before { content: ""; position: absolute; inset: 0; background: var(--bead-color, #172434); -webkit-mask: url("/ui/beads/bead-gem.png") center / contain no-repeat; mask: url("/ui/beads/bead-gem.png") center / contain no-repeat; }
+.bead-pattern-cell::after,
+.bead-flight-gem::after,
+.bead-jar-gem::after { content: ""; position: absolute; inset: 0; background: url("/ui/beads/bead-gem.png") center / contain no-repeat; opacity: .09; pointer-events: none; }
+.bead-pattern-cell:not(.is-target)::before,
+.bead-pattern-cell:not(.is-target)::after { display: none; }
+.bead-pattern-cell.is-target:not(.is-filled)::before { background: color-mix(in srgb, var(--bead-color) 30%, #172434); }
+.bead-pattern-cell.is-target:not(.is-filled)::after { opacity: .13; }
+.bead-pattern-cell.is-filled { filter: drop-shadow(0 1px 2px color-mix(in srgb, var(--bead-color) 54%, transparent)); }
+.bead-pattern-cell.is-filled::before { background: var(--bead-color); }
 .bead-pattern-cell.is-filled::after,
 .bead-flight-gem::after,
-.bead-jar-gem::after { content: ""; position: absolute; inset: 0; background: url("/ui/beads/bead-gem.png") center / contain no-repeat; opacity: .2; pointer-events: none; }
+.bead-jar-gem::after { opacity: .2; }
 .bead-jar-button { width: 100%; min-height: 112px; margin: 10px 0 2px; padding: 8px 18px 8px 122px; position: relative; display: grid; align-content: center; justify-items: start; gap: 3px; overflow: hidden; border: 1px solid rgba(142,214,239,.2); border-radius: 18px; color: var(--ink); background: linear-gradient(135deg, rgba(143,214,239,.08), rgba(101,158,228,.045)); text-align: left; touch-action: none; user-select: none; transition: border-color .16s ease, background-color .16s ease, transform .12s ease; }
 .bead-jar-button:not(:disabled):hover { border-color: rgba(142,214,239,.42); background: linear-gradient(135deg, rgba(143,214,239,.13), rgba(101,158,228,.08)); }
 .bead-jar-button:not(:disabled):active,
@@ -1009,6 +1016,31 @@ html[data-theme="night"] .primary-tab-button.is-active::before { background: var
 .bead-jar-button > small { color: var(--muted); font-size: .63rem; font-weight: 750; }
 .bead-jar-contents { width: 62px; height: 45px; position: absolute; z-index: 1; left: 30px; top: 52px; overflow: hidden; pointer-events: none; }
 .bead-jar-gem { width: 17px; height: 17px; position: absolute; display: block; isolation: isolate; filter: drop-shadow(0 2px 2px rgba(0,0,0,.22)); }
+.bead-jar-sparkles { position: absolute; inset: 5px 12px 10px; z-index: 3; pointer-events: none; }
+.bead-jar-sparkles i,
+.bead-placement-spark {
+  --sparkle-size: 7px;
+  width: var(--sparkle-size);
+  height: var(--sparkle-size);
+  position: absolute;
+  display: block;
+  clip-path: polygon(50% 0, 61% 38%, 100% 50%, 61% 62%, 50% 100%, 39% 62%, 0 50%, 39% 38%);
+  background: linear-gradient(135deg, #fff 12%, #bcefff 54%, #fff2a8);
+  filter: drop-shadow(0 0 4px rgba(188,239,255,.9));
+  opacity: 0;
+  animation: bead-jar-sparkle 1.45s ease-in-out infinite;
+}
+.bead-placement-burst { width: 0; height: 0; position: absolute; z-index: 36; overflow: visible; pointer-events: none; }
+.bead-placement-spark { left: 0; top: 0; opacity: 0; animation: none; }
+.bead-jar-sparkles i:nth-child(1) { --sparkle-size: 11px; top: 3px; left: 46%; animation-delay: -.2s; }
+.bead-jar-sparkles i:nth-child(2) { --sparkle-size: 8px; top: 15px; right: 28px; animation-delay: -.75s; }
+.bead-jar-sparkles i:nth-child(3) { --sparkle-size: 7px; top: 37px; right: 10px; animation-delay: -1.15s; }
+.bead-jar-sparkles i:nth-child(4) { --sparkle-size: 9px; right: 8px; bottom: 31px; animation-delay: -.42s; }
+.bead-jar-sparkles i:nth-child(5) { --sparkle-size: 7px; right: 31px; bottom: 10px; animation-delay: -1s; }
+.bead-jar-sparkles i:nth-child(6) { --sparkle-size: 8px; bottom: 13px; left: 27px; animation-delay: -.62s; }
+.bead-jar-sparkles i:nth-child(7) { --sparkle-size: 7px; top: 53px; left: 8px; animation-delay: -1.28s; }
+.bead-jar-sparkles i:nth-child(8) { --sparkle-size: 9px; top: 23px; left: 23px; animation-delay: -.92s; }
+.bead-jar-sparkles i:nth-child(9) { --sparkle-size: 6px; top: 8px; right: 47px; animation-delay: -1.36s; }
 .bead-progress-track { height: 8px; margin: 15px 3px 0; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.08); }
 .bead-progress-track i { width: 0; height: 100%; display: block; border-radius: inherit; background: linear-gradient(90deg, #ff7eb8, #c775e8, #659ee4); box-shadow: 0 0 12px rgba(255,126,184,.34); transition: width .5s ease; }
 .bead-screen-status { min-height: 20px; margin: 12px auto; color: var(--muted); font-size: .76rem; font-weight: 750; }
@@ -1062,6 +1094,15 @@ html[data-theme="night"] .primary-tab-button.is-active::before { background: var
   font-size: .68rem;
 }
 .bead-screen.is-bead-placement-required .bead-jar-button > small { display: none; }
+.bead-screen.is-bead-placement-required .bead-jar-button.is-pressing { transform: none; }
+.bead-screen.is-bead-placement-required .bead-jar-button.is-long-pressing > img {
+  transform-origin: 50% 78%;
+  animation: bead-jar-squeeze 150ms cubic-bezier(.45,0,.25,1) infinite;
+}
+.bead-screen.is-bead-placement-required .bead-jar-button.is-long-pressing > .bead-jar-contents {
+  transform-origin: 50% 100%;
+  animation: bead-jar-contents-squeeze 150ms cubic-bezier(.45,0,.25,1) infinite;
+}
 
 .bead-flight-layer { position: absolute; inset: 0; z-index: 35; overflow: hidden; pointer-events: none; }
 .bead-flight-gem { position: absolute; width: 26px; height: 26px; display: block; isolation: isolate; background: none; filter: drop-shadow(0 4px 5px rgba(0,0,0,.34)); will-change: transform; }
@@ -1374,6 +1415,23 @@ input[type="range"] { width: 100%; accent-color: var(--green); }
 @keyframes result-in { from { transform: translateY(18px); opacity: 0; } }
 @keyframes lobby-ambient-breathe { 50% { opacity: .42; } }
 @keyframes settings-pop-in { from { transform: translateY(12px) scale(.96); opacity: 0; } }
+@keyframes bead-jar-squeeze {
+  0%, 100% { transform: translateX(-50%) scale(1,1); }
+  30% { transform: translateX(-50%) scale(1.045,.91); }
+  58% { transform: translateX(-50%) scale(.975,1.055); }
+  78% { transform: translateX(-50%) scale(1.01,.985); }
+}
+@keyframes bead-jar-contents-squeeze {
+  0%, 100% { transform: scale(1,1); }
+  30% { transform: scale(1.04,.92); }
+  58% { transform: scale(.98,1.05); }
+  78% { transform: scale(1.005,.99); }
+}
+@keyframes bead-jar-sparkle {
+  0%, 100% { opacity: 0; transform: scale(.3) rotate(0deg); }
+  32% { opacity: .95; transform: scale(1) rotate(24deg); }
+  58% { opacity: .18; transform: scale(.68) rotate(46deg); }
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
