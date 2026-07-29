@@ -1,4 +1,5 @@
 import { PathCompletionSolver } from '../../game/pathCompletionSolver';
+import { calculateDifficultyScore } from '../../game/boardNeighborhood';
 import { BoardShape } from '../../game/types';
 import { areEditorCellsNeighbors } from './findEditorPath';
 import { classifyEditorTurn, type EditorTurnType } from './levelMetrics';
@@ -26,6 +27,7 @@ export interface SimulatedPlayStep {
   choiceCount: number;
   reasoningBranchCount: number;
   legalReasoningBranchCount: number;
+  difficultyScore: number;
   errorRate?: number;
 }
 
@@ -85,6 +87,7 @@ export const averageSimulatedPlayResults = (
       legalReasoningBranchCount: average(
         samples.map((step) => step.legalReasoningBranchCount),
       ),
+      difficultyScore: average(samples.map((step) => step.difficultyScore)),
       errorRate,
     };
   });
@@ -342,29 +345,8 @@ const analyzeCandidateReasoning = (
   };
 };
 
-const nearbyVisibleNumberDistance = (
-  candidate: EditorCell,
-  current: EditorCell,
-  currentPosition: number,
-  route: ReadonlyArray<EditorCell>,
-  hiddenCellKeys: ReadonlySet<string>,
-  shape: EditorShape,
-): number => {
-  const targetNumber = currentPosition + 2;
-  const currentKey = keyOf(current);
-  let bestDistance = Number.POSITIVE_INFINITY;
-  route.forEach((cell, index) => {
-    const key = keyOf(cell);
-    const visible = index <= currentPosition || !hiddenCellKeys.has(key);
-    if (!visible || key === currentKey || !areEditorCellsNeighbors(candidate, cell, shape)) return;
-    bestDistance = Math.min(bestDistance, Math.abs((index + 1) - targetNumber));
-  });
-  return bestDistance;
-};
-
 const chooseAnalyzedCandidate = (
   candidates: ReadonlyArray<EditorCell>,
-  current: EditorCell,
   currentPosition: number,
   route: ReadonlyArray<EditorCell>,
   routeCellKeys: ReadonlySet<string>,
@@ -388,23 +370,8 @@ const chooseAnalyzedCandidate = (
     ? candidates
     : analyses.filter(({ canReach }) => canReach).map(({ candidate }) => candidate);
   const available = safeCandidates.length > 0 ? safeCandidates : candidates;
-  const scored = available.map((candidate) => ({
-    candidate,
-    distance: nearbyVisibleNumberDistance(
-      candidate,
-      current,
-      currentPosition,
-      route,
-      hiddenCellKeys,
-      shape,
-    ),
-  }));
-  const bestDistance = Math.min(...scored.map(({ distance }) => distance));
   return {
-    selected: chooseCandidate(
-    scored.filter(({ distance }) => distance === bestDistance).map(({ candidate }) => candidate),
-    random,
-    ),
+    selected: chooseCandidate(available, random),
     reasoningDepth: predictionDepth === 0
       ? 0
       : Math.max(0, ...analyses.map(({ exploredDepth }) => exploredDepth)),
@@ -589,6 +556,7 @@ export const simulateLevelPlay = ({
   const excludedChoices = new Map<string, Set<string>>();
   const steps: SimulatedPlayStep[] = [];
   const newReasoningMetricsCache = new Map<string, NewReasoningMetrics>();
+  const difficultyScoreCache = new Map<string, number>();
   let currentPosition = 0;
   let errorCount = 0;
   const predictionDepth = reasoningLevel === 'low' ? 0 : reasoningLevel === 'high' ? 5 : 2;
@@ -612,7 +580,6 @@ export const simulateLevelPlay = ({
     const branchAnalysis = !expectedIsVisible && candidates.length > 1
       ? chooseAnalyzedCandidate(
           candidates,
-          current,
           currentPosition,
           route,
           pathCellKeys,
@@ -688,6 +655,49 @@ export const simulateLevelPlay = ({
       );
       newReasoningMetricsCache.set(newReasoningMetricsKey, newReasoningMetrics);
     }
+    const nextVisibleDistance = distanceToNextVisibleNumber(
+      currentPosition,
+      route,
+      hiddenCellKeys,
+    );
+    let difficultyScore = difficultyScoreCache.get(newReasoningMetricsKey);
+    if (difficultyScore === undefined) {
+      const scoreCandidates = expectedIsVisible
+        ? []
+        : route.slice(currentPosition + 1).filter((candidate) => (
+            hiddenCellKeys.has(keyOf(candidate))
+            && areEditorCellsNeighbors(current, candidate, shape)
+          ));
+      const infeasibleChoiceCount = currentNodeIndex === undefined
+        ? scoreCandidates.length
+        : scoreCandidates.reduce((count, candidate) => {
+            const candidateKey = keyOf(candidate);
+            if (candidateKey === expectedKey) return count;
+            const candidateNodeIndex = nodeIndexByKey.get(candidateKey);
+            if (candidateNodeIndex === undefined) return count + 1;
+            const candidateCompletion = completionSolver.findCompletion({
+              fixedPositions,
+              requiredEdges: [
+                ...requiredEdges,
+                [currentNodeIndex, candidateNodeIndex],
+              ],
+              directedStep: {
+                from: currentNodeIndex,
+                to: candidateNodeIndex,
+                direction: 1,
+              },
+            });
+            return count + Number(candidateCompletion === null);
+          }, 0);
+      difficultyScore = calculateDifficultyScore({
+        choiceQuantity: newReasoningMetrics.choiceCount,
+        infeasibleChoiceCount,
+        nextNumberDistance: Math.max(0, nextVisibleDistance - 1),
+        reasoningBranchCount: newReasoningMetrics.reasoningBranchCount,
+        hasObviousAnswer: expectedIsVisible,
+      }).badgeScore;
+      difficultyScoreCache.set(newReasoningMetricsKey, difficultyScore);
+    }
     steps.push({
       stepNumber: steps.length + 1,
       outcome,
@@ -702,11 +712,7 @@ export const simulateLevelPlay = ({
       ),
       connectableCount: countConnectableCells(current, currentPosition, route, shape),
       directConnect: expectedIsVisible,
-      distanceToNextVisibleNumber: distanceToNextVisibleNumber(
-        currentPosition,
-        route,
-        hiddenCellKeys,
-      ),
+      distanceToNextVisibleNumber: nextVisibleDistance,
       reasoningDepth: branchAnalysis.reasoningDepth,
       availableBranchCount: branchAnalysis.availableBranchCount,
       lengthValidBranchCount: branchAnalysis.lengthValidBranchCount,
@@ -714,6 +720,7 @@ export const simulateLevelPlay = ({
       choiceCount: newReasoningMetrics.choiceCount,
       reasoningBranchCount: newReasoningMetrics.reasoningBranchCount,
       legalReasoningBranchCount: newReasoningMetrics.legalReasoningBranchCount,
+      difficultyScore,
     });
 
     if (outcome === 'error') {
