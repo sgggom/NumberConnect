@@ -752,7 +752,7 @@ export class LevelEditorController {
         min-height: 0;
         overflow: visible;
       }
-      .editor-simulation-popout-shell .editor-simulation-chart { min-height: 800px; }
+      .editor-simulation-popout-shell .editor-simulation-chart { min-height: 900px; }
       .editor-simulation-popout-shell .editor-simulation-open-button {
         cursor: default;
         pointer-events: none;
@@ -863,12 +863,12 @@ export class LevelEditorController {
     figure.className = 'editor-simulation-chart';
     figure.setAttribute(
       'aria-label',
-      `本关${this.simulationRunCount > 1 ? `${this.simulationRunCount} 次模拟平均 ` : ''}共 ${result.totalSteps} 步；曲线依次展示可连接数量、直接连接、距离下个显示数字、推理深度、选择数量、路径推理分支数量和合法推理分支数量。`,
+      `本关${this.simulationRunCount > 1 ? `${this.simulationRunCount} 次模拟平均 ` : ''}共 ${result.totalSteps} 步；曲线依次展示可连接数量、直接连接、距离下个显示数字、推理深度、选择数量、路径推理分支数量、合法推理分支数量和每步难度分。`,
     );
 
     const svgNamespace = 'http://www.w3.org/2000/svg';
     const svg = document.createElementNS(svgNamespace, 'svg');
-    svg.setAttribute('viewBox', '0 0 600 680');
+    svg.setAttribute('viewBox', '0 0 600 770');
     svg.setAttribute('role', 'img');
     svg.setAttribute('aria-hidden', 'true');
 
@@ -889,7 +889,7 @@ export class LevelEditorController {
     const bandHeight = 72;
     const bandGap = 18;
     const chartTop = 24;
-    const chartBottom = chartTop + bandHeight * 7 + bandGap * 6;
+    const chartBottom = chartTop + bandHeight * 8 + bandGap * 7;
     const stepCount = Math.max(1, result.steps.length);
     const xAt = (index: number): number => (
       stepCount === 1
@@ -910,6 +910,10 @@ export class LevelEditorController {
     const maxLegalReasoningBranchCount = Math.max(
       1,
       ...result.steps.map((step) => step.legalReasoningBranchCount),
+    );
+    const maxDifficultyScore = Math.max(
+      1,
+      ...result.steps.map((step) => step.difficultyScore),
     );
     const chartNumberLabel = (value: number): string => (
       Number.isInteger(value) ? String(value) : String(Math.round(value * 100) / 100)
@@ -987,6 +991,16 @@ export class LevelEditorController {
             value: maxLegalReasoningBranchCount,
             label: chartNumberLabel(maxLegalReasoningBranchCount),
           },
+          { value: 0, label: '0' },
+        ],
+      },
+      {
+        title: '每步难度分',
+        color: '#ffffff',
+        values: result.steps.map((step) => step.difficultyScore),
+        maximum: maxDifficultyScore,
+        labels: [
+          { value: maxDifficultyScore, label: chartNumberLabel(maxDifficultyScore) },
           { value: 0, label: '0' },
         ],
       },
@@ -1094,7 +1108,7 @@ export class LevelEditorController {
     const caption = document.createElement('figcaption');
     caption.textContent = this.simulationRunCount > 1
       ? `${this.simulationRunCount} 次模拟的逐步平均值；红点表示该步至少一次连接错误。`
-      : '七组曲线共享横轴；红点表示该步连接错误。';
+      : '八组曲线共享横轴；红点表示该步连接错误。';
     figure.append(svg, caption);
     return figure;
   }

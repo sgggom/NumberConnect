@@ -62,6 +62,7 @@ describe('editor level play simulation', () => {
           choiceCount: 0,
           reasoningBranchCount: 0,
           legalReasoningBranchCount: 0,
+          difficultyScore: 0,
         },
         {
           stepNumber: 2,
@@ -80,6 +81,7 @@ describe('editor level play simulation', () => {
           choiceCount: 0,
           reasoningBranchCount: 0,
           legalReasoningBranchCount: 0,
+          difficultyScore: 0,
         },
         {
           stepNumber: 3,
@@ -98,6 +100,7 @@ describe('editor level play simulation', () => {
           choiceCount: 0,
           reasoningBranchCount: 0,
           legalReasoningBranchCount: 0,
+          difficultyScore: 0,
         },
       ],
     });
@@ -167,6 +170,27 @@ describe('editor level play simulation', () => {
     expect(result.steps[0].choiceCount).toBe(2);
     expect(result.steps[0].reasoningBranchCount).toBe(2);
     expect(result.steps[0].legalReasoningBranchCount).toBe(2);
+    expect(result.steps[0].difficultyScore).toBe(1);
+  });
+
+  it('chooses uniformly from the remaining candidates without a direction preference', () => {
+    const path = [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 2, y: 0 },
+      { x: 1, y: 1 },
+      { x: 0, y: 1 },
+    ];
+
+    const result = simulateLevelPlay({
+      path,
+      hiddenCellKeys: new Set([keyOf(path[1]), keyOf(path[3]), keyOf(path[4])]),
+      shape: 'square',
+      reasoningLevel: 'low',
+      random: () => 0.999,
+    });
+
+    expect(result.steps[0].attemptedCells[1]).toEqual(path[4]);
   });
 
   it('averages matching step indexes across multiple simulations', () => {
@@ -216,6 +240,9 @@ describe('editor level play simulation', () => {
         directRun.steps[0].legalReasoningBranchCount
         + errorRun.steps[0].legalReasoningBranchCount
       ) / 2,
+    );
+    expect(averaged.steps[0].difficultyScore).toBe(
+      (directRun.steps[0].difficultyScore + errorRun.steps[0].difficultyScore) / 2,
     );
   });
 

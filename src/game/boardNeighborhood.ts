@@ -22,6 +22,47 @@ export const scoreDigitCount = (score: number): number => {
   return normalizedScore === 0 ? 0 : String(normalizedScore).length;
 };
 
+export interface DifficultyScoreBreakdown {
+  feasibleChoiceCount: number;
+  extraScore: number;
+  actualScore: number;
+  total: number;
+  totalDigitScore: number;
+  badgeScore: number;
+}
+
+export const calculateDifficultyScore = ({
+  choiceQuantity,
+  infeasibleChoiceCount,
+  nextNumberDistance,
+  reasoningBranchCount,
+  hasObviousAnswer = false,
+}: {
+  choiceQuantity: number;
+  infeasibleChoiceCount: number;
+  nextNumberDistance: number;
+  reasoningBranchCount: number;
+  hasObviousAnswer?: boolean;
+}): DifficultyScoreBreakdown => {
+  const feasibleChoiceCount = Math.max(0, choiceQuantity - infeasibleChoiceCount);
+  const extraScore = hasObviousAnswer
+    ? 0
+    : Number((Math.max(0, feasibleChoiceCount - 1) * 0.2).toFixed(1));
+  const reasoningBranchScore = Math.max(0, reasoningBranchCount - 1);
+  const actualScore = infeasibleChoiceCount * nextNumberDistance * reasoningBranchScore;
+  const total = actualScore;
+  const totalDigitScore = scoreDigitCount(total);
+  const badgeScore = Number((totalDigitScore + extraScore).toFixed(1));
+  return {
+    feasibleChoiceCount,
+    extraScore,
+    actualScore,
+    total,
+    totalDigitScore,
+    badgeScore,
+  };
+};
+
 const countExactLengthBranches = (
   level: NeighborhoodLevel,
   startIndex: number,
@@ -167,13 +208,9 @@ export const calculateHeldCellScore = (
     (count, candidateIndex) => count + Number(isInfeasible(candidateIndex)),
     0,
   );
-  const feasibleChoiceCount = Math.max(0, choiceQuantity - choiceScore);
   const hasObviousAnswer = immediateNextIndex >= 0
     && immediateNextIsNeighbor
     && isVisible(immediateNextIndex);
-  const extraScore = hasObviousAnswer
-    ? 0
-    : Number((feasibleChoiceCount * 0.2).toFixed(1));
   const reasoningBranchCount = nextVisible === undefined
     ? 0
     : countExactLengthBranches(
@@ -184,23 +221,21 @@ export const calculateHeldCellScore = (
       isAvailable,
     );
   const reasoningBranchScore = Math.max(0, reasoningBranchCount - 1);
-  const actualScore = choiceScore * nextNumberDistance * reasoningBranchScore;
-  const total = actualScore;
-  const totalDigitScore = scoreDigitCount(total);
-  const badgeScore = Number((totalDigitScore + extraScore).toFixed(1));
+  const score = calculateDifficultyScore({
+    choiceQuantity,
+    infeasibleChoiceCount: choiceScore,
+    nextNumberDistance,
+    reasoningBranchCount,
+    hasObviousAnswer,
+  });
 
   return {
     choiceQuantity,
     choiceScore,
-    feasibleChoiceCount,
-    extraScore,
     nextNumberDistance,
     reasoningBranchCount,
     reasoningBranchScore,
-    actualScore,
-    total,
-    totalDigitScore,
-    badgeScore,
+    ...score,
   };
 };
 

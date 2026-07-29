@@ -181,14 +181,14 @@ describe('held cell score', () => {
       choiceQuantity: 5,
       choiceScore: 3,
       feasibleChoiceCount: 2,
-      extraScore: 0.4,
+      extraScore: 0.2,
       nextNumberDistance: 2,
       reasoningBranchCount: 4,
       reasoningBranchScore: 3,
       actualScore: 18,
       total: 18,
       totalDigitScore: 2,
-      badgeScore: 2.4,
+      badgeScore: 2.2,
     });
   });
 
@@ -228,14 +228,14 @@ describe('held cell score', () => {
       choiceQuantity: 4,
       choiceScore: 0,
       feasibleChoiceCount: 4,
-      extraScore: 0.8,
+      extraScore: 0.6,
       nextNumberDistance: 9,
       reasoningBranchCount: 0,
       reasoningBranchScore: 0,
       actualScore: 0,
       total: 0,
       totalDigitScore: 0,
-      badgeScore: 0.8,
+      badgeScore: 0.6,
     });
   });
 
@@ -252,14 +252,14 @@ describe('held cell score', () => {
       choiceQuantity: 1,
       choiceScore: 0,
       feasibleChoiceCount: 1,
-      extraScore: 0.2,
+      extraScore: 0,
       nextNumberDistance: 2,
       reasoningBranchCount: 0,
       reasoningBranchScore: 0,
       actualScore: 0,
       total: 0,
       totalDigitScore: 0,
-      badgeScore: 0.2,
+      badgeScore: 0,
     });
   });
 
@@ -307,14 +307,14 @@ describe('held cell score', () => {
       choiceQuantity: 2,
       choiceScore: 1,
       feasibleChoiceCount: 1,
-      extraScore: 0.2,
+      extraScore: 0,
       nextNumberDistance: 2,
       reasoningBranchCount: 1,
       reasoningBranchScore: 0,
       actualScore: 0,
       total: 0,
       totalDigitScore: 0,
-      badgeScore: 0.2,
+      badgeScore: 0,
     });
   });
 });

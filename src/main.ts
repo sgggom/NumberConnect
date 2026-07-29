@@ -312,7 +312,9 @@ class NumberConnectApp {
   private readonly progressLabel = query<HTMLElement>('#play-progress');
   private readonly holdScoreFormula = query<HTMLElement>('#hold-score-formula');
   private readonly holdScoreTotal = query<HTMLElement>('#hold-score-total');
-  private readonly holdScoreActual = query<HTMLElement>('#hold-score-actual');
+  private readonly holdScoreChoice = query<HTMLElement>('#hold-score-choice');
+  private readonly holdScoreDistance = query<HTMLElement>('#hold-score-distance');
+  private readonly holdScoreBranch = query<HTMLElement>('#hold-score-branch');
   private readonly holdScoreBadge = query<HTMLElement>('#hold-score-badge');
   private readonly holdScoreDigits = query<HTMLElement>('#hold-score-digits');
   private readonly holdScoreExtra = query<HTMLElement>('#hold-score-extra');
@@ -779,7 +781,9 @@ class NumberConnectApp {
     this.holdScoreFormula.setAttribute('aria-hidden', String(!visible));
     if (!score) return;
     this.holdScoreTotal.textContent = String(score.total);
-    this.holdScoreActual.textContent = String(score.actualScore);
+    this.holdScoreChoice.textContent = String(score.choiceScore);
+    this.holdScoreDistance.textContent = String(score.nextNumberDistance);
+    this.holdScoreBranch.textContent = String(score.reasoningBranchScore);
     this.holdScoreBadge.textContent = String(score.badgeScore);
     this.holdScoreDigits.textContent = String(score.totalDigitScore);
     this.holdScoreExtra.textContent = String(score.extraScore);

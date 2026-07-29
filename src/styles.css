@@ -1072,7 +1072,9 @@ html[data-theme="night"] .primary-tab-button.is-active::before { background: var
 .hold-score-formula small { font: inherit; opacity: .82; }
 .hold-score-summary, .hold-score-breakdown { display: flex; align-items: center; justify-content: center; gap: 4px; }
 .hold-score-total { color: #ffffff; text-shadow: 0 1px 3px rgba(25,45,68,.72); }
-.hold-score-actual { color: #ffffff; text-shadow: 0 1px 3px rgba(25,45,68,.52); }
+.hold-score-choice { color: #2fa85a; }
+.hold-score-distance { color: #d89b00; }
+.hold-score-branch { color: #5689d8; }
 .hold-score-badge { color: #ffffff; text-shadow: 0 1px 3px rgba(25,45,68,.72); }
 .hold-score-digits { color: #d89b00; }
 .hold-score-extra { color: #2fa85a; }
