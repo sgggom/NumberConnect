@@ -3,6 +3,7 @@ import { LevelEditorModel } from '../LevelEditorModel';
 import { areEditorCellsNeighbors } from '../findEditorPath';
 import { createAlgorithm2Selection, runAlgorithm2 } from './algorithm2';
 import {
+  calculateAlgorithm4AdjacentHiddenSkipProbability,
   createAlgorithm4Selection,
   runAlgorithm4,
   selectAlgorithm4HiddenLayout,
@@ -34,10 +35,22 @@ const longestRun = (
 };
 
 describe('editor algorithm 4', () => {
-  it('keeps algorithm 2 path generation and copied defaults', () => {
+  it('keeps algorithm 2 path generation with independent phase defaults', () => {
     const algorithm2 = createAlgorithm2Selection();
     const algorithm4 = createAlgorithm4Selection();
-    expect(algorithm4.parameters).toEqual(algorithm2.parameters);
+    expect(algorithm4.parameters).toMatchObject({
+      targetCrossings: algorithm2.parameters.targetCrossings,
+      turnProbability: algorithm2.parameters.turnProbability,
+      earlyHiddenProbability: 50,
+      middleHiddenProbability: 50,
+      lateHiddenProbability: 50,
+      earlyAdjacentHiddenSkipProbability: 0,
+      middleAdjacentHiddenSkipProbability: 0,
+      lateAdjacentHiddenSkipProbability: 0,
+      maxHiddenRun: 3,
+      maxVisibleRun: 4,
+    });
+    expect(algorithm4.parameters).not.toHaveProperty('hiddenPercent');
 
     const context = {
       rows: 3,
@@ -51,44 +64,57 @@ describe('editor algorithm 4', () => {
     const result2 = runAlgorithm2(context, algorithm2);
     const result4 = runAlgorithm4(context, algorithm4);
     expect(result4?.path).toEqual(result2?.path);
-    expect(result4?.targetHiddenCount).toBe(result2?.targetHiddenCount);
+    expect(result4?.targetHiddenCount).toBeUndefined();
   });
 
-  it('scatters independent seeds before growing adjacent hidden cells', () => {
-    const path = Array.from({ length: 5 }, (_, y) =>
-      Array.from({ length: 5 }, (_, offset) => ({
-        x: y % 2 === 0 ? offset : 4 - offset,
-        y,
-      })),
-    ).flat();
+  it('scales the configured skip probability by surrounding hidden ratio', () => {
+    expect(calculateAlgorithm4AdjacentHiddenSkipProbability(60, 0, 8)).toBe(0);
+    expect(calculateAlgorithm4AdjacentHiddenSkipProbability(60, 2, 8)).toBe(15);
+    expect(calculateAlgorithm4AdjacentHiddenSkipProbability(60, 1, 3)).toBe(20);
+    expect(calculateAlgorithm4AdjacentHiddenSkipProbability(60, 3, 3)).toBe(60);
+    expect(calculateAlgorithm4AdjacentHiddenSkipProbability(60, 0, 0)).toBe(0);
+  });
+
+  it('applies independent hidden probabilities to the first, middle, and last phases', () => {
+    const path = Array.from({ length: 12 }, (_, x) => ({ x, y: 0 }));
     const selection = createAlgorithm4Selection();
     selection.parameters = {
       ...selection.parameters,
-      hiddenPercent: 52,
-      maxHiddenRun: 4,
+      earlyHiddenProbability: 100,
+      middleHiddenProbability: 0,
+      lateHiddenProbability: 100,
+      maxHiddenRun: 8,
       maxVisibleRun: 12,
     };
 
-    const result = selectAlgorithm4HiddenLayout(path, 'square', selection, 404);
-    const seeds = path.filter((cell) => result.seedCells.has(keyOf(cell)));
-    const expanded = path.filter((cell) =>
-      result.hiddenCells.has(keyOf(cell)) && !result.seedCells.has(keyOf(cell)));
-
-    expect(result.hiddenCells.size).toBe(result.targetCount);
-    expect(seeds.length).toBeGreaterThan(1);
-    expect(expanded.length).toBeGreaterThan(0);
-    for (let left = 0; left < seeds.length; left += 1) {
-      for (let right = left + 1; right < seeds.length; right += 1) {
-        expect(areEditorCellsNeighbors(seeds[left], seeds[right], 'square')).toBe(false);
-      }
-    }
-    expect(expanded.some((cell) =>
-      seeds.some((seed) => areEditorCellsNeighbors(seed, cell, 'square')))).toBe(true);
-    expect(result.hiddenCells.has(keyOf(path[0]))).toBe(false);
-    expect(result.hiddenCells.has(keyOf(path[path.length - 1]))).toBe(false);
+    const result = selectAlgorithm4HiddenLayout(path, 'rectangle', selection, 404);
+    expect(path.flatMap((cell, index) => (
+      result.hiddenCells.has(keyOf(cell)) ? [index] : []
+    ))).toEqual([1, 2, 9, 10]);
   });
 
-  it('prioritizes displayed cells with the fewest surrounding hidden numbers', () => {
+  it('uses independent 0–100 adjacent-hidden skip probabilities in each phase', () => {
+    const path = Array.from({ length: 12 }, (_, x) => ({ x, y: 0 }));
+    const selection = createAlgorithm4Selection();
+    selection.parameters = {
+      ...selection.parameters,
+      earlyHiddenProbability: 100,
+      middleHiddenProbability: 100,
+      lateHiddenProbability: 100,
+      earlyAdjacentHiddenSkipProbability: 0,
+      middleAdjacentHiddenSkipProbability: 100,
+      lateAdjacentHiddenSkipProbability: 0,
+      maxHiddenRun: 8,
+      maxVisibleRun: 12,
+    };
+
+    const result = selectAlgorithm4HiddenLayout(path, 'rectangle', selection, 17);
+    expect(path.flatMap((cell, index) => (
+      result.hiddenCells.has(keyOf(cell)) ? [index] : []
+    ))).toEqual([1, 2, 3, 4, 6, 8, 9, 10]);
+  });
+
+  it('uses spatial hidden density without making adjacent hidden cells impossible', () => {
     const path = [
       { x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 },
       { x: 2, y: 1 }, { x: 1, y: 1 }, { x: 0, y: 1 },
@@ -97,50 +123,75 @@ describe('editor algorithm 4', () => {
     const selection = createAlgorithm4Selection();
     selection.parameters = {
       ...selection.parameters,
-      hiddenPercent: 33,
-      maxHiddenRun: 3,
+      earlyHiddenProbability: 100,
+      middleHiddenProbability: 100,
+      lateHiddenProbability: 100,
+      earlyAdjacentHiddenSkipProbability: 100,
+      middleAdjacentHiddenSkipProbability: 100,
+      lateAdjacentHiddenSkipProbability: 100,
+      maxHiddenRun: 8,
       maxVisibleRun: 9,
     };
 
-    const result = selectAlgorithm4HiddenLayout(path, 'square', selection, 17);
-    const visibleHiddenNeighborCounts = path
-      .filter((cell) => !result.hiddenCells.has(keyOf(cell)))
-      .map((visibleCell) => path.reduce((count, candidate) =>
-        count + Number(
-          result.hiddenCells.has(keyOf(candidate))
-          && areEditorCellsNeighbors(visibleCell, candidate, 'square'),
-        ), 0));
-
-    expect(result.hiddenCells.has('1,1')).toBe(true);
-    expect(
-      Math.max(...visibleHiddenNeighborCounts) - Math.min(...visibleHiddenNeighborCounts),
-    ).toBeLessThanOrEqual(1);
+    const result = selectAlgorithm4HiddenLayout(path, 'square', selection, 73);
+    const noSkipSelection = createAlgorithm4Selection();
+    noSkipSelection.parameters = {
+      ...selection.parameters,
+      earlyAdjacentHiddenSkipProbability: 0,
+      middleAdjacentHiddenSkipProbability: 0,
+      lateAdjacentHiddenSkipProbability: 0,
+    };
+    const noSkip = selectAlgorithm4HiddenLayout(path, 'square', noSkipSelection, 73);
+    const hidden = path.filter((cell) => result.hiddenCells.has(keyOf(cell)));
+    expect(result.hiddenCells.size).toBeLessThan(noSkip.hiddenCells.size);
+    expect(hidden.some((cell, left) => hidden.slice(left + 1).some(
+      (candidate) => areEditorCellsNeighbors(cell, candidate, 'square'),
+    ))).toBe(true);
   });
 
-  it('enforces numeric hidden and visible run limits while growing groups', () => {
+  it('enforces numeric hidden and visible run limits after probability selection', () => {
     const path = Array.from({ length: 24 }, (_, x) => ({ x, y: 0 }));
-    const selection = createAlgorithm4Selection();
-    selection.parameters = {
-      ...selection.parameters,
-      hiddenPercent: 10,
+    const denseSelection = createAlgorithm4Selection();
+    denseSelection.parameters = {
+      ...denseSelection.parameters,
+      earlyHiddenProbability: 100,
+      middleHiddenProbability: 100,
+      lateHiddenProbability: 100,
+      maxHiddenRun: 2,
+      maxVisibleRun: 12,
+    };
+    const sparseSelection = createAlgorithm4Selection();
+    sparseSelection.parameters = {
+      ...sparseSelection.parameters,
+      earlyHiddenProbability: 0,
+      middleHiddenProbability: 0,
+      lateHiddenProbability: 0,
+      earlyAdjacentHiddenSkipProbability: 100,
+      middleAdjacentHiddenSkipProbability: 100,
+      lateAdjacentHiddenSkipProbability: 100,
       maxHiddenRun: 2,
       maxVisibleRun: 3,
     };
 
-    const result = selectAlgorithm4HiddenLayout(path, 'rectangle', selection, 99);
+    const dense = selectAlgorithm4HiddenLayout(path, 'rectangle', denseSelection, 99);
+    const sparse = selectAlgorithm4HiddenLayout(path, 'rectangle', sparseSelection, 99);
 
-    expect(result.hiddenCells.size).toBeGreaterThan(result.targetCount);
-    expect(longestRun(path, result.hiddenCells, true)).toBeLessThanOrEqual(2);
-    expect(longestRun(path, result.hiddenCells, false)).toBeLessThanOrEqual(3);
+    expect(longestRun(path, dense.hiddenCells, true)).toBeLessThanOrEqual(2);
+    expect(longestRun(path, sparse.hiddenCells, false)).toBeLessThanOrEqual(3);
   });
 
-  it('normalizes algorithm 4 independently and resolves hex crossing limits', () => {
+  it('normalizes new parameters and migrates the removed hidden percentage', () => {
     const normalized = normalizeEditorAlgorithm({
       id: 'algorithm-4',
       parameters: {
         targetCrossings: 120,
         turnProbability: -8,
-        hiddenPercent: 95,
+        hiddenPercent: 65,
+        earlyHiddenProbability: -5,
+        middleHiddenProbability: 120,
+        earlySkipAdjacentHidden: '是',
+        middleSkipAdjacentHidden: 1,
+        lateSkipAdjacentHidden: 'invalid',
         maxHiddenRun: 30,
         maxVisibleRun: 0,
       },
@@ -153,11 +204,17 @@ describe('editor algorithm 4', () => {
         pathMode: 'single-stroke-multiple-solutions',
         targetCrossings: 99,
         turnProbability: 0,
-        hiddenPercent: 90,
+        earlyHiddenProbability: 0,
+        middleHiddenProbability: 100,
+        lateHiddenProbability: 65,
+        earlyAdjacentHiddenSkipProbability: 100,
+        middleAdjacentHiddenSkipProbability: 100,
+        lateAdjacentHiddenSkipProbability: 0,
         maxHiddenRun: 8,
         maxVisibleRun: 1,
       },
     });
+    expect(normalized.parameters).not.toHaveProperty('hiddenPercent');
     expect(editorAlgorithmLabel('algorithm-4')).toBe('算法4');
     expect(resolveEditorAlgorithmForShape(createAlgorithm4Selection(), 'hex'))
       .toMatchObject({
@@ -166,7 +223,7 @@ describe('editor algorithm 4', () => {
       });
   });
 
-  it('saves algorithm 4 and its copied parameters through the editor model', () => {
+  it('saves algorithm 4 phase parameters through the editor model', () => {
     const model = new LevelEditorModel();
     for (let index = 0; index < 5; index += 1) model.changeSize(-1);
     model.fill();
@@ -177,7 +234,12 @@ describe('editor algorithm 4', () => {
       ...selection,
       parameters: {
         ...selection.parameters,
-        hiddenPercent: 70,
+        earlyHiddenProbability: 35,
+        middleHiddenProbability: 55,
+        lateHiddenProbability: 75,
+        earlyAdjacentHiddenSkipProbability: 25,
+        middleAdjacentHiddenSkipProbability: 50,
+        lateAdjacentHiddenSkipProbability: 75,
         maxHiddenRun: 5,
         maxVisibleRun: 6,
       },
@@ -188,10 +250,16 @@ describe('editor algorithm 4', () => {
       id: 'algorithm-4',
       parameters: {
         pathMode: 'single-stroke-multiple-solutions',
-        hiddenPercent: 70,
+        earlyHiddenProbability: 35,
+        middleHiddenProbability: 55,
+        lateHiddenProbability: 75,
+        earlyAdjacentHiddenSkipProbability: 25,
+        middleAdjacentHiddenSkipProbability: 50,
+        lateAdjacentHiddenSkipProbability: 75,
         maxHiddenRun: 5,
         maxVisibleRun: 6,
       },
     });
+    expect(model.createLevel(404)?.algorithm?.parameters).not.toHaveProperty('hiddenPercent');
   });
 });

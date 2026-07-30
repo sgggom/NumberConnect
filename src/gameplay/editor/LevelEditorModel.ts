@@ -138,6 +138,14 @@ export class LevelEditorModel {
     this.trimCells();
   }
 
+  public applyRecognizedLevel(level: LevelData): void {
+    const currentAlgorithm = this.algorithm;
+    this.applyLevel(level);
+    this.algorithm = currentAlgorithm;
+    this.pathSource = 'manual';
+    this.generatedTargetHiddenCount = undefined;
+  }
+
   public applyRecognizedPath(
     rows: number,
     columns: number,

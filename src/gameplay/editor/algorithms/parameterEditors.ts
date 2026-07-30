@@ -105,12 +105,17 @@ export const renderEditorAlgorithmParameters = (
         description,
         crossings,
         numberField('拐弯概率 %', selection.parameters.turnProbability, 0, 100, (value) => update({ turnProbability: value })),
-        numberField('隐藏比例 %', selection.parameters.hiddenPercent, 0, 90, (value) => update({ hiddenPercent: value })),
+        numberField('前期隐藏概率 %', selection.parameters.earlyHiddenProbability, 0, 100, (value) => update({ earlyHiddenProbability: value })),
+        numberField('中期隐藏概率 %', selection.parameters.middleHiddenProbability, 0, 100, (value) => update({ middleHiddenProbability: value })),
+        numberField('后期隐藏概率 %', selection.parameters.lateHiddenProbability, 0, 100, (value) => update({ lateHiddenProbability: value })),
         numberField('最长连续隐藏', selection.parameters.maxHiddenRun, 1, 8, (value) => update({ maxHiddenRun: value })),
         numberField('最长连续显示', selection.parameters.maxVisibleRun, 1, 12, (value) => update({ maxVisibleRun: value })),
+        numberField('前期邻近隐藏跳过概率 %', selection.parameters.earlyAdjacentHiddenSkipProbability, 0, 100, (value) => update({ earlyAdjacentHiddenSkipProbability: value })),
+        numberField('中期邻近隐藏跳过概率 %', selection.parameters.middleAdjacentHiddenSkipProbability, 0, 100, (value) => update({ middleAdjacentHiddenSkipProbability: value })),
+        numberField('后期邻近隐藏跳过概率 %', selection.parameters.lateAdjacentHiddenSkipProbability, 0, 100, (value) => update({ lateAdjacentHiddenSkipProbability: value })),
       );
       const note = document.createElement('small');
-      note.textContent = '隐藏格先以互不相邻的种子分散生成，再向周围邻格扩张；每次优先补充周围隐藏数最少的显示数字，并遵守连续隐藏和显示限制。';
+      note.textContent = '路径按前 25%、中间 50%、后 25% 依次判断。候选先按隐藏概率选中；若周围已有隐藏数字，实际跳过概率为本阶段配置值 ×（已隐藏邻居数 ÷ 当前格有效邻居总数）。所有概率填写 0–100 整数；即将超过最长连续显示时会强制隐藏。';
       host.append(note);
       break;
     }

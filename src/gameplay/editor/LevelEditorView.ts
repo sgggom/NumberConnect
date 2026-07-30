@@ -156,9 +156,9 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
           </div>
           <div class="editor-image-import">
             <div class="editor-image-import__group">
-              <div class="editor-image-import__heading"><b>精准识别</b><small>先完整关卡，再识别隐藏</small></div>
+              <div class="editor-image-import__heading"><b>精准识别</b><small>完整关卡支持图片或 JSON</small></div>
               <div class="editor-image-import__actions">
-                <button id="editor-image-level-button" class="button button--secondary" type="button">识别完整关卡</button>
+                <button id="editor-image-level-button" class="button button--secondary" type="button" title="从剪贴板读取关卡截图或单个关卡 JSON">识别完整关卡</button>
                 <button id="editor-image-hidden-button" class="button button--secondary" type="button">识别隐藏</button>
               </div>
             </div>
@@ -166,7 +166,7 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
               <div class="editor-image-import__heading"><b>快捷识别</b><small>会推测未显示的路径</small></div>
               <button id="editor-image-formation-button" class="button button--secondary" type="button">识别初始阵型</button>
             </div>
-            <small class="editor-image-import__shortcut">直接 Ctrl+V 使用上次选择，默认为完整关卡</small>
+            <small class="editor-image-import__shortcut">直接 Ctrl+V：图片使用上次选择，JSON 始终按完整关卡导入</small>
           </div>
           <div class="editor-board-actions">
             <button id="editor-fill-button" class="button button--secondary button--small">填满棋盘</button>
