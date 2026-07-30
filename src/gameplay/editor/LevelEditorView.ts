@@ -1,4 +1,4 @@
-const LEVEL_EDITOR_VIEW_VERSION = '22';
+const LEVEL_EDITOR_VIEW_VERSION = '25';
 
 export const mountLevelEditorView = (host: HTMLElement): void => {
   const hasCurrentView = host.dataset.editorViewVersion === LEVEL_EDITOR_VIEW_VERSION
@@ -79,7 +79,7 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
               <button id="editor-simulation-export-button" class="button button--secondary button--small" type="button" title="将当前关卡基础数据以 Tab 分隔格式复制到剪贴板" disabled>导出基础数据</button>
             </div>
           </div>
-          <p class="editor-simulation-rule">每次从当前格连接到一个相邻格记为一步。八组曲线共享步数横轴，依次展示可连接数量、直接连接、距离下个显示数字、推理深度、选择数量、路径推理分支数量、合法推理分支数量和每步难度分；红点表示连接错误。</p>
+          <p class="editor-simulation-rule">每次从当前格连接到一个相邻格记为一步。七组曲线共享步数横轴，依次展示可连接数量、直接连接、距离下个显示数字、选择数量、路径推理分支数量、合法推理分支数量和每步难度分；红点表示连接错误。</p>
           <div id="editor-simulation-summary" class="editor-simulation-summary" hidden>
             <div><span id="editor-simulation-total-steps-label">总步数</span><strong id="editor-simulation-total-steps">0</strong></div>
             <div><span id="editor-simulation-error-count-label">错误次数</span><strong id="editor-simulation-error-count">0</strong></div>
@@ -190,13 +190,34 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
         </div>
         <div class="editor-level-actions">
           <button id="editor-level-add" class="button button--primary button--small" disabled>添加当前</button>
+          <button id="editor-level-batch" class="button button--secondary button--small" type="button" title="读取算法 4 配置 Excel，每行按生成次数批量追加关卡">批量生成</button>
           <button id="editor-level-import" class="button button--secondary button--small">读取 JSON</button>
-          <button id="editor-level-export" class="button button--secondary button--small">导出 JSON</button>
+          <button id="editor-level-export" class="button button--secondary button--small" title="逐关模拟并导出 Tab 分隔文本，每关一行">导出 TXT</button>
         </div>
         <div id="editor-level-list" class="editor-level-list"></div>
+        <input id="editor-level-batch-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
         <input id="editor-level-file" type="file" accept=".json,application/json" hidden>
       </aside>
     </div>
+
+    <dialog id="editor-batch-progress-dialog" class="editor-batch-dialog" aria-labelledby="editor-batch-dialog-title" aria-describedby="editor-batch-dialog-message">
+      <div class="editor-batch-dialog__header">
+        <div>
+          <span class="editor-batch-dialog__eyebrow">算法 4 · Excel 批量生成</span>
+          <h3 id="editor-batch-dialog-title">正在读取配置</h3>
+        </div>
+        <span id="editor-batch-progress-percent" class="editor-batch-dialog__percent">0%</span>
+      </div>
+      <div class="editor-batch-dialog__progress">
+        <progress id="editor-batch-progress" max="1"></progress>
+      </div>
+      <p id="editor-batch-dialog-message" class="editor-batch-dialog__message" aria-live="polite">正在准备批量生成…</p>
+      <p id="editor-batch-dialog-summary" class="editor-batch-dialog__summary"></p>
+      <div class="editor-batch-dialog__actions">
+        <button id="editor-batch-dialog-close" class="button button--secondary" type="button" disabled>关闭</button>
+        <button id="editor-batch-dialog-download" class="button button--primary" type="button" disabled>下载本次 TXT</button>
+      </div>
+    </dialog>
 
   `;
 };
