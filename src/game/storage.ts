@@ -10,7 +10,7 @@ import {
 import { decodeCompactLevelCollection } from './levelDataFormat';
 
 const SETTINGS_KEY = 'number-connect.settings.v1';
-const LEVEL_COLLECTION_KEY = 'number-connect.level-collection.v2';
+const LEVEL_COLLECTION_KEY = 'number-connect.level-collection.v3';
 
 const hasStorage = (): boolean => typeof window !== 'undefined' && 'localStorage' in window;
 

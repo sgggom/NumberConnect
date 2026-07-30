@@ -97,10 +97,10 @@ describe('game settings migration', () => {
 });
 
 describe('level collection migration', () => {
-  it('ignores the obsolete v1 collection and starts from the new bundled levels', () => {
+  it('ignores the obsolete v2 collection and starts from the new bundled levels', () => {
     const bundled = [makeLevel(1)];
     const getItem = vi.fn((key: string) => (
-      key === 'number-connect.level-collection.v1'
+      key === 'number-connect.level-collection.v2'
         ? JSON.stringify([makeLevel(9, true)])
         : null
     ));
@@ -108,17 +108,17 @@ describe('level collection migration', () => {
 
     try {
       expect(loadLevelCollection(bundled)).toEqual(bundled);
-      expect(getItem).toHaveBeenCalledWith('number-connect.level-collection.v2');
-      expect(getItem).not.toHaveBeenCalledWith('number-connect.level-collection.v1');
+      expect(getItem).toHaveBeenCalledWith('number-connect.level-collection.v3');
+      expect(getItem).not.toHaveBeenCalledWith('number-connect.level-collection.v2');
     } finally {
       vi.unstubAllGlobals();
     }
   });
 
-  it('loads and saves editor changes with the v2 collection key', () => {
+  it('loads and saves editor changes with the v3 collection key', () => {
     const stored = [makeLevel(7, true)];
     const getItem = vi.fn((key: string) => (
-      key === 'number-connect.level-collection.v2' ? JSON.stringify(stored) : null
+      key === 'number-connect.level-collection.v3' ? JSON.stringify(stored) : null
     ));
     const setItem = vi.fn();
     vi.stubGlobal('window', { localStorage: { getItem, setItem } });
@@ -127,7 +127,7 @@ describe('level collection migration', () => {
       expect(loadLevelCollection([makeLevel(1)])).toEqual(stored);
       saveLevelCollection(stored);
       expect(setItem).toHaveBeenCalledWith(
-        'number-connect.level-collection.v2',
+        'number-connect.level-collection.v3',
         JSON.stringify(stored),
       );
     } finally {
