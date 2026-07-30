@@ -20,7 +20,6 @@ export interface SimulatedPlayStep {
   directConnect: boolean;
   directConnectRate?: number;
   distanceToNextVisibleNumber: number;
-  reasoningDepth: number;
   availableBranchCount: number;
   lengthValidBranchCount: number;
   rejectedIsolationBranchCount: number;
@@ -76,7 +75,6 @@ export const averageSimulatedPlayResults = (
       distanceToNextVisibleNumber: average(
         samples.map((step) => step.distanceToNextVisibleNumber),
       ),
-      reasoningDepth: average(samples.map((step) => step.reasoningDepth)),
       availableBranchCount: average(samples.map((step) => step.availableBranchCount)),
       lengthValidBranchCount: average(samples.map((step) => step.lengthValidBranchCount)),
       rejectedIsolationBranchCount: average(
@@ -198,14 +196,12 @@ const minimumStepsBetween = (
 interface CandidateReasoningAnalysis {
   candidate: EditorCell;
   canReach: boolean;
-  exploredDepth: number;
   lengthValid: boolean;
   rejectedByIsolation: boolean;
 }
 
 interface CandidateSelectionAnalysis {
   selected: EditorCell;
-  reasoningDepth: number;
   availableBranchCount: number;
   lengthValidBranchCount: number;
   rejectedIsolationBranchCount: number;
@@ -253,7 +249,6 @@ const analyzeCandidateReasoning = (
     return {
       candidate,
       canReach: true,
-      exploredDepth: 0,
       lengthValid,
       rejectedByIsolation,
     };
@@ -262,17 +257,14 @@ const analyzeCandidateReasoning = (
     return {
       candidate,
       canReach: candidateKey === anchorKey,
-      exploredDepth: Math.min(1, depthLimit),
       lengthValid,
       rejectedByIsolation,
     };
   }
 
   const failedStates = new Set<string>();
-  let exploredDepth = 0;
 
   const search = (current: EditorCell, predictedSteps: number): boolean => {
-    exploredDepth = Math.max(exploredDepth, Math.min(depthLimit, predictedSteps + 1));
     const stateKey = `${keyOf(current)}:${predictedSteps}:${[...visited].sort().join('|')}`;
     if (failedStates.has(stateKey)) return false;
     if (!leavesRemainingCellsConnected(
@@ -295,7 +287,6 @@ const analyzeCandidateReasoning = (
     if (remainingIntermediateCount === 0) {
       const depthIncludingAnchor = predictedSteps + 2;
       if (depthIncludingAnchor > depthLimit) return true;
-      exploredDepth = Math.max(exploredDepth, depthIncludingAnchor);
       if (!areEditorCellsNeighbors(current, anchor, shape)) {
         failedStates.add(stateKey);
         return false;
@@ -339,7 +330,6 @@ const analyzeCandidateReasoning = (
   return {
     candidate,
     canReach: search(candidate, 0),
-    exploredDepth,
     lengthValid,
     rejectedByIsolation,
   };
@@ -372,9 +362,6 @@ const chooseAnalyzedCandidate = (
   const available = safeCandidates.length > 0 ? safeCandidates : candidates;
   return {
     selected: chooseCandidate(available, random),
-    reasoningDepth: predictionDepth === 0
-      ? 0
-      : Math.max(0, ...analyses.map(({ exploredDepth }) => exploredDepth)),
     availableBranchCount: candidates.length,
     lengthValidBranchCount: analyses.filter(({ lengthValid }) => lengthValid).length,
     rejectedIsolationBranchCount: analyses.filter(
@@ -603,7 +590,6 @@ export const simulateLevelPlay = ({
             );
             return {
               selected: candidates[0],
-              reasoningDepth: 0,
               availableBranchCount: 1,
               lengthValidBranchCount: Number(analysis.lengthValid),
               rejectedIsolationBranchCount: Number(
@@ -613,7 +599,6 @@ export const simulateLevelPlay = ({
           })()
         : {
             selected: candidates[0] ?? expected,
-            reasoningDepth: 0,
             availableBranchCount: 0,
             lengthValidBranchCount: 0,
             rejectedIsolationBranchCount: 0,
@@ -713,7 +698,6 @@ export const simulateLevelPlay = ({
       connectableCount: countConnectableCells(current, currentPosition, route, shape),
       directConnect: expectedIsVisible,
       distanceToNextVisibleNumber: nextVisibleDistance,
-      reasoningDepth: branchAnalysis.reasoningDepth,
       availableBranchCount: branchAnalysis.availableBranchCount,
       lengthValidBranchCount: branchAnalysis.lengthValidBranchCount,
       rejectedIsolationBranchCount: branchAnalysis.rejectedIsolationBranchCount,

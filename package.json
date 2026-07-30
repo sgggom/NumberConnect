@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "phaser": "^3.90.0",
+    "read-excel-file": "^9.3.5",
     "tesseract.js": "^6.0.1"
   },
   "devDependencies": {
