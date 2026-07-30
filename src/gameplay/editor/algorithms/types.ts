@@ -59,7 +59,12 @@ export interface Algorithm4Parameters {
   pathMode: 'single-stroke-multiple-solutions';
   targetCrossings: number;
   turnProbability: number;
-  hiddenPercent: number;
+  earlyHiddenProbability: number;
+  middleHiddenProbability: number;
+  lateHiddenProbability: number;
+  earlyAdjacentHiddenSkipProbability: number;
+  middleAdjacentHiddenSkipProbability: number;
+  lateAdjacentHiddenSkipProbability: number;
   maxHiddenRun: number;
   maxVisibleRun: number;
 }

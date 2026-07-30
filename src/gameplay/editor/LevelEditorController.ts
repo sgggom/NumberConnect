@@ -16,10 +16,12 @@ import {
 import { calculateEditorLevelMetrics } from './levelMetrics';
 import { LevelEditorModel } from './LevelEditorModel';
 import { mountLevelEditorView } from './LevelEditorView';
+import { readAlgorithm4BatchConfigFile } from './batchLevelGeneration';
+import { generateAlgorithm4BatchLevelsInWorkers } from './batchLevelGenerationPool';
 import {
-  generateAlgorithm4BatchLevels,
-  readAlgorithm4BatchConfigFile,
-} from './batchLevelGeneration';
+  decodeClipboardLevelJson,
+  looksLikeClipboardLevelJson,
+} from './clipboardLevelJson';
 import {
   averageSimulatedPlayResults,
   simulateLevelPlay,
@@ -181,9 +183,9 @@ export class LevelEditorController {
       this.render();
       this.setStatus('棋盘已填满，请生成路径。');
     });
-    this.query('#editor-image-level-button').addEventListener('click', () => void this.readImageFromClipboard('complete-level'));
-    this.query('#editor-image-hidden-button').addEventListener('click', () => void this.readImageFromClipboard('hidden-layout'));
-    this.query('#editor-image-formation-button').addEventListener('click', () => void this.readImageFromClipboard('initial-formation'));
+    this.query('#editor-image-level-button').addEventListener('click', () => void this.readRecognitionInputFromClipboard('complete-level'));
+    this.query('#editor-image-hidden-button').addEventListener('click', () => void this.readRecognitionInputFromClipboard('hidden-layout'));
+    this.query('#editor-image-formation-button').addEventListener('click', () => void this.readRecognitionInputFromClipboard('initial-formation'));
     this.query('#editor-undo-delete-button').addEventListener('click', () => this.undoLastDeletion());
     this.query('#editor-generate-path-button').addEventListener('click', () => this.generatePath());
     this.query<HTMLInputElement>('#editor-simulation-count').addEventListener('change', (event) => {
@@ -250,9 +252,16 @@ export class LevelEditorController {
       const imageItem = [...(event.clipboardData?.items ?? [])]
         .find((item) => item.kind === 'file' && item.type.startsWith('image/'));
       const image = imageItem?.getAsFile();
-      if (!image) return;
+      if (image) {
+        event.preventDefault();
+        void this.recognizeClipboardImage(image, this.imageRecognitionMode);
+        return;
+      }
+      const text = event.clipboardData?.getData('text/plain') ?? '';
+      if (!looksLikeClipboardLevelJson(text)) return;
       event.preventDefault();
-      void this.recognizeClipboardImage(image, this.imageRecognitionMode);
+      this.imageRecognitionMode = 'complete-level';
+      this.importClipboardLevelJson(text);
     });
   }
 
@@ -1280,30 +1289,90 @@ export class LevelEditorController {
     return `${this.model.shape}:${this.currentPathSignature()}:${hidden}:${this.simulationRunCount}:${this.simulationReasoningLevel}`;
   }
 
-  private async readImageFromClipboard(mode: ImageRecognitionMode): Promise<void> {
+  private async readRecognitionInputFromClipboard(mode: ImageRecognitionMode): Promise<void> {
     this.imageRecognitionMode = mode;
     if (mode === 'hidden-layout' && !this.model.hasGeneratedPath) {
       this.setStatus('请先识别完整关卡，再识别隐藏。', true);
       return;
     }
-    if (!navigator.clipboard?.read) {
-      this.setStatus('当前浏览器不支持主动读取剪贴板，请直接按 Ctrl+V 粘贴图片。', true);
+    const clipboard = navigator.clipboard;
+    if (
+      !clipboard
+      || (!clipboard.read && (mode !== 'complete-level' || !clipboard.readText))
+    ) {
+      this.setStatus(
+        mode === 'complete-level'
+          ? '当前浏览器不支持主动读取剪贴板，请直接按 Ctrl+V 粘贴图片或关卡 JSON。'
+          : '当前浏览器不支持主动读取剪贴板，请直接按 Ctrl+V 粘贴图片。',
+        true,
+      );
       return;
     }
     try {
-      const items = await navigator.clipboard.read();
+      const items = clipboard.read ? await clipboard.read() : [];
       for (const item of items) {
         const imageType = item.types.find((type) => type.startsWith('image/'));
-        if (!imageType) continue;
-        await this.recognizeClipboardImage(await item.getType(imageType), mode);
-        return;
+        if (imageType) {
+          await this.recognizeClipboardImage(await item.getType(imageType), mode);
+          return;
+        }
       }
-      this.setStatus('剪贴板中没有图片，请先复制一张关卡截图。', true);
+      if (mode === 'complete-level') {
+        for (const item of items) {
+          const textType = item.types.find(
+            (type) => type === 'application/json' || type === 'text/plain',
+          );
+          if (!textType) continue;
+          const text = await (await item.getType(textType)).text();
+          if (!looksLikeClipboardLevelJson(text)) continue;
+          this.importClipboardLevelJson(text);
+          return;
+        }
+        if (clipboard.readText) {
+          const text = await clipboard.readText();
+          if (looksLikeClipboardLevelJson(text)) {
+            this.importClipboardLevelJson(text);
+            return;
+          }
+        }
+      }
+      this.setStatus(
+        mode === 'complete-level'
+          ? '剪贴板中没有图片或关卡 JSON，请先复制关卡截图或单个关卡 JSON。'
+          : '剪贴板中没有图片，请先复制一张关卡截图。',
+        true,
+      );
     } catch (error) {
       const message = error instanceof DOMException && error.name === 'NotAllowedError'
-        ? '没有剪贴板读取权限，请在编辑器中直接按 Ctrl+V 粘贴图片。'
-        : '无法读取剪贴板，请复制图片后重试或直接按 Ctrl+V。';
+        ? mode === 'complete-level'
+          ? '没有剪贴板读取权限，请在编辑器中直接按 Ctrl+V 粘贴图片或关卡 JSON。'
+          : '没有剪贴板读取权限，请在编辑器中直接按 Ctrl+V 粘贴图片。'
+        : mode === 'complete-level'
+          ? '无法读取剪贴板，请复制图片或关卡 JSON 后重试，也可以直接按 Ctrl+V。'
+          : '无法读取剪贴板，请复制图片后重试或直接按 Ctrl+V。';
       this.setStatus(message, true);
+    }
+  }
+
+  private importClipboardLevelJson(text: string): void {
+    try {
+      const level = decodeClipboardLevelJson(text);
+      this.cancelPathAnimation();
+      this.clearRecognitionAmbiguity();
+      this.clearSimulationResult();
+      this.selectedLevelId = undefined;
+      this.model.applyRecognizedLevel(level);
+      this.render();
+      const hiddenCount = level.hiddenCells?.length ?? 0;
+      this.setStatus(
+        `关卡 JSON 已导入：${level.columns}×${level.rows}，`
+        + `路径 ${level.solutionPath.length} 格，隐藏 ${hiddenCount} 格。请检查后试玩或添加到列表。`,
+      );
+    } catch (error) {
+      this.setStatus(
+        error instanceof Error ? error.message : '读取剪贴板关卡 JSON 失败。',
+        true,
+      );
     }
   }
 
@@ -1463,9 +1532,11 @@ export class LevelEditorController {
       this.setStatus('当前算法无法生成覆盖全部格子的路径，请调整棋盘或更换算法。', true);
       return;
     }
-    const hiddenSummary = this.model.algorithmSelection.id !== 'algorithm-1'
-      ? `，隐藏 ${this.model.hiddenCellKeys.size}/${this.model.targetHiddenCount ?? this.model.hiddenCellKeys.size} 格，纯运气分叉 0`
-      : '';
+    const hiddenSummary = this.model.algorithmSelection.id === 'algorithm-1'
+      ? ''
+      : this.model.targetHiddenCount === undefined
+        ? `，隐藏 ${this.model.hiddenCellKeys.size} 格，纯运气分叉 0`
+        : `，隐藏 ${this.model.hiddenCellKeys.size}/${this.model.targetHiddenCount} 格，纯运气分叉 0`;
     this.animateGeneratedPath(`第 ${this.model.pathGenerationCount} 次路径生成成功：共 ${this.model.solutionPath.length} 个格子${hiddenSummary}。`);
   }
 
@@ -1658,17 +1729,28 @@ export class LevelEditorController {
       if (globalThis.crypto?.getRandomValues) globalThis.crypto.getRandomValues(seedValues);
       else seedValues[0] = Date.now() >>> 0;
 
-      const result = await generateAlgorithm4BatchLevels(
+      let generationThreadCount = 1;
+      const result = await generateAlgorithm4BatchLevelsInWorkers(
         configs,
         this.options.getNextLevelId(),
         seedValues[0],
-        (completed, requested, sourceRow) => {
-          this.setStatus(`正在批量生成 ${completed}/${requested}（配置表第 ${sourceRow} 行）…`);
-          this.updateBatchProgress(
-            completed,
-            requested,
-            `正在生成配置表第 ${sourceRow} 行 · ${completed}/${requested}`,
-          );
+        {
+          onWorkerCount: (workerCount) => {
+            generationThreadCount = Math.max(1, workerCount);
+            this.updateBatchProgress(
+              0,
+              total,
+              `已启用 ${generationThreadCount} 个生成线程，准备处理 ${total} 个任务…`,
+            );
+          },
+          onProgress: (completed, requested, sourceRow) => {
+            this.setStatus(`正在用 ${generationThreadCount} 个线程批量生成 ${completed}/${requested}（配置表第 ${sourceRow} 行）…`);
+            this.updateBatchProgress(
+              completed,
+              requested,
+              `${generationThreadCount} 个线程并行生成 · 配置表第 ${sourceRow} 行 · ${completed}/${requested}`,
+            );
+          },
         },
       );
       if (result.levels.length === 0) {

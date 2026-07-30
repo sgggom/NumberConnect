@@ -17,6 +17,7 @@ import {
 } from './ImageLevelRecognizer';
 import { calculateEditorLevelMetrics } from './levelMetrics';
 import { LevelEditorModel } from './LevelEditorModel';
+import { decodeClipboardLevelJson } from './clipboardLevelJson';
 
 const serpentinePath = (rows: number, columns: number) => Array.from(
   { length: rows * columns },
@@ -35,7 +36,12 @@ describe('level editor path generation', () => {
     expect(model.algorithmSelection.parameters).toMatchObject({
       targetCrossings: 20,
       turnProbability: 40,
-      hiddenPercent: 50,
+      earlyHiddenProbability: 50,
+      middleHiddenProbability: 50,
+      lateHiddenProbability: 50,
+      earlyAdjacentHiddenSkipProbability: 0,
+      middleAdjacentHiddenSkipProbability: 0,
+      lateAdjacentHiddenSkipProbability: 0,
     });
   });
 
@@ -361,6 +367,27 @@ describe('level editor path generation', () => {
       columns: 3,
       pathSource: 'manual',
       solutionPath: path,
+    });
+  });
+
+  it('applies clipboard JSON as a manual level while preserving the selected algorithm', () => {
+    const model = new LevelEditorModel();
+    const level = decodeClipboardLevelJson(JSON.stringify({
+      data: [
+        [1, 2, 3],
+        [6, -5, 4],
+        [7, -8, 9],
+      ],
+    }));
+
+    model.applyRecognizedLevel(level);
+
+    expect(model.algorithmSelection.id).toBe('algorithm-4');
+    expect(model.targetHiddenCount).toBeUndefined();
+    expect(model.createLevel(91)).toMatchObject({
+      pathSource: 'manual',
+      solutionPath: level.solutionPath,
+      hiddenCells: level.hiddenCells,
     });
   });
 

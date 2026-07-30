@@ -33,7 +33,7 @@ export const EDITOR_ALGORITHMS: readonly EditorAlgorithmDescriptor[] = [
   {
     id: 'algorithm-4',
     label: '算法4',
-    description: '沿用算法2的路径生成，分散隐藏种子后向邻格扩张，并均衡每个显示数字周围的隐藏数量。',
+    description: '沿用算法2的路径生成，生成完整路径后按前、中、后三阶段的独立概率依次选择隐藏数字。',
   },
 ];
 
@@ -54,6 +54,16 @@ const normalizedInteger = (value: unknown, fallback: number, min: number, max: n
   Number.isFinite(Number(value))
     ? Math.max(min, Math.min(max, Math.floor(Number(value))))
     : fallback;
+
+const normalizedLegacySkipProbability = (value: unknown, fallback: number): number => {
+  if (typeof value === 'boolean') return value ? 100 : 0;
+  if (value === 1 || value === '1') return 100;
+  if (value === 0 || value === '0') return 0;
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (['true', 'yes', '是'].includes(normalized)) return 100;
+  if (['false', 'no', '否'].includes(normalized)) return 0;
+  return fallback;
+};
 
 export const normalizeEditorAlgorithm = (
   value?: LevelAlgorithmData,
@@ -169,6 +179,12 @@ export const normalizeEditorAlgorithm = (
   }
   if (value?.id === 'algorithm-4') {
     const defaults = createAlgorithm4Selection();
+    const legacyHiddenProbability = normalizedInteger(
+      value.parameters?.hiddenPercent,
+      defaults.parameters.earlyHiddenProbability,
+      0,
+      100,
+    );
     return {
       ...defaults,
       parameters: {
@@ -186,11 +202,50 @@ export const normalizeEditorAlgorithm = (
           0,
           100,
         ),
-        hiddenPercent: normalizedInteger(
-          value.parameters?.hiddenPercent,
-          defaults.parameters.hiddenPercent,
+        earlyHiddenProbability: normalizedInteger(
+          value.parameters?.earlyHiddenProbability,
+          legacyHiddenProbability,
           0,
-          90,
+          100,
+        ),
+        middleHiddenProbability: normalizedInteger(
+          value.parameters?.middleHiddenProbability,
+          legacyHiddenProbability,
+          0,
+          100,
+        ),
+        lateHiddenProbability: normalizedInteger(
+          value.parameters?.lateHiddenProbability,
+          legacyHiddenProbability,
+          0,
+          100,
+        ),
+        earlyAdjacentHiddenSkipProbability: normalizedInteger(
+          value.parameters?.earlyAdjacentHiddenSkipProbability,
+          normalizedLegacySkipProbability(
+            value.parameters?.earlySkipAdjacentHidden,
+            defaults.parameters.earlyAdjacentHiddenSkipProbability,
+          ),
+          0,
+          100,
+        ),
+        middleAdjacentHiddenSkipProbability: normalizedInteger(
+          value.parameters?.middleAdjacentHiddenSkipProbability,
+          normalizedLegacySkipProbability(
+            value.parameters?.middleSkipAdjacentHidden,
+            defaults.parameters.middleAdjacentHiddenSkipProbability,
+          ),
+          0,
+          100,
+        ),
+        lateAdjacentHiddenSkipProbability: normalizedInteger(
+          value.parameters?.lateAdjacentHiddenSkipProbability,
+          normalizedLegacySkipProbability(
+            value.parameters?.lateSkipAdjacentHidden,
+            defaults.parameters.lateAdjacentHiddenSkipProbability,
+          ),
+          0,
+          100,
         ),
         maxHiddenRun: normalizedInteger(
           value.parameters?.maxHiddenRun,

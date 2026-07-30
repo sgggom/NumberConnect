@@ -1,13 +1,12 @@
 import { BoardShape, type Cell, type LevelData } from '../../game/types';
 import {
-  resolveEditorAlgorithmForShape,
-  serializeEditorAlgorithm,
-} from './algorithms';
-import {
   createAlgorithm4Selection,
   runAlgorithm4,
 } from './algorithms/algorithm4';
-import type { Algorithm4Selection } from './algorithms/types';
+import {
+  serializeEditorAlgorithm,
+  type Algorithm4Selection,
+} from './algorithms/types';
 import type { EditorShape } from './types';
 
 export const ALGORITHM4_BATCH_HEADERS = [
@@ -16,9 +15,14 @@ export const ALGORITHM4_BATCH_HEADERS = [
   '列数',
   '最大交叉数量',
   '拐弯概率 %',
-  '隐藏比例 %',
+  '前期隐藏概率 %',
+  '中期隐藏概率 %',
+  '后期隐藏概率 %',
   '最长连续隐藏',
   '最长连续显示',
+  '前期邻近隐藏跳过概率 %',
+  '中期邻近隐藏跳过概率 %',
+  '后期邻近隐藏跳过概率 %',
   '生成次数',
 ] as const;
 
@@ -32,9 +36,14 @@ export interface Algorithm4BatchConfig {
   columns: number;
   targetCrossings: number;
   turnProbability: number;
-  hiddenPercent: number;
+  earlyHiddenProbability: number;
+  middleHiddenProbability: number;
+  lateHiddenProbability: number;
   maxHiddenRun: number;
   maxVisibleRun: number;
+  earlyAdjacentHiddenSkipProbability: number;
+  middleAdjacentHiddenSkipProbability: number;
+  lateAdjacentHiddenSkipProbability: number;
   generationCount: number;
 }
 
@@ -46,6 +55,20 @@ export interface Algorithm4BatchFailure {
 export interface Algorithm4BatchResult {
   levels: LevelData[];
   failures: Algorithm4BatchFailure[];
+}
+
+export interface Algorithm4BatchTask {
+  taskIndex: number;
+  config: Algorithm4BatchConfig;
+  generationNumber: number;
+  seed: number;
+}
+
+export interface Algorithm4BatchTaskResult {
+  taskIndex: number;
+  sourceRow: number;
+  generationNumber: number;
+  level: LevelData | null;
 }
 
 export type Algorithm4BatchProgress = (
@@ -60,9 +83,35 @@ const HEADER_ALIASES = {
   columns: ['列数', '宽度', 'columns', 'column', 'cols'],
   targetCrossings: ['最大交叉数量', '交叉数量', 'targetcrossings'],
   turnProbability: ['拐弯概率', '路径拐弯概率', 'turnprobability'],
-  hiddenPercent: ['隐藏比例', '隐藏占比', 'hiddenpercent'],
+  earlyHiddenProbability: ['前期隐藏概率', '前段隐藏概率', 'earlyhiddenprobability'],
+  middleHiddenProbability: ['中期隐藏概率', '中段隐藏概率', 'middlehiddenprobability'],
+  lateHiddenProbability: ['后期隐藏概率', '后段隐藏概率', 'latehiddenprobability'],
   maxHiddenRun: ['最长连续隐藏', '最长隐藏长度', 'maxhiddenrun'],
   maxVisibleRun: ['最长连续显示', '最长显示长度', 'maxvisiblerun'],
+  earlyAdjacentHiddenSkipProbability: [
+    '前期邻近隐藏跳过概率',
+    '前期周围已有隐藏时跳过概率',
+    '前期邻近隐藏时跳过',
+    '前期周围已有隐藏时跳过',
+    'earlyadjacenthiddenskipprobability',
+    'earlyskipadjacenthidden',
+  ],
+  middleAdjacentHiddenSkipProbability: [
+    '中期邻近隐藏跳过概率',
+    '中期周围已有隐藏时跳过概率',
+    '中期邻近隐藏时跳过',
+    '中期周围已有隐藏时跳过',
+    'middleadjacenthiddenskipprobability',
+    'middleskipadjacenthidden',
+  ],
+  lateAdjacentHiddenSkipProbability: [
+    '后期邻近隐藏跳过概率',
+    '后期周围已有隐藏时跳过概率',
+    '后期邻近隐藏时跳过',
+    '后期周围已有隐藏时跳过',
+    'lateadjacenthiddenskipprobability',
+    'lateskipadjacenthidden',
+  ],
   generationCount: ['生成次数', '数量', 'generationcount', 'count'],
 } as const;
 
@@ -107,25 +156,21 @@ const parseInteger = (
   return parsed;
 };
 
-const parsePercent = (
+const parsePercentageInteger = (
   value: unknown,
   sourceRow: number,
   header: string,
-  max: number,
   fallback: number,
 ): number => {
   if (value === null || value === undefined || String(value).trim() === '') return fallback;
-  const text = String(value).trim();
-  const hasPercentSign = /[%％]$/.test(text);
-  const raw = Number(text.replace(/[%％]$/, ''));
-  if (!Number.isFinite(raw)) {
-    throw new Error(`${cellLabel(sourceRow, header)}必须是百分比。`);
+  if (typeof value === 'boolean') {
+    throw new Error(`${cellLabel(sourceRow, header)}必须是 0–100 的整数（15 表示 15%）。`);
   }
-  const percent = hasPercentSign ? raw : raw >= 0 && raw <= 1 ? raw * 100 : raw;
-  if (!Number.isInteger(percent) || percent < 0 || percent > max) {
-    throw new Error(`${cellLabel(sourceRow, header)}必须是 0%–${max}% 的整数百分比。`);
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 100) {
+    throw new Error(`${cellLabel(sourceRow, header)}必须是 0–100 的整数（15 表示 15%）。`);
   }
-  return percent;
+  return parsed;
 };
 
 const parseShape = (value: unknown, sourceRow: number): EditorShape => {
@@ -191,19 +236,29 @@ export const parseAlgorithm4BatchConfigRows = (
         99,
         defaults.targetCrossings,
       ),
-      turnProbability: parsePercent(
+      turnProbability: parsePercentageInteger(
         row[indexes.turnProbability],
         sourceRow,
         '拐弯概率 %',
-        100,
         defaults.turnProbability,
       ),
-      hiddenPercent: parsePercent(
-        row[indexes.hiddenPercent],
+      earlyHiddenProbability: parsePercentageInteger(
+        row[indexes.earlyHiddenProbability],
         sourceRow,
-        '隐藏比例 %',
-        90,
-        defaults.hiddenPercent,
+        '前期隐藏概率 %',
+        defaults.earlyHiddenProbability,
+      ),
+      middleHiddenProbability: parsePercentageInteger(
+        row[indexes.middleHiddenProbability],
+        sourceRow,
+        '中期隐藏概率 %',
+        defaults.middleHiddenProbability,
+      ),
+      lateHiddenProbability: parsePercentageInteger(
+        row[indexes.lateHiddenProbability],
+        sourceRow,
+        '后期隐藏概率 %',
+        defaults.lateHiddenProbability,
       ),
       maxHiddenRun: parseInteger(
         row[indexes.maxHiddenRun],
@@ -220,6 +275,24 @@ export const parseAlgorithm4BatchConfigRows = (
         1,
         12,
         defaults.maxVisibleRun,
+      ),
+      earlyAdjacentHiddenSkipProbability: parsePercentageInteger(
+        row[indexes.earlyAdjacentHiddenSkipProbability],
+        sourceRow,
+        '前期邻近隐藏跳过概率 %',
+        defaults.earlyAdjacentHiddenSkipProbability,
+      ),
+      middleAdjacentHiddenSkipProbability: parsePercentageInteger(
+        row[indexes.middleAdjacentHiddenSkipProbability],
+        sourceRow,
+        '中期邻近隐藏跳过概率 %',
+        defaults.middleAdjacentHiddenSkipProbability,
+      ),
+      lateAdjacentHiddenSkipProbability: parsePercentageInteger(
+        row[indexes.lateAdjacentHiddenSkipProbability],
+        sourceRow,
+        '后期邻近隐藏跳过概率 %',
+        defaults.lateAdjacentHiddenSkipProbability,
       ),
       generationCount: parseInteger(
         row[indexes.generationCount],
@@ -273,53 +346,74 @@ const mixSeed = (
 
 const algorithmSelectionOf = (config: Algorithm4BatchConfig): Algorithm4Selection => {
   const defaults = createAlgorithm4Selection();
-  return {
+  const selection: Algorithm4Selection = {
     ...defaults,
     parameters: {
       ...defaults.parameters,
       targetCrossings: config.targetCrossings,
       turnProbability: config.turnProbability,
-      hiddenPercent: config.hiddenPercent,
+      earlyHiddenProbability: config.earlyHiddenProbability,
+      middleHiddenProbability: config.middleHiddenProbability,
+      lateHiddenProbability: config.lateHiddenProbability,
       maxHiddenRun: config.maxHiddenRun,
       maxVisibleRun: config.maxVisibleRun,
+      earlyAdjacentHiddenSkipProbability: config.earlyAdjacentHiddenSkipProbability,
+      middleAdjacentHiddenSkipProbability: config.middleAdjacentHiddenSkipProbability,
+      lateAdjacentHiddenSkipProbability: config.lateAdjacentHiddenSkipProbability,
     },
   };
+  return config.shape === 'hex'
+    ? {
+        ...selection,
+        parameters: { ...selection.parameters, targetCrossings: 0 },
+      }
+    : selection;
 };
 
-export const generateAlgorithm4BatchLevels = async (
+export const createAlgorithm4BatchTasks = (
   configs: ReadonlyArray<Algorithm4BatchConfig>,
-  firstLevelId: number,
   seed: number,
-  onProgress?: Algorithm4BatchProgress,
-): Promise<Algorithm4BatchResult> => {
-  const total = configs.reduce((sum, config) => sum + config.generationCount, 0);
-  const levels: LevelData[] = [];
-  const failures: Algorithm4BatchFailure[] = [];
-  let completed = 0;
-
+): Algorithm4BatchTask[] => {
+  const tasks: Algorithm4BatchTask[] = [];
   for (const config of configs) {
-    const activeCells = createActiveCells(config.rows, config.columns);
-    const activeCellKeys = new Set(activeCells.map((cell) => `${cell.x},${cell.y}`));
-    const selection = resolveEditorAlgorithmForShape(
-      algorithmSelectionOf(config),
-      config.shape,
-    ) as Algorithm4Selection;
-
     for (let generationNumber = 1; generationNumber <= config.generationCount; generationNumber += 1) {
-      let generated: ReturnType<typeof runAlgorithm4> = null;
-      for (let attempt = 0; attempt < 4 && !generated; attempt += 1) {
-        generated = runAlgorithm4({
-          rows: config.rows,
-          columns: config.columns,
-          activeCells: activeCellKeys,
-          shape: config.shape,
-          generationIndex: mixSeed(seed, config.sourceRow, generationNumber, attempt),
-        }, selection);
-      }
+      tasks.push({
+        taskIndex: tasks.length,
+        config: { ...config },
+        generationNumber,
+        seed,
+      });
+    }
+  }
+  return tasks;
+};
 
-      if (generated) {
-        levels.push({
-          levelId: firstLevelId + levels.length,
+export const generateAlgorithm4BatchTask = (
+  task: Algorithm4BatchTask,
+): Algorithm4BatchTaskResult => {
+  const { config, generationNumber, seed, taskIndex } = task;
+  const activeCells = createActiveCells(config.rows, config.columns);
+  const activeCellKeys = new Set(activeCells.map((cell) => `${cell.x},${cell.y}`));
+  const selection = algorithmSelectionOf(config);
+
+  let generated: ReturnType<typeof runAlgorithm4> = null;
+  for (let attempt = 0; attempt < 4 && !generated; attempt += 1) {
+    generated = runAlgorithm4({
+      rows: config.rows,
+      columns: config.columns,
+      activeCells: activeCellKeys,
+      shape: config.shape,
+      generationIndex: mixSeed(seed, config.sourceRow, generationNumber, attempt),
+    }, selection);
+  }
+
+  return {
+    taskIndex,
+    sourceRow: config.sourceRow,
+    generationNumber,
+    level: generated
+      ? {
+          levelId: 0,
           boardShape: boardShapeOf(config.shape),
           rows: config.rows,
           columns: config.columns,
@@ -329,16 +423,49 @@ export const generateAlgorithm4BatchLevels = async (
           hiddenCells: (generated.hiddenCells ?? []).map((cell) => ({ ...cell })),
           algorithm: serializeEditorAlgorithm(selection),
           custom: true,
-        });
-      } else {
-        failures.push({ sourceRow: config.sourceRow, generationNumber });
-      }
+        }
+      : null,
+  };
+};
 
-      completed += 1;
-      onProgress?.(completed, total, config.sourceRow);
-      await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 0));
+export const finalizeAlgorithm4BatchTaskResults = (
+  taskResults: ReadonlyArray<Algorithm4BatchTaskResult>,
+  firstLevelId: number,
+): Algorithm4BatchResult => {
+  const levels: LevelData[] = [];
+  const failures: Algorithm4BatchFailure[] = [];
+
+  for (const result of [...taskResults].sort((left, right) => left.taskIndex - right.taskIndex)) {
+    if (result.level) {
+      levels.push({
+        ...result.level,
+        levelId: firstLevelId + levels.length,
+      });
+    } else {
+      failures.push({
+        sourceRow: result.sourceRow,
+        generationNumber: result.generationNumber,
+      });
     }
   }
 
   return { levels, failures };
+};
+
+export const generateAlgorithm4BatchLevels = async (
+  configs: ReadonlyArray<Algorithm4BatchConfig>,
+  firstLevelId: number,
+  seed: number,
+  onProgress?: Algorithm4BatchProgress,
+): Promise<Algorithm4BatchResult> => {
+  const tasks = createAlgorithm4BatchTasks(configs, seed);
+  const taskResults: Algorithm4BatchTaskResult[] = [];
+
+  for (const task of tasks) {
+    taskResults.push(generateAlgorithm4BatchTask(task));
+    onProgress?.(taskResults.length, tasks.length, task.config.sourceRow);
+    await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 0));
+  }
+
+  return finalizeAlgorithm4BatchTaskResults(taskResults, firstLevelId);
 };
