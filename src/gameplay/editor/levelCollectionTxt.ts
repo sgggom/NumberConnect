@@ -59,6 +59,43 @@ const simulateLevel = (
   return results.length === 1 ? results[0] : averageSimulatedPlayResults(results);
 };
 
+export const formatSimulatedLevelTsv = (
+  level: LevelData,
+  levelId: number,
+  simulation: SimulatedPlayResult,
+): string => {
+  const shape = editorShapeOf(level.boardShape);
+  const hiddenCellKeys = new Set((level.hiddenCells ?? []).map((cell) => `${cell.x},${cell.y}`));
+  const metrics = calculateEditorLevelMetrics({
+    path: level.solutionPath,
+    hiddenCellKeys,
+    shape,
+  });
+  const difficultyScores = summarizeDifficultyScores(
+    simulation.steps.map((step) => step.difficultyScore),
+  );
+  return formatLevelBaseDataTsv({
+    levelId,
+    levelJson: JSON.stringify(encodeCompactLevelCollection([level])[0]),
+    shape: shapeLabel(level.boardShape),
+    rows: level.rows,
+    columns: level.columns,
+    cellCount: level.activeCells.length,
+    algorithm: editorAlgorithmLabel(level.algorithm?.id),
+    metrics,
+    averageConnectableCount: average(
+      simulation.steps.map((step) => step.connectableCount),
+    ),
+    directConnectRatio: average(
+      simulation.steps.map((step) => step.directConnectRate ?? Number(step.directConnect)),
+    ),
+    averageDistanceToNextVisibleNumber: average(
+      simulation.steps.map((step) => step.distanceToNextVisibleNumber),
+    ),
+    ...difficultyScores,
+  });
+};
+
 export const formatLevelCollectionTxt = async (
   levels: ReadonlyArray<LevelData>,
   options: LevelCollectionTxtOptions,
@@ -68,41 +105,13 @@ export const formatLevelCollectionTxt = async (
   for (const [levelIndex, level] of levels.entries()) {
     const exportLevelId = levelIndex + 1;
     const shape = editorShapeOf(level.boardShape);
-    const hiddenCellKeys = new Set((level.hiddenCells ?? []).map((cell) => `${cell.x},${cell.y}`));
-    const metrics = calculateEditorLevelMetrics({
-      path: level.solutionPath,
-      hiddenCellKeys,
-      shape,
-    });
     const simulation = simulateLevel(
       level,
       shape,
       options.simulationRunCount,
       options.reasoningLevel,
     );
-    const difficultyScores = summarizeDifficultyScores(
-      simulation.steps.map((step) => step.difficultyScore),
-    );
-    rows.push(formatLevelBaseDataTsv({
-      levelId: exportLevelId,
-      levelJson: JSON.stringify(encodeCompactLevelCollection([level])[0]),
-      shape: shapeLabel(level.boardShape),
-      rows: level.rows,
-      columns: level.columns,
-      cellCount: level.activeCells.length,
-      algorithm: editorAlgorithmLabel(level.algorithm?.id),
-      metrics,
-      averageConnectableCount: average(
-        simulation.steps.map((step) => step.connectableCount),
-      ),
-      directConnectRatio: average(
-        simulation.steps.map((step) => step.directConnectRate ?? Number(step.directConnect)),
-      ),
-      averageDistanceToNextVisibleNumber: average(
-        simulation.steps.map((step) => step.distanceToNextVisibleNumber),
-      ),
-      ...difficultyScores,
-    }));
+    rows.push(formatSimulatedLevelTsv(level, exportLevelId, simulation));
 
     options.onProgress?.(rows.length, levels.length, exportLevelId);
     await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 0));
