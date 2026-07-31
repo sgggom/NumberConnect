@@ -1,7 +1,6 @@
 import './editor.css';
 import {
   decodeCompactLevelCollection,
-  encodeCompactLevelCollection,
 } from '../../game/levelDataFormat';
 import { BoardShape, type LevelData } from '../../game/types';
 import { PathCompletionSolver } from '../../game/pathCompletionSolver';
@@ -29,10 +28,9 @@ import {
   type SimulationReasoningLevel,
 } from './simulateLevelPlay';
 import {
-  formatLevelBaseDataTsv,
-  summarizeDifficultyScores,
-} from './levelBaseDataTsv';
-import { formatLevelCollectionTxt } from './levelCollectionTxt';
+  formatLevelCollectionTxt,
+  formatSimulatedLevelTsv,
+} from './levelCollectionTxt';
 import {
   EDITOR_ALGORITHMS,
   editorAlgorithmLabel,
@@ -201,8 +199,14 @@ export class LevelEditorController {
       this.clearSimulationResult();
       this.renderSimulationPanel();
     });
-    this.query('#editor-simulate-button').addEventListener('click', () => this.simulatePlay());
-    this.query('#editor-simulation-export-button').addEventListener('click', () => void this.exportLevelBaseData());
+    this.query('#editor-simulate-button').addEventListener(
+      'click',
+      () => void this.simulatePlayAndCopy(window),
+    );
+    this.query('#editor-simulation-export-button').addEventListener(
+      'click',
+      () => void this.exportLevelBaseData(window),
+    );
     this.query('#editor-simulation-open-button').addEventListener('click', () => this.openSimulationWindow());
     this.query('#editor-playtest-button').addEventListener('click', () => this.playtest());
     this.query('#editor-save-button').addEventListener('click', () => this.save());
@@ -481,7 +485,16 @@ export class LevelEditorController {
       : `模拟完成：共 ${totalSteps} 步，错误 ${errorCount} 次。`);
   }
 
-  private async exportLevelBaseData(): Promise<void> {
+  private async simulatePlayAndCopy(clipboardWindow: Window): Promise<void> {
+    if (!this.model.hasGeneratedPath) {
+      this.setStatus('请先生成覆盖全部格子的路径。', true);
+      return;
+    }
+    if (!this.initializeSimulation()) return;
+    await this.exportLevelBaseData(clipboardWindow);
+  }
+
+  private async exportLevelBaseData(clipboardWindow: Window): Promise<void> {
     const levelId = this.selectedLevelId ?? this.options.getNextLevelId();
     const level = this.model.createLevel(levelId);
     if (!level) {
@@ -489,75 +502,42 @@ export class LevelEditorController {
       return;
     }
 
-    const metrics = calculateEditorLevelMetrics({
-      path: this.model.solutionPath,
-      hiddenCellKeys: this.model.hiddenCellKeys,
-      shape: this.model.shape,
-    });
     const simulation = this.simulationResult
       && this.simulationSignature === this.currentSimulationSignature()
       ? this.simulationResult
       : this.createConfiguredSimulation().result;
-    const simulationStepCount = simulation.steps.length;
-    const averageConnectableCount = simulationStepCount === 0
-      ? 0
-      : simulation.steps.reduce((sum, step) => sum + step.connectableCount, 0)
-        / simulationStepCount;
-    const directConnectRatio = simulationStepCount === 0
-      ? 0
-      : simulation.steps.reduce(
-          (sum, step) => sum + (step.directConnectRate ?? Number(step.directConnect)),
-          0,
-        )
-        / simulationStepCount;
-    const averageDistanceToNextVisibleNumber = simulationStepCount === 0
-      ? 0
-      : simulation.steps.reduce(
-          (sum, step) => sum + step.distanceToNextVisibleNumber,
-          0,
-        ) / simulationStepCount;
-    const difficultyScores = summarizeDifficultyScores(
-      simulation.steps.map((step) => step.difficultyScore),
-    );
-    const text = formatLevelBaseDataTsv({
-      levelId,
-      shape: this.shapeLabel(level.boardShape),
-      rows: level.rows,
-      columns: level.columns,
-      cellCount: level.activeCells.length,
-      levelJson: JSON.stringify(encodeCompactLevelCollection([level])[0]),
-      algorithm: editorAlgorithmLabel(level.algorithm?.id),
-      metrics,
-      averageConnectableCount,
-      directConnectRatio,
-      averageDistanceToNextVisibleNumber,
-      ...difficultyScores,
-    });
+    const text = formatSimulatedLevelTsv(level, levelId, simulation);
 
     try {
-      await this.writeClipboardText(text);
+      await this.writeClipboardText(text, clipboardWindow);
       this.setStatus(`关卡 ${levelId} 的基础数据已复制，可直接粘贴到表格。`);
     } catch {
       this.setStatus('复制失败，请允许浏览器访问剪贴板后重试。', true);
     }
   }
 
-  private async writeClipboardText(text: string): Promise<void> {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      return;
+  private async writeClipboardText(text: string, clipboardWindow: Window): Promise<void> {
+    if (clipboardWindow.navigator.clipboard?.writeText) {
+      try {
+        await clipboardWindow.navigator.clipboard.writeText(text);
+        return;
+      } catch {
+        // Permission policies can reject Clipboard API access in a popup.
+        // Fall back to copying a selected textarea in the same window.
+      }
     }
 
-    const textarea = document.createElement('textarea');
+    const clipboardDocument = clipboardWindow.document;
+    const textarea = clipboardDocument.createElement('textarea');
     textarea.value = text;
     textarea.readOnly = true;
     textarea.style.position = 'fixed';
     textarea.style.opacity = '0';
     textarea.style.pointerEvents = 'none';
-    document.body.append(textarea);
+    clipboardDocument.body.append(textarea);
     textarea.select();
     try {
-      if (!document.execCommand('copy')) throw new Error('Copy command was rejected');
+      if (!clipboardDocument.execCommand('copy')) throw new Error('Copy command was rejected');
     } finally {
       textarea.remove();
     }
@@ -890,7 +870,7 @@ export class LevelEditorController {
       panel.querySelector('#editor-simulate-button')?.addEventListener('click', () => this.simulatePlay());
       panel.querySelector('#editor-simulation-export-button')?.addEventListener(
         'click',
-        () => void this.exportLevelBaseData(),
+        () => void this.exportLevelBaseData(popup),
       );
       scrollContainer.scrollTop = previousScrollTop;
     } catch {

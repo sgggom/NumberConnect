@@ -44,6 +44,7 @@
 .editor-simulation-panel__header { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; }
 .editor-simulation-panel__header h3 { margin: 4px 0 0; font-size: 1.05rem; }
 .editor-simulation-launcher-copy { min-width: 0; }
+.editor-simulation-launcher-heading { display: flex; align-items: center; gap: 9px; }
 .editor-simulation-open-button { display: inline-flex; align-items: center; gap: 8px; margin: 0; padding: 0; border: 0; color: inherit; background: transparent; font: inherit; font-size: 1.05rem; font-weight: 800; cursor: pointer; }
 .editor-simulation-open-button:hover { color: #8ad9ff; }
 .editor-simulation-open-button:focus-visible { outline: 2px solid #67c8f7; outline-offset: 5px; border-radius: 3px; }

@@ -53,15 +53,18 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
         <section class="editor-simulation-panel" aria-labelledby="editor-simulation-title">
           <div class="editor-simulation-panel__header">
             <div class="editor-simulation-launcher-copy">
-              <button
-                id="editor-simulation-open-button"
-                class="editor-simulation-open-button"
-                type="button"
-                aria-label="在新窗口打开模拟关卡"
-              >
-                <span id="editor-simulation-title">模拟关卡</span>
-                <span class="editor-simulation-open-icon" aria-hidden="true">↗</span>
-              </button>
+              <div class="editor-simulation-launcher-heading">
+                <button
+                  id="editor-simulation-open-button"
+                  class="editor-simulation-open-button"
+                  type="button"
+                  aria-label="在新窗口打开模拟关卡"
+                >
+                  <span id="editor-simulation-title">模拟关卡</span>
+                  <span class="editor-simulation-open-icon" aria-hidden="true">↗</span>
+                </button>
+                <button id="editor-simulate-button" class="button button--secondary button--small" type="button" disabled>开始模拟</button>
+              </div>
               <p id="editor-simulation-launcher-state">点击标题，在独立窗口查看模拟数据</p>
             </div>
             <div class="editor-simulation-controls">
@@ -75,7 +78,6 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
                   <option value="high">高</option>
                 </select>
               </label>
-              <button id="editor-simulate-button" class="button button--secondary button--small" type="button" disabled>开始模拟</button>
               <button id="editor-simulation-export-button" class="button button--secondary button--small" type="button" title="将当前关卡基础数据以 Tab 分隔格式复制到剪贴板" disabled>导出基础数据</button>
             </div>
           </div>
