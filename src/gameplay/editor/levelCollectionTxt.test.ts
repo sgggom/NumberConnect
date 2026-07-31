@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { BoardShape, type LevelData } from '../../game/types';
+import { loadBuiltInLevels } from '../../game/storage';
 import { formatLevelCollectionTxt } from './levelCollectionTxt';
 
 const serpentinePath = (rows: number, columns: number) => Array.from(
@@ -81,5 +82,26 @@ describe('level collection TXT export', () => {
     expect(first.slice(-4).every((value) => Number.isFinite(Number(value)))).toBe(true);
     expect(progress).toHaveBeenNthCalledWith(1, 1, 2, 1);
     expect(progress).toHaveBeenNthCalledWith(2, 2, 2, 2);
+  });
+
+  it('keeps the original algorithm 4 type when exporting built-in levels', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => [{ data: [[1, 2], [4, -3]] }],
+    })));
+
+    try {
+      const levels = await loadBuiltInLevels();
+      const text = await formatLevelCollectionTxt(levels, {
+        simulationRunCount: 1,
+        reasoningLevel: 'medium',
+      });
+      const values = text.split('\t');
+
+      expect(values[1]).toBe('{"data":[[1,2],[4,-3]]}');
+      expect(values[6]).toBe('算法4');
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

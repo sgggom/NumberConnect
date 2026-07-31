@@ -142,7 +142,12 @@ describe('level collection migration', () => {
     })));
 
     try {
-      await expect(loadBuiltInLevels()).resolves.toMatchObject([{ levelId: 1, custom: false }]);
+      await expect(loadBuiltInLevels()).resolves.toMatchObject([{
+        levelId: 1,
+        pathSource: 'generated',
+        algorithm: { id: 'algorithm-4' },
+        custom: false,
+      }]);
     } finally {
       vi.unstubAllGlobals();
     }

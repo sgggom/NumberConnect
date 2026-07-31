@@ -2,18 +2,39 @@ import { decodeCompactLevelCollection } from '../../game/levelDataFormat';
 import type { LevelData } from '../../game/types';
 import { MAX_EDITOR_SIZE, MIN_EDITOR_SIZE } from './types';
 
-export const looksLikeClipboardLevelJson = (text: string): boolean => {
+const getClipboardJsonCandidate = (text: string): string => {
   const trimmed = text.trim();
-  return trimmed.startsWith('{') || trimmed.startsWith('[');
+  if (
+    trimmed.length < 2
+    || !trimmed.startsWith('"')
+    || !trimmed.endsWith('"')
+  ) {
+    return trimmed;
+  }
+
+  // A JSON string containing JSON is a valid clipboard representation.
+  try {
+    const decoded = JSON.parse(trimmed) as unknown;
+    if (typeof decoded === 'string') return decoded.trim();
+  } catch {
+    // Excel encodes a copied cell as CSV/TSV: outer quotes plus doubled quotes.
+  }
+
+  return trimmed.slice(1, -1).replace(/""/g, '"').trim();
+};
+
+export const looksLikeClipboardLevelJson = (text: string): boolean => {
+  const candidate = getClipboardJsonCandidate(text);
+  return candidate.startsWith('{') || candidate.startsWith('[');
 };
 
 export const decodeClipboardLevelJson = (text: string): LevelData => {
-  const trimmed = text.trim();
-  if (!trimmed) throw new Error('剪贴板文本为空，请复制关卡 JSON 后重试。');
+  const candidate = getClipboardJsonCandidate(text);
+  if (!candidate) throw new Error('剪贴板文本为空，请复制关卡 JSON 后重试。');
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(trimmed) as unknown;
+    parsed = JSON.parse(candidate) as unknown;
   } catch {
     throw new Error('剪贴板文本不是有效的关卡 JSON。');
   }
