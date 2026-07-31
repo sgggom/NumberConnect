@@ -74,11 +74,28 @@ export interface Algorithm4Selection {
   parameters: Algorithm4Parameters;
 }
 
+export interface Algorithm5Parameters extends Omit<
+  Algorithm4Parameters,
+  | 'earlyAdjacentHiddenSkipProbability'
+  | 'middleAdjacentHiddenSkipProbability'
+  | 'lateAdjacentHiddenSkipProbability'
+> {
+  earlyRowColumnHiddenSkipProbability: number;
+  middleRowColumnHiddenSkipProbability: number;
+  lateRowColumnHiddenSkipProbability: number;
+}
+
+export interface Algorithm5Selection {
+  id: 'algorithm-5';
+  parameters: Algorithm5Parameters;
+}
+
 export type EditorAlgorithmSelection =
   | Algorithm1Selection
   | Algorithm2Selection
   | Algorithm3Selection
-  | Algorithm4Selection;
+  | Algorithm4Selection
+  | Algorithm5Selection;
 export type EditorAlgorithmId = EditorAlgorithmSelection['id'];
 
 export interface EditorAlgorithmDescriptor {

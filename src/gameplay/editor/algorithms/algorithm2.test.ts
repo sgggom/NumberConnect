@@ -56,6 +56,7 @@ describe('editor algorithm 2 multiple-solution behavior', () => {
       'algorithm-2',
       'algorithm-3',
       'algorithm-4',
+      'algorithm-5',
     ]);
     expect(normalized).toMatchObject({
       id: 'algorithm-2',

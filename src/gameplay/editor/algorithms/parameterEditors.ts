@@ -119,6 +119,36 @@ export const renderEditorAlgorithmParameters = (
       host.append(note);
       break;
     }
+    case 'algorithm-5': {
+      const description = document.createElement('p');
+      description.textContent = EDITOR_ALGORITHMS.find((item) => item.id === selection.id)?.description ?? '';
+      const update = (parameters: Partial<typeof selection.parameters>): void => onChange({
+        ...selection,
+        parameters: { ...selection.parameters, ...parameters },
+      });
+      const targetCrossings = shape === 'hex' ? 0 : selection.parameters.targetCrossings;
+      const crossings = numberField('最大交叉数量', targetCrossings, 0, 99, (value) => update({ targetCrossings: value }));
+      const crossingsInput = crossings.querySelector('input')!;
+      crossingsInput.disabled = shape === 'hex';
+      crossingsInput.title = shape === 'hex' ? '六边形蜂窝棋盘不会产生交叉' : '允许出现的最大交叉数量';
+      host.append(
+        description,
+        crossings,
+        numberField('拐弯概率 %', selection.parameters.turnProbability, 0, 100, (value) => update({ turnProbability: value })),
+        numberField('前期隐藏概率 %', selection.parameters.earlyHiddenProbability, 0, 100, (value) => update({ earlyHiddenProbability: value })),
+        numberField('中期隐藏概率 %', selection.parameters.middleHiddenProbability, 0, 100, (value) => update({ middleHiddenProbability: value })),
+        numberField('后期隐藏概率 %', selection.parameters.lateHiddenProbability, 0, 100, (value) => update({ lateHiddenProbability: value })),
+        numberField('最长连续隐藏', selection.parameters.maxHiddenRun, 1, 8, (value) => update({ maxHiddenRun: value })),
+        numberField('最长连续显示', selection.parameters.maxVisibleRun, 1, 12, (value) => update({ maxVisibleRun: value })),
+        numberField('前期同行同列隐藏跳过概率 %', selection.parameters.earlyRowColumnHiddenSkipProbability, 0, 100, (value) => update({ earlyRowColumnHiddenSkipProbability: value })),
+        numberField('中期同行同列隐藏跳过概率 %', selection.parameters.middleRowColumnHiddenSkipProbability, 0, 100, (value) => update({ middleRowColumnHiddenSkipProbability: value })),
+        numberField('后期同行同列隐藏跳过概率 %', selection.parameters.lateRowColumnHiddenSkipProbability, 0, 100, (value) => update({ lateRowColumnHiddenSkipProbability: value })),
+      );
+      const note = document.createElement('small');
+      note.textContent = '路径按前 25%、中间 50%、后 25% 依次判断。候选先按隐藏概率选中；同行或同列已有隐藏数字时，实际跳过概率为本阶段配置值 ×（同行同列已隐藏数 ÷ 同行同列有效数字总数）。所有概率填写 0–100 整数；即将超过最长连续显示时会强制隐藏。';
+      host.append(note);
+      break;
+    }
     case 'algorithm-3': {
       const description = document.createElement('p');
       description.textContent = EDITOR_ALGORITHMS.find((item) => item.id === selection.id)?.description ?? '';

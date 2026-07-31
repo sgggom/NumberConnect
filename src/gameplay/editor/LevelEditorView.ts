@@ -115,7 +115,8 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
               <option value="algorithm-1">算法1</option>
               <option value="algorithm-2">算法2</option>
               <option value="algorithm-3">算法3</option>
-              <option value="algorithm-4" selected>算法4</option>
+              <option value="algorithm-4">算法4</option>
+              <option value="algorithm-5" selected>算法5</option>
             </select>
           </label>
         </div>
