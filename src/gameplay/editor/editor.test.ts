@@ -32,16 +32,16 @@ describe('level editor path generation', () => {
   it('uses algorithm 2 and the requested generation defaults for a new editor level', () => {
     const model = new LevelEditorModel();
 
-    expect(model.algorithmSelection.id).toBe('algorithm-4');
+    expect(model.algorithmSelection.id).toBe('algorithm-5');
     expect(model.algorithmSelection.parameters).toMatchObject({
       targetCrossings: 20,
       turnProbability: 40,
       earlyHiddenProbability: 50,
       middleHiddenProbability: 50,
       lateHiddenProbability: 50,
-      earlyAdjacentHiddenSkipProbability: 0,
-      middleAdjacentHiddenSkipProbability: 0,
-      lateAdjacentHiddenSkipProbability: 0,
+      earlyRowColumnHiddenSkipProbability: 0,
+      middleRowColumnHiddenSkipProbability: 0,
+      lateRowColumnHiddenSkipProbability: 0,
     });
   });
 
@@ -382,7 +382,7 @@ describe('level editor path generation', () => {
 
     model.applyRecognizedLevel(level);
 
-    expect(model.algorithmSelection.id).toBe('algorithm-4');
+    expect(model.algorithmSelection.id).toBe('algorithm-5');
     expect(model.targetHiddenCount).toBeUndefined();
     expect(model.createLevel(91)).toMatchObject({
       pathSource: 'manual',

@@ -4,6 +4,7 @@ import { createAlgorithm1Selection, runAlgorithm1 } from './algorithm1';
 import { createAlgorithm2Selection, runAlgorithm2 } from './algorithm2';
 import { createAlgorithm3Selection, runAlgorithm3 } from './algorithm3';
 import { createAlgorithm4Selection, runAlgorithm4 } from './algorithm4';
+import { createAlgorithm5Selection, runAlgorithm5 } from './algorithm5';
 import type {
   EditorAlgorithmContext,
   EditorAlgorithmDescriptor,
@@ -11,7 +12,7 @@ import type {
   EditorAlgorithmSelection,
 } from './types';
 
-export const DEFAULT_EDITOR_ALGORITHM_ID: EditorAlgorithmId = 'algorithm-4';
+export const DEFAULT_EDITOR_ALGORITHM_ID: EditorAlgorithmId = 'algorithm-5';
 const LEGACY_EDITOR_ALGORITHM_ID: EditorAlgorithmId = 'algorithm-1';
 
 export const EDITOR_ALGORITHMS: readonly EditorAlgorithmDescriptor[] = [
@@ -35,6 +36,11 @@ export const EDITOR_ALGORITHMS: readonly EditorAlgorithmDescriptor[] = [
     label: '算法4',
     description: '沿用算法2的路径生成，生成完整路径后按前、中、后三阶段的独立概率依次选择隐藏数字。',
   },
+  {
+    id: 'algorithm-5',
+    label: '算法5',
+    description: '沿用算法4的路径与阶段隐藏规则，同行或同列已隐藏数字越多，候选数字的隐藏跳过概率越高。',
+  },
 ];
 
 export const createEditorAlgorithm = (id: EditorAlgorithmId): EditorAlgorithmSelection => {
@@ -47,6 +53,8 @@ export const createEditorAlgorithm = (id: EditorAlgorithmId): EditorAlgorithmSel
       return createAlgorithm3Selection();
     case 'algorithm-4':
       return createAlgorithm4Selection();
+    case 'algorithm-5':
+      return createAlgorithm5Selection();
   }
 };
 
@@ -262,6 +270,94 @@ export const normalizeEditorAlgorithm = (
       },
     };
   }
+  if (value?.id === 'algorithm-5') {
+    const defaults = createAlgorithm5Selection();
+    const legacyHiddenProbability = normalizedInteger(
+      value.parameters?.hiddenPercent,
+      defaults.parameters.earlyHiddenProbability,
+      0,
+      100,
+    );
+    return {
+      ...defaults,
+      parameters: {
+        topology: 'board-shape',
+        pathMode: 'single-stroke-multiple-solutions',
+        targetCrossings: normalizedInteger(
+          value.parameters?.targetCrossings,
+          defaults.parameters.targetCrossings,
+          0,
+          99,
+        ),
+        turnProbability: normalizedInteger(
+          value.parameters?.turnProbability,
+          defaults.parameters.turnProbability,
+          0,
+          100,
+        ),
+        earlyHiddenProbability: normalizedInteger(
+          value.parameters?.earlyHiddenProbability,
+          legacyHiddenProbability,
+          0,
+          100,
+        ),
+        middleHiddenProbability: normalizedInteger(
+          value.parameters?.middleHiddenProbability,
+          legacyHiddenProbability,
+          0,
+          100,
+        ),
+        lateHiddenProbability: normalizedInteger(
+          value.parameters?.lateHiddenProbability,
+          legacyHiddenProbability,
+          0,
+          100,
+        ),
+        earlyRowColumnHiddenSkipProbability: normalizedInteger(
+          value.parameters?.earlyRowColumnHiddenSkipProbability
+            ?? value.parameters?.earlyAdjacentHiddenSkipProbability,
+          normalizedLegacySkipProbability(
+            value.parameters?.earlySkipAdjacentHidden,
+            defaults.parameters.earlyRowColumnHiddenSkipProbability,
+          ),
+          0,
+          100,
+        ),
+        middleRowColumnHiddenSkipProbability: normalizedInteger(
+          value.parameters?.middleRowColumnHiddenSkipProbability
+            ?? value.parameters?.middleAdjacentHiddenSkipProbability,
+          normalizedLegacySkipProbability(
+            value.parameters?.middleSkipAdjacentHidden,
+            defaults.parameters.middleRowColumnHiddenSkipProbability,
+          ),
+          0,
+          100,
+        ),
+        lateRowColumnHiddenSkipProbability: normalizedInteger(
+          value.parameters?.lateRowColumnHiddenSkipProbability
+            ?? value.parameters?.lateAdjacentHiddenSkipProbability,
+          normalizedLegacySkipProbability(
+            value.parameters?.lateSkipAdjacentHidden,
+            defaults.parameters.lateRowColumnHiddenSkipProbability,
+          ),
+          0,
+          100,
+        ),
+        maxHiddenRun: normalizedInteger(
+          value.parameters?.maxHiddenRun,
+          defaults.parameters.maxHiddenRun,
+          1,
+          8,
+        ),
+        maxVisibleRun: normalizedInteger(
+          value.parameters?.maxVisibleRun,
+          defaults.parameters.maxVisibleRun,
+          1,
+          12,
+        ),
+      },
+    };
+  }
   return createEditorAlgorithm(LEGACY_EDITOR_ALGORITHM_ID);
 };
 
@@ -302,6 +398,13 @@ export const resolveEditorAlgorithmForShape = (
             parameters: { ...selection.parameters, targetCrossings: 0 },
           }
         : selection;
+    case 'algorithm-5':
+      return shape === 'hex'
+        ? {
+            ...selection,
+            parameters: { ...selection.parameters, targetCrossings: 0 },
+          }
+        : selection;
   }
 };
 
@@ -319,6 +422,8 @@ export const runEditorAlgorithm = (
       return runAlgorithm3(context, resolved);
     case 'algorithm-4':
       return runAlgorithm4(context, resolved);
+    case 'algorithm-5':
+      return runAlgorithm5(context, resolved);
   }
 };
 
