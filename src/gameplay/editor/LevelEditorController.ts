@@ -249,6 +249,13 @@ export class LevelEditorController {
       if (this.host.hidden || this.isImageRecognizing) return;
       const target = event.target;
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || (target instanceof HTMLElement && target.isContentEditable)) return;
+      const text = event.clipboardData?.getData('text/plain') ?? '';
+      if (looksLikeClipboardLevelJson(text)) {
+        event.preventDefault();
+        this.imageRecognitionMode = 'complete-level';
+        this.importClipboardLevelJson(text);
+        return;
+      }
       const imageItem = [...(event.clipboardData?.items ?? [])]
         .find((item) => item.kind === 'file' && item.type.startsWith('image/'));
       const image = imageItem?.getAsFile();
@@ -257,11 +264,6 @@ export class LevelEditorController {
         void this.recognizeClipboardImage(image, this.imageRecognitionMode);
         return;
       }
-      const text = event.clipboardData?.getData('text/plain') ?? '';
-      if (!looksLikeClipboardLevelJson(text)) return;
-      event.preventDefault();
-      this.imageRecognitionMode = 'complete-level';
-      this.importClipboardLevelJson(text);
     });
   }
 
@@ -1310,13 +1312,6 @@ export class LevelEditorController {
     }
     try {
       const items = clipboard.read ? await clipboard.read() : [];
-      for (const item of items) {
-        const imageType = item.types.find((type) => type.startsWith('image/'));
-        if (imageType) {
-          await this.recognizeClipboardImage(await item.getType(imageType), mode);
-          return;
-        }
-      }
       if (mode === 'complete-level') {
         for (const item of items) {
           const textType = item.types.find(
@@ -1334,6 +1329,13 @@ export class LevelEditorController {
             this.importClipboardLevelJson(text);
             return;
           }
+        }
+      }
+      for (const item of items) {
+        const imageType = item.types.find((type) => type.startsWith('image/'));
+        if (imageType) {
+          await this.recognizeClipboardImage(await item.getType(imageType), mode);
+          return;
         }
       }
       this.setStatus(

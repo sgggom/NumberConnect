@@ -117,7 +117,15 @@ export const loadBuiltInLevels = async (): Promise<LevelData[]> => {
   if (!response.ok) throw new Error('Unable to load level collection');
   const payload = await response.json() as unknown;
   return decodeCompactLevelCollection(payload, false)
-    .map((level) => ({ ...withDefaultAlgorithm(level), custom: false }))
+    .map((level): LevelData => ({
+      ...level,
+      pathSource: 'generated',
+      algorithm: {
+        id: 'algorithm-4',
+        parameters: {},
+      },
+      custom: false,
+    }))
     .sort((left, right) => left.levelId - right.levelId);
 };
 
