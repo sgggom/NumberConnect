@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import levelsJson from '../../public/levels/levels.json';
+import { decodeCompactLevelCollection } from '../game/levelDataFormat';
 import { findPureLuckAlternative } from '../game/pureLuck';
 import { BoardShape, cellKey, type Cell } from '../game/types';
 import { selectUnambiguousHiddenCells } from '../game/unambiguousHidden';
@@ -38,4 +40,16 @@ describe('pure-luck detection', () => {
     expect(findPureLuckAlternative(ambiguousPath, result.hiddenCells, BoardShape.Square)).toBeNull();
   });
 
+  it('produces unique hidden layouts for every built-in level path', () => {
+    const levels = decodeCompactLevelCollection(levelsJson, false);
+    levels.forEach((level, index) => {
+      const result = selectUnambiguousHiddenCells(level.solutionPath, level.boardShape, {
+        hiddenPercent: 35,
+        maxHiddenRun: 3,
+        maxVisibleRun: 4,
+        seed: 9000 + index,
+      });
+      expect(findPureLuckAlternative(level.solutionPath, result.hiddenCells, level.boardShape)).toBeNull();
+    });
+  });
 });
