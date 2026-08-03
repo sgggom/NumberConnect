@@ -113,8 +113,11 @@ export const saveLevelCollection = (levels: LevelData[]): void => {
   if (hasStorage()) window.localStorage.setItem(LEVEL_COLLECTION_KEY, JSON.stringify(normalized));
 };
 
-export const loadBuiltInLevels = async (): Promise<LevelData[]> => {
-  const response = await fetch('./levels/levels.json');
+const loadBundledLevels = async (
+  resourcePath: string,
+  algorithmId: string,
+): Promise<LevelData[]> => {
+  const response = await fetch(resourcePath);
   if (!response.ok) throw new Error('Unable to load level collection');
   const payload = await response.json() as unknown;
   return decodeCompactLevelCollection(payload, false)
@@ -122,13 +125,21 @@ export const loadBuiltInLevels = async (): Promise<LevelData[]> => {
       ...level,
       pathSource: 'generated',
       algorithm: {
-        id: 'algorithm-4',
+        id: algorithmId,
         parameters: {},
       },
       custom: false,
     }))
     .sort((left, right) => left.levelId - right.levelId);
 };
+
+export const loadBuiltInLevels = (): Promise<LevelData[]> => (
+  loadBundledLevels('./levels/levels.json', 'algorithm-5')
+);
+
+export const loadBeadLevels = (): Promise<LevelData[]> => (
+  loadBundledLevels('./levels/bead-levels.json', 'algorithm-4')
+);
 
 export const getNextLevelId = (levels: LevelData[]): number => {
   const used = new Set(levels.map((level) => level.levelId));

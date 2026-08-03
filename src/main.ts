@@ -26,6 +26,7 @@ import {
 } from './game/powerUps';
 import {
   getNextLevelId,
+  loadBeadLevels,
   loadBuiltInLevels,
   loadLevelCollection,
   loadSettings,
@@ -411,6 +412,7 @@ class NumberConnectApp {
   private readonly beadGalleryDetailImage = query<HTMLImageElement>('#bead-gallery-detail-image');
 
   private builtInLevels: LevelData[] = [];
+  private beadLevels: LevelData[] = [];
   private levels: LevelData[] = [];
   private settings: GameSettings = loadSettings();
   private mode: GameMode = 'normal';
@@ -442,6 +444,7 @@ class NumberConnectApp {
   private beadPattern?: BeadPatternData;
   private beadProgress?: BeadProgress;
   private currentBeadReward: BeadJarItem[] = [];
+  private currentBeadLevelIndex = 0;
   private currentPlayBeadReward: PlayBeadShowcasePattern['pixels'] = [];
   private playBeadShowcasePattern = PLAY_BEAD_SHOWCASE_PATTERNS[0];
   private playBeadShowcaseCollected = 0;
@@ -532,13 +535,15 @@ class NumberConnectApp {
   }
 
   public async initialize(): Promise<void> {
-    const [builtInLevels, beadPatterns] = await Promise.all([
+    const [builtInLevels, beadLevels, beadPatterns] = await Promise.all([
       loadBuiltInLevels(),
+      loadBeadLevels(),
       loadBeadPatterns(),
       this.boardScene.whenReady(),
     ]);
     const beadSequence = loadBeadSequence(beadPatterns);
     this.builtInLevels = builtInLevels;
+    this.beadLevels = beadLevels;
     this.beadPatterns = beadPatterns;
     this.beadPattern = beadSequence.pattern;
     this.beadProgress = beadSequence.progress;
@@ -1660,12 +1665,12 @@ class NumberConnectApp {
   }
 
   private async startBeadLevel(): Promise<void> {
-    if (!this.beadPattern || !this.beadProgress || this.levels.length === 0) return;
+    if (!this.beadPattern || !this.beadProgress || this.beadLevels.length === 0) return;
     if (this.beadJar.length > 0) {
       this.renderBeadScreen(undefined, '请先把玻璃瓶中的拼豆放入图纸。');
       return;
     }
-    const level = this.createNormalLevel();
+    const level = this.createBeadLevel();
     const reward = nextBeadsAcrossPatterns(
       this.beadPatterns,
       this.beadPattern,
@@ -1699,6 +1704,12 @@ class NumberConnectApp {
     const selected = this.levels.find((level) => level.levelId === this.settings.selectedLevelId) ?? this.levels[0];
     if (!selected) throw new Error('没有可用的关卡。');
     return selected;
+  }
+
+  private createBeadLevel(): LevelData {
+    const level = this.beadLevels[this.currentBeadLevelIndex % this.beadLevels.length];
+    if (!level) throw new Error('没有可用的拼豆关卡。');
+    return level;
   }
 
   private createEndlessLevel(stage: number, profile: EndlessStageSettings): LevelData {
@@ -2484,7 +2495,7 @@ class NumberConnectApp {
       this.beadJar = [...this.beadJar, ...reward];
       saveBeadJarQueue(this.beadJar);
       this.currentBeadReward = [];
-      this.selectNextNormalLevel();
+      this.selectNextBeadLevel();
       this.showScreen('bead');
       this.renderBeadScreen(
         undefined,
@@ -2640,6 +2651,11 @@ class NumberConnectApp {
     this.settings.selectedLevelId = this.levels[nextIndex].levelId;
     saveSettings(this.settings);
     this.renderDefaultLobbyLevelNumber();
+  }
+
+  private selectNextBeadLevel(): void {
+    if (this.beadLevels.length === 0) return;
+    this.currentBeadLevelIndex = (this.currentBeadLevelIndex + 1) % this.beadLevels.length;
   }
 
   private backToLobby(): void {
@@ -3722,7 +3738,7 @@ class NumberConnectApp {
       this.beadJar.filter((bead) => bead.patternId === pattern.id).length,
     );
     const availableToEarn = Math.max(0, remaining - waitingInJar);
-    const levelSize = this.levels.length > 0 ? this.createNormalLevel().solutionPath.length : 0;
+    const levelSize = this.beadLevels.length > 0 ? this.createBeadLevel().solutionPath.length : 0;
     const nextReward = Math.min(availableToEarn, levelSize);
     this.beadBoard.style.gridTemplateColumns = `repeat(${pattern.width}, 1fr)`;
     this.beadBoard.style.gridTemplateRows = `repeat(${pattern.height}, 1fr)`;
@@ -3745,8 +3761,8 @@ class NumberConnectApp {
           ? `还差 ${remaining} 颗拼豆完成图案`
           : '图案完成！所有拼豆都已归位。'
     );
-    this.beadStartButton.disabled = this.levels.length === 0 || remaining === 0 || waitingInJar > 0;
-    this.beadStartButton.textContent = this.levels.length === 0
+    this.beadStartButton.disabled = this.beadLevels.length === 0 || remaining === 0 || waitingInJar > 0;
+    this.beadStartButton.textContent = this.beadLevels.length === 0
       ? '暂无关卡'
       : remaining === 0
         ? '图案已完成'

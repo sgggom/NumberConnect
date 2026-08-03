@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  loadBeadLevels,
   loadBuiltInLevels,
   loadLevelCollection,
   loadSettings,
@@ -150,19 +151,28 @@ describe('level collection migration', () => {
     }
   });
 
-  it('treats exported bundled levels as official campaign levels', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => ({
+  it('loads separate official level pools for the campaign and bead gameplay', async () => {
+    const fetchMock = vi.fn(async () => ({
       ok: true,
       json: async () => [{ data: [[1]] }],
-    })));
+    }));
+    vi.stubGlobal('fetch', fetchMock);
 
     try {
       await expect(loadBuiltInLevels()).resolves.toMatchObject([{
         levelId: 1,
         pathSource: 'generated',
+        algorithm: { id: 'algorithm-5' },
+        custom: false,
+      }]);
+      await expect(loadBeadLevels()).resolves.toMatchObject([{
+        levelId: 1,
+        pathSource: 'generated',
         algorithm: { id: 'algorithm-4' },
         custom: false,
       }]);
+      expect(fetchMock).toHaveBeenNthCalledWith(1, './levels/levels.json');
+      expect(fetchMock).toHaveBeenNthCalledWith(2, './levels/bead-levels.json');
     } finally {
       vi.unstubAllGlobals();
     }
