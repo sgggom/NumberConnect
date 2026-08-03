@@ -10,7 +10,7 @@ import {
 import { decodeCompactLevelCollection } from './levelDataFormat';
 
 const SETTINGS_KEY = 'number-connect.settings.v1';
-const LEVEL_COLLECTION_KEY = 'number-connect.level-collection.v3';
+const LEVEL_COLLECTION_KEY = 'number-connect.level-collection.v4';
 
 const hasStorage = (): boolean => typeof window !== 'undefined' && 'localStorage' in window;
 
@@ -62,6 +62,7 @@ export const loadSettings = (): GameSettings => {
       inputMode,
       uiTheme,
       touchPreviewSize,
+      showDifficultyScore: stored.showDifficultyScore === true,
       shape: BoardShape.Level,
       squareSize: DEFAULT_SETTINGS.squareSize,
       diamondSize: DEFAULT_SETTINGS.diamondSize,

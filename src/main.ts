@@ -78,6 +78,15 @@ import {
   type BeadProgress,
 } from './gameplay/beads';
 import {
+  PLAY_BEAD_SHOWCASE_PATTERNS,
+  loadPlayBeadShowcaseProgress,
+  nextPlayBeadShowcasePattern,
+  playBeadShowcaseColorsForBoard,
+  renderPlayBeadShowcase,
+  savePlayBeadShowcaseProgress,
+  type PlayBeadShowcasePattern,
+} from './gameplay/beads/playBeadShowcase';
+import {
   collectionArtworkName,
   collectionArtworkResourcePath,
   collectionArtworkUrl,
@@ -305,9 +314,9 @@ class NumberConnectApp {
   private readonly events = new EventBus<GameEventMap>();
   private readonly playScreen = query<HTMLElement>('#play-screen');
   private readonly gameHost = query<HTMLElement>('#game-host');
+  private readonly playBeadShowcaseArt = query<HTMLElement>('#play-bead-showcase-art');
   private readonly playLevelButton = query<HTMLButtonElement>('#play-level-button');
   private readonly levelLabel = query<HTMLElement>('#play-level-label');
-  private readonly progressLabel = query<HTMLElement>('#play-progress');
   private readonly holdScoreFormula = query<HTMLElement>('#hold-score-formula');
   private readonly holdScoreTotal = query<HTMLElement>('#hold-score-total');
   private readonly holdScoreChoice = query<HTMLElement>('#hold-score-choice');
@@ -433,6 +442,9 @@ class NumberConnectApp {
   private beadPattern?: BeadPatternData;
   private beadProgress?: BeadProgress;
   private currentBeadReward: BeadJarItem[] = [];
+  private currentPlayBeadReward: PlayBeadShowcasePattern['pixels'] = [];
+  private playBeadShowcasePattern = PLAY_BEAD_SHOWCASE_PATTERNS[0];
+  private playBeadShowcaseCollected = 0;
   private beadJar: BeadJarItem[] = [];
   private beadRewardAnimating = false;
   private beadJarInFlight = 0;
@@ -532,6 +544,11 @@ class NumberConnectApp {
     this.beadProgress = beadSequence.progress;
     this.beadJar = loadBeadJarQueue(beadPatterns, beadSequence.progress);
     this.completedBeadPatternIds = new Set(loadCompletedBeadPatternIds(beadPatterns));
+    const showcaseProgress = loadPlayBeadShowcaseProgress();
+    this.playBeadShowcasePattern = PLAY_BEAD_SHOWCASE_PATTERNS.find(
+      (pattern) => pattern.id === showcaseProgress.patternId,
+    ) ?? PLAY_BEAD_SHOWCASE_PATTERNS[0];
+    this.playBeadShowcaseCollected = showcaseProgress.collected;
     this.refreshLevels();
     this.bindLobby();
     this.bindPlayControls();
@@ -795,7 +812,7 @@ class NumberConnectApp {
   }
 
   private renderHoldScore(score: BoardHoldScore | null): void {
-    const visible = score !== null && this.currentScreen === 'play';
+    const visible = this.settings.showDifficultyScore && score !== null && this.currentScreen === 'play';
     this.holdScoreFormula.classList.toggle('is-inactive', !visible);
     this.holdScoreFormula.setAttribute('aria-hidden', String(!visible));
     if (!score) return;
@@ -1526,6 +1543,12 @@ class NumberConnectApp {
 
     if (screen === 'lobby') {
       this.primaryActionButton.dataset.actionTheme = 'lobby';
+      if (this.levels.length === 0) {
+        this.primaryActionButton.disabled = true;
+        this.primaryActionLabel.textContent = '暂无关卡';
+        this.primaryActionButton.setAttribute('aria-label', '暂无可用关卡');
+        return;
+      }
       const levelId = this.settings.selectedLevelId;
       this.primaryActionLabel.textContent = `第 ${levelId} 关`;
       this.primaryActionButton.setAttribute('aria-label', `开始第 ${levelId} 关`);
@@ -1592,6 +1615,7 @@ class NumberConnectApp {
   }
 
   private async startNormalMode(): Promise<void> {
+    if (this.levels.length === 0) return;
     this.playContext = 'normal';
     this.mode = 'normal';
     this.lives = 3;
@@ -1636,7 +1660,7 @@ class NumberConnectApp {
   }
 
   private async startBeadLevel(): Promise<void> {
-    if (!this.beadPattern || !this.beadProgress) return;
+    if (!this.beadPattern || !this.beadProgress || this.levels.length === 0) return;
     if (this.beadJar.length > 0) {
       this.renderBeadScreen(undefined, '请先把玻璃瓶中的拼豆放入图纸。');
       return;
@@ -1691,6 +1715,7 @@ class NumberConnectApp {
       levelId: level.levelId,
       stage: this.mode === 'endless' ? this.stage : undefined,
     };
+    const usesPlayShowcase = this.playContext !== 'bead' && this.playContext !== 'collection';
     return {
       level,
       hiddenCells: level.hiddenCells === undefined
@@ -1698,7 +1723,13 @@ class NumberConnectApp {
         : new Set(level.hiddenCells.map(cellKey)),
       completionGemColors: this.playContext === 'bead'
         ? this.currentBeadReward.map((bead) => bead.color)
-        : undefined,
+        : usesPlayShowcase
+          ? playBeadShowcaseColorsForBoard(
+            this.currentPlayBeadReward,
+            level.solutionPath.length,
+          )
+          : undefined,
+      completionGemDestination: usesPlayShowcase ? 'showcase' : 'jar',
       showNextNumber: this.settings.showNextNumber,
       soundEnabled: this.settings.soundEnabled,
       inputMode: this.settings.inputMode,
@@ -1708,7 +1739,6 @@ class NumberConnectApp {
       onProgress: (current, total) => {
         this.currentProgress = current;
         this.currentTotal = total;
-        this.renderProgress();
         this.renderPowerUps();
         if (this.playContext !== 'editor-playtest') {
           this.events.emit('level.progressed', { ...eventContext, current, total });
@@ -1737,7 +1767,7 @@ class NumberConnectApp {
     this.currentProgress = 0;
     this.currentTotal = level.solutionPath.length;
     this.updateGameHeading(level);
-    this.renderProgress();
+    this.preparePlayBeadShowcase(level);
     this.boardScene.setBoard(this.makeSession(level, profile));
     this.renderPowerUps();
     if (this.playContext !== 'editor-playtest') {
@@ -1748,6 +1778,26 @@ class NumberConnectApp {
         total: level.solutionPath.length,
       });
     }
+  }
+
+  private preparePlayBeadShowcase(level: LevelData): void {
+    if (this.playBeadShowcaseCollected >= this.playBeadShowcasePattern.pixels.length) {
+      this.playBeadShowcasePattern = nextPlayBeadShowcasePattern(this.playBeadShowcasePattern);
+      this.playBeadShowcaseCollected = 0;
+      savePlayBeadShowcaseProgress({
+        patternId: this.playBeadShowcasePattern.id,
+        collected: 0,
+      });
+    }
+    renderPlayBeadShowcase(
+      this.playBeadShowcaseArt,
+      this.playBeadShowcasePattern,
+      this.playBeadShowcaseCollected,
+    );
+    this.currentPlayBeadReward = this.playBeadShowcasePattern.pixels.slice(
+      this.playBeadShowcaseCollected,
+      this.playBeadShowcaseCollected + level.solutionPath.length,
+    );
   }
 
   private updateGameHeading(level: LevelData): void {
@@ -1779,10 +1829,6 @@ class NumberConnectApp {
       return;
     }
     this.levelLabel.textContent = `${level.custom ? '自制关卡' : '关卡'} ${level.levelId}`;
-  }
-
-  private renderProgress(): void {
-    this.progressLabel.textContent = `${this.currentProgress} / ${this.currentTotal}`;
   }
 
   private setPowerUpMessage(
@@ -2317,6 +2363,117 @@ class NumberConnectApp {
     }
   }
 
+  private async showPlayBeadCompletion(commitProgress = true): Promise<boolean> {
+    const level = this.currentLevel;
+    if (!level || this.currentPlayBeadReward.length === 0) {
+      await this.boardScene.showCompletion();
+      return false;
+    }
+    const sources = level.solutionPath
+      .map((cell) => this.boardScene.cellClientPosition(cell));
+    await this.boardScene.showCompletion();
+    await this.flyBoardBeadsToShowcase(sources);
+    if (!commitProgress) return false;
+    this.playBeadShowcaseCollected = Math.min(
+      this.playBeadShowcasePattern.pixels.length,
+      this.playBeadShowcaseCollected + this.currentPlayBeadReward.length,
+    );
+    savePlayBeadShowcaseProgress({
+      patternId: this.playBeadShowcasePattern.id,
+      collected: this.playBeadShowcaseCollected,
+    });
+    return this.playBeadShowcaseCollected >= this.playBeadShowcasePattern.pixels.length;
+  }
+
+  private async flyBoardBeadsToShowcase(
+    sources: Array<{ x: number; y: number } | undefined>,
+  ): Promise<void> {
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const layer = document.createElement('div');
+    layer.className = 'bead-flight-layer play-showcase-flight-layer';
+    layer.setAttribute('aria-hidden', 'true');
+    this.appShell.append(layer);
+    const appRect = this.appShell.getBoundingClientRect();
+    const scale = this.uiVisualScale();
+    const stagger = reducedMotion
+      ? 0
+      : Math.max(10, Math.min(26, Math.round(960 / Math.max(1, sources.length))));
+
+    const flights = sources.map(async (source, index) => {
+      const targetOffset = Math.min(
+        this.currentPlayBeadReward.length - 1,
+        Math.floor(index * this.currentPlayBeadReward.length / Math.max(1, sources.length)),
+      );
+      const bead = this.currentPlayBeadReward[targetOffset];
+      const target = this.playBeadShowcaseArt.querySelector<HTMLElement>(
+        `[data-bead-order="${this.playBeadShowcaseCollected + targetOffset}"]`,
+      );
+      if (!source || !target || !bead) return;
+      const targetRect = target.getBoundingClientRect();
+      const startX = (source.x - appRect.left) / scale;
+      const startY = (source.y - appRect.top) / scale;
+      const targetX = (targetRect.left - appRect.left + targetRect.width * 0.5) / scale;
+      const targetY = (targetRect.top - appRect.top + targetRect.height * 0.5) / scale;
+      const deltaX = targetX - startX;
+      const deltaY = targetY - startY;
+      const landingScale = Math.max(0.18, Math.min(0.62, targetRect.width / scale / 26));
+      const gem = document.createElement('i');
+      gem.className = 'bead-flight-gem play-showcase-flight-gem';
+      gem.style.left = `${startX}px`;
+      gem.style.top = `${startY}px`;
+      gem.style.setProperty('--bead-color', bead.color);
+      layer.append(gem);
+
+      if (!reducedMotion) {
+        const animation = gem.animate([
+          {
+            opacity: 0,
+            transform: 'translate(-50%, -50%) rotate(-8deg) scale(.9)',
+          },
+          {
+            opacity: 1,
+            transform: 'translate(-50%, -50%) rotate(-8deg) scale(1)',
+            offset: 0.08,
+          },
+          {
+            opacity: 1,
+            transform: `translate(calc(-50% + ${deltaX * 0.5}px), calc(-50% + ${deltaY * 0.5 - 42}px)) rotate(14deg) scale(.82)`,
+            offset: 0.5,
+          },
+          {
+            opacity: 1,
+            transform: `translate(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px)) rotate(0deg) scale(${landingScale})`,
+          },
+        ], {
+          delay: index * stagger,
+          duration: 560,
+          easing: 'cubic-bezier(.2,.72,.2,1)',
+          fill: 'both',
+        });
+        try {
+          await animation.finished;
+        } catch {
+          // A canceled flight still settles the bead into its target position.
+        }
+      }
+
+      target.classList.add('is-filled');
+      const nextTargetOffset = index + 1 < sources.length
+        ? Math.floor((index + 1) * this.currentPlayBeadReward.length / sources.length)
+        : this.currentPlayBeadReward.length;
+      if (nextTargetOffset > targetOffset) this.emitBeadPlacementSparkles(target);
+      gem.remove();
+    });
+
+    try {
+      await Promise.all(flights);
+      this.playBeadShowcaseArt.parentElement?.classList.add('is-complete');
+      if (!reducedMotion) await waitFor(220);
+    } finally {
+      layer.remove();
+    }
+  }
+
   private async handleComplete(): Promise<void> {
     if (this.playContext === 'bead') {
       await this.boardScene.showCompletion();
@@ -2336,12 +2493,12 @@ class NumberConnectApp {
       return;
     }
     if (this.playContext === 'editor-playtest') {
-      await this.boardScene.showCompletion();
+      await this.showPlayBeadCompletion(false);
       if (this.playContext === 'editor-playtest') this.showEditorPlaytestResult();
       return;
     }
     if (this.playContext === 'daily') {
-      await this.boardScene.showCompletion();
+      await this.showPlayBeadCompletion();
       if (this.playContext !== 'daily') return;
       this.completedDailyChallenges.add(this.dailyChallengeDateKey);
       saveCompletedDailyChallenges(this.completedDailyChallenges);
@@ -2350,6 +2507,7 @@ class NumberConnectApp {
       return;
     }
     if (this.mode === 'endless') {
+      await this.showPlayBeadCompletion();
       this.lives += 1;
       this.renderLives();
       this.showEndlessStageResult();
@@ -2361,7 +2519,11 @@ class NumberConnectApp {
       this.completeCollectionLevel();
       this.showCollectionResult();
     } else {
-      await this.boardScene.showCompletion();
+      const patternComplete = await this.showPlayBeadCompletion();
+      if (!patternComplete) {
+        this.nextLevel();
+        return;
+      }
       this.showNormalResult();
     }
   }
@@ -2389,7 +2551,7 @@ class NumberConnectApp {
     this.currentProgress = 0;
     this.currentTotal = next.solutionPath.length;
     this.updateGameHeading(next);
-    this.renderProgress();
+    this.preparePlayBeadShowcase(next);
     this.resetPowerUps();
     this.setPowerUpMessage('正在准备下一关。');
     this.renderPowerUps();
@@ -2595,6 +2757,7 @@ class NumberConnectApp {
   private populateSettingsForm(): void {
     this.setInputModeControl(this.settings.inputMode);
     query<HTMLInputElement>('#settings-next').checked = this.settings.showNextNumber;
+    query<HTMLInputElement>('#settings-difficulty-score').checked = this.settings.showDifficultyScore;
     query<HTMLInputElement>('#settings-sound').checked = this.settings.soundEnabled;
     this.setUiThemeControl(this.settings.uiTheme);
     this.solutionToggle.checked = this.solutionRevealed;
@@ -2617,12 +2780,24 @@ class NumberConnectApp {
       option.addEventListener('click', () => this.selectLevelFromPicker(level.levelId));
       return option;
     });
-    this.levelPickerGrid.replaceChildren(...options);
+    if (options.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'level-picker-empty';
+      empty.textContent = '暂无关卡';
+      this.levelPickerGrid.replaceChildren(empty);
+    } else {
+      this.levelPickerGrid.replaceChildren(...options);
+    }
     this.renderDefaultLobbyLevelNumber();
   }
 
   private renderDefaultLobbyLevelNumber(): void {
-    query<HTMLElement>('#default-level-number').textContent = String(this.settings.selectedLevelId);
+    const hasLevels = this.levels.length > 0;
+    query<HTMLElement>('#default-level-number').textContent = hasLevels
+      ? String(this.settings.selectedLevelId)
+      : '—';
+    query<HTMLButtonElement>('#default-start-button').disabled = !hasLevels;
+    query<HTMLButtonElement>('#start-button').disabled = !hasLevels;
     this.renderPrimaryAction();
   }
 
@@ -2637,6 +2812,7 @@ class NumberConnectApp {
   private applySettingsChange(): void {
     this.settings.inputMode = this.selectedInputMode();
     this.settings.showNextNumber = query<HTMLInputElement>('#settings-next').checked;
+    this.settings.showDifficultyScore = query<HTMLInputElement>('#settings-difficulty-score').checked;
     this.settings.soundEnabled = query<HTMLInputElement>('#settings-sound').checked;
     this.settings.uiTheme = this.selectedUiTheme();
     this.settings.touchPreviewSize = this.selectedTouchPreviewSize();
@@ -2647,6 +2823,7 @@ class NumberConnectApp {
     this.refreshSettingsControls();
     this.renderTouchPreviewState();
     this.renderInputMode();
+    if (!this.settings.showDifficultyScore) this.renderHoldScore(null);
     this.boardScene.setRuntimePreferences({
       showNextNumber: this.settings.showNextNumber,
       soundEnabled: this.settings.soundEnabled,
@@ -3477,12 +3654,15 @@ class NumberConnectApp {
       `${this.beadPattern.width}乘${this.beadPattern.height}${this.beadPattern.name}拼豆图纸，已完成${percent}%`,
     );
     this.beadStatus.textContent = message;
-    this.beadStartButton.disabled = this.beadJar.length > 0 || collected >= total;
-    this.beadStartButton.textContent = this.beadJar.length > 0
-      ? `先放完瓶中的 ${this.beadJar.length} 颗`
-      : collected >= total
-        ? '图案已完成'
-        : `进入关卡 · 可获得 ${Math.min(total - collected, this.createNormalLevel().solutionPath.length)} 颗`;
+    const hasLevels = this.levels.length > 0;
+    this.beadStartButton.disabled = !hasLevels || this.beadJar.length > 0 || collected >= total;
+    this.beadStartButton.textContent = !hasLevels
+      ? '暂无关卡'
+      : this.beadJar.length > 0
+        ? `先放完瓶中的 ${this.beadJar.length} 颗`
+        : collected >= total
+          ? '图案已完成'
+          : `进入关卡 · 可获得 ${Math.min(total - collected, this.createNormalLevel().solutionPath.length)} 颗`;
     this.renderBeadJar();
   }
 
@@ -3565,12 +3745,14 @@ class NumberConnectApp {
           ? `还差 ${remaining} 颗拼豆完成图案`
           : '图案完成！所有拼豆都已归位。'
     );
-    this.beadStartButton.disabled = remaining === 0 || waitingInJar > 0;
-    this.beadStartButton.textContent = remaining === 0
-      ? '图案已完成'
-      : waitingInJar > 0
-        ? `先放完瓶中的 ${waitingInJar} 颗`
-      : `进入关卡 · 可获得 ${nextReward} 颗`;
+    this.beadStartButton.disabled = this.levels.length === 0 || remaining === 0 || waitingInJar > 0;
+    this.beadStartButton.textContent = this.levels.length === 0
+      ? '暂无关卡'
+      : remaining === 0
+        ? '图案已完成'
+        : waitingInJar > 0
+          ? `先放完瓶中的 ${waitingInJar} 颗`
+          : `进入关卡 · 可获得 ${nextReward} 颗`;
     this.renderBeadJar();
     this.beadGalleryCount.textContent = String(this.completedBeadPatternIds.size);
   }
