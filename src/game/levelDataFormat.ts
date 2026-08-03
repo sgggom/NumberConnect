@@ -166,5 +166,6 @@ export const decodeCompactLevelCollection = (
   custom: boolean,
 ): LevelData[] => {
   const source = Array.isArray(value) ? value : [value];
+  if (source.length === 0) throw new Error('关卡数组不能为空。');
   return source.map((level, index) => decodeCompactLevelData(level, index + 1, custom));
 };
