@@ -84,7 +84,7 @@ describe('level collection TXT export', () => {
     expect(progress).toHaveBeenNthCalledWith(2, 2, 2, 2);
   });
 
-  it('keeps the original algorithm 4 type when exporting built-in levels', async () => {
+  it('keeps the algorithm 5 type used by the square campaign levels', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true,
       json: async () => [{ data: [[1, 2], [4, -3]] }],
@@ -99,7 +99,7 @@ describe('level collection TXT export', () => {
       const values = text.split('\t');
 
       expect(values[1]).toBe('{"data":[[1,2],[4,-3]]}');
-      expect(values[6]).toBe('算法4');
+      expect(values[6]).toBe('算法5');
     } finally {
       vi.unstubAllGlobals();
     }

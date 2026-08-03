@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import levelsJson from '../../public/levels/levels.json';
+import beadLevelsJson from '../../public/levels/bead-levels.json';
 import {
   decodeCompactLevelCollection,
   encodeCompactLevelCollection,
@@ -7,7 +8,7 @@ import {
 import { BoardShape } from '../game/types';
 
 describe('built-in level collection', () => {
-  it('contains the 90 validated levels exported from the new workbook', () => {
+  it('contains the 9 square levels exported from the local editor', () => {
     const levels = decodeCompactLevelCollection(levelsJson, false);
     const sizeCounts = levels.reduce<Record<string, number>>((counts, level) => {
       const size = `${level.rows}×${level.columns}`;
@@ -15,10 +16,28 @@ describe('built-in level collection', () => {
       return counts;
     }, {});
 
-    expect(levels).toHaveLength(90);
+    expect(levels).toHaveLength(9);
     expect(levels.map((level) => level.levelId)).toEqual(
-      Array.from({ length: 90 }, (_, index) => index + 1),
+      Array.from({ length: 9 }, (_, index) => index + 1),
     );
+    expect(levels.every((level) => level.boardShape === BoardShape.Square)).toBe(true);
+    expect(sizeCounts).toEqual({
+      '6×6': 3,
+      '7×7': 3,
+      '5×5': 3,
+    });
+    expect(encodeCompactLevelCollection(levels)).toEqual(levelsJson);
+  });
+
+  it('keeps the 90 rectangular levels in the bead gameplay pool', () => {
+    const levels = decodeCompactLevelCollection(beadLevelsJson, false);
+    const sizeCounts = levels.reduce<Record<string, number>>((counts, level) => {
+      const size = `${level.rows}×${level.columns}`;
+      counts[size] = (counts[size] ?? 0) + 1;
+      return counts;
+    }, {});
+
+    expect(levels).toHaveLength(90);
     expect(levels.every((level) => level.boardShape === BoardShape.Rectangle)).toBe(true);
     expect(sizeCounts).toEqual({
       '8×6': 10,
@@ -31,6 +50,5 @@ describe('built-in level collection', () => {
       '11×8': 10,
       '12×8': 10,
     });
-    expect(encodeCompactLevelCollection(levels)).toEqual(levelsJson);
   });
 });
