@@ -1,5 +1,5 @@
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
-const STACKED_LAYOUT_BREAKPOINT = 1500;
+const STACKED_LAYOUT_BREAKPOINT = 1260;
 
 export class EditorSplitPaneController {
   private readonly minimumSidebarWidth = 260;

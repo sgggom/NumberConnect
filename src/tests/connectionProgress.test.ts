@@ -100,7 +100,8 @@ describe('connection progress', () => {
 
     expect(progress.isVisible(1)).toBe(false);
     expect(progress.isVisible(3)).toBe(true);
-    expect(progress.begin(3)).toMatchObject({ type: 'started', index: 3 });
+    expect(progress.begin(3)).toMatchObject({ type: 'wrong', reason: 'start-order' });
+    expect(progress.begin(0)).toMatchObject({ type: 'started', index: 0 });
   });
 
   it('keeps a revealed alternate-path number fixed when undoing the branch that exposed it', () => {
@@ -166,23 +167,23 @@ describe('connection progress', () => {
     expect(progress.extend(1)).toMatchObject({ type: 'advanced' });
   });
 
-  it('starts from any visible number and connects forward', () => {
+  it('starts only from number one even when a later number is visible', () => {
     const progress = new ConnectionProgress(6, [0, 3, 5]);
 
-    expect(progress.begin(3)).toEqual({ type: 'started', index: 3 });
-    expect(progress.extend(4)).toMatchObject({ type: 'advanced', added: true, progress: 2 });
-    expect(progress.isVisible(4)).toBe(true);
-    expect(progress.isEdgeConnected(3)).toBe(true);
+    expect(progress.begin(3)).toEqual({ type: 'wrong', index: 3, reason: 'start-order' });
+    expect(progress.begin(0)).toEqual({ type: 'started', index: 0 });
+    expect(progress.extend(1)).toMatchObject({ type: 'advanced', added: true, progress: 2 });
+    expect(progress.isVisible(1)).toBe(true);
+    expect(progress.isEdgeConnected(0)).toBe(true);
   });
 
-  it('starts from the final visible number and connects backward', () => {
+  it('rejects a connection from a larger number to a smaller number', () => {
     const progress = new ConnectionProgress(5, [0, 2, 4]);
 
-    progress.begin(4);
-    expect(progress.extend(3)).toMatchObject({ type: 'advanced', added: true });
-    expect(progress.extend(2)).toMatchObject({ type: 'advanced', added: true });
-    expect(progress.isEdgeConnected(3)).toBe(true);
-    expect(progress.isEdgeConnected(2)).toBe(true);
+    expect(progress.begin(4)).toMatchObject({ type: 'wrong', reason: 'start-order' });
+    expect(progress.extend(3)).toEqual({ type: 'ignored' });
+    expect(progress.progress).toBe(0);
+    expect(progress.isEdgeConnected(3)).toBe(false);
   });
 
   it('accepts either order for a configured pair of swappable hidden numbers', () => {
@@ -214,13 +215,12 @@ describe('connection progress', () => {
     expect(progress.extend(1)).toMatchObject({ type: 'advanced', index: 1 });
   });
 
-  it('accepts the swapped hidden pair when connecting backward', () => {
+  it('rejects a swappable hidden pair when connecting backward', () => {
     const progress = new ConnectionProgress(4, [0, 3], [[1, 2]]);
 
-    progress.begin(3);
-    expect(progress.extend(1)).toMatchObject({ type: 'advanced' });
-    expect(progress.extend(2)).toMatchObject({ type: 'advanced' });
-    expect(progress.extend(0)).toMatchObject({ type: 'advanced', complete: true });
+    expect(progress.begin(3)).toMatchObject({ type: 'wrong', reason: 'start-order' });
+    expect(progress.extend(1)).toEqual({ type: 'ignored' });
+    expect(progress.progress).toBe(0);
   });
 
   it('does not allow a two-position jump unless the hidden pair is swappable', () => {
@@ -230,20 +230,22 @@ describe('connection progress', () => {
     expect(progress.extend(2)).toMatchObject({ type: 'wrong', reason: 'non-consecutive' });
   });
 
-  it('rejects hidden starting points and skipped numbers', () => {
+  it('rejects starting after number one and skipped numbers', () => {
     const progress = new ConnectionProgress(5, [0, 2, 4]);
 
-    expect(progress.begin(1)).toMatchObject({ type: 'wrong', reason: 'hidden-start' });
-    progress.begin(2);
+    expect(progress.begin(1)).toMatchObject({ type: 'wrong', reason: 'start-order' });
+    expect(progress.begin(2)).toMatchObject({ type: 'wrong', reason: 'start-order' });
+    progress.begin(0);
     expect(progress.extend(4)).toMatchObject({ type: 'wrong', reason: 'non-consecutive' });
   });
 
-  it('allows a power-up to reveal a hidden starting point', () => {
+  it('does not let a power-up reveal bypass the required starting number', () => {
     const progress = new ConnectionProgress(5, [0, 4]);
 
-    expect(progress.begin(2)).toMatchObject({ type: 'wrong', reason: 'hidden-start' });
+    expect(progress.begin(2)).toMatchObject({ type: 'wrong', reason: 'start-order' });
     expect(progress.revealIndices([2, 2, 9])).toBe(1);
-    expect(progress.begin(2)).toEqual({ type: 'started', index: 2 });
+    expect(progress.begin(2)).toMatchObject({ type: 'wrong', reason: 'start-order' });
+    expect(progress.begin(0)).toEqual({ type: 'started', index: 0 });
   });
 
   it('clicks every position in ascending order, including concealed cells', () => {
@@ -407,68 +409,71 @@ describe('connection progress', () => {
   it('only suggests the next visible number when connecting forward', () => {
     const progress = new ConnectionProgress(7, [0, 2, 4, 6]);
 
-    progress.begin(2);
+    progress.begin(0);
+    expect(progress.suggestedNextHint()).toEqual({ index: 2, consecutive: false });
+    progress.extend(1);
+    expect(progress.suggestedNextHint()).toEqual({ index: 2, consecutive: true });
+    progress.extend(2);
     expect(progress.suggestedNextHint()).toEqual({ index: 4, consecutive: false });
-    progress.extend(3);
-    expect(progress.suggestedNextHint()).toEqual({ index: 4, consecutive: true });
-    progress.extend(4);
-    expect(progress.suggestedNextHint()).toEqual({ index: 6, consecutive: false });
   });
 
-  it('only suggests the next visible number when connecting backward', () => {
+  it('does not suggest a smaller visible number', () => {
     const progress = new ConnectionProgress(7, [0, 2, 4, 6]);
 
-    progress.begin(6);
-    expect(progress.suggestedNextHint()).toEqual({ index: 4, consecutive: false });
-    progress.extend(5);
-    expect(progress.suggestedNextHint()).toEqual({ index: 4, consecutive: true });
+    expect(progress.begin(6)).toMatchObject({ type: 'wrong', reason: 'start-order' });
+    expect(progress.suggestedNextHint()).toBeUndefined();
+    expect(progress.extend(5)).toEqual({ type: 'ignored' });
   });
 
-  it('completes independently drawn consecutive sections', () => {
+  it('continues the ascending prefix across separate strokes', () => {
     const progress = new ConnectionProgress(5, [0, 2, 4]);
 
-    progress.begin(2);
-    progress.extend(3);
-    progress.endStroke();
-    progress.begin(2);
+    expect(progress.begin(2)).toMatchObject({ type: 'wrong', reason: 'start-order' });
+    progress.begin(0);
     progress.extend(1);
-    progress.extend(0);
     progress.endStroke();
-    progress.begin(3);
-    const completion = progress.extend(4);
-
-    expect(completion).toMatchObject({ type: 'advanced', complete: true, progress: 5 });
-    expect(progress.complete).toBe(true);
-  });
-
-  it('ignores a completed cell when it cannot add a missing consecutive edge', () => {
-    const progress = new ConnectionProgress(5, [0, 1, 2, 3, 4]);
-
+    expect(progress.begin(2)).toMatchObject({ type: 'wrong', reason: 'start-order' });
     progress.begin(1);
     progress.extend(2);
     progress.endStroke();
+    progress.begin(2);
+    const completion = progress.extend(3);
+    progress.endStroke();
+    progress.begin(3);
+    const finalCompletion = progress.extend(4);
 
-    progress.begin(4);
-    expect(progress.extend(1)).toEqual({ type: 'ignored' });
-    expect(progress.activeIndex).toBe(4);
-    expect(progress.isEdgeConnected(0)).toBe(false);
+    expect(completion).toMatchObject({ type: 'advanced', complete: false, progress: 4 });
+    expect(finalCompletion).toMatchObject({ type: 'advanced', complete: true, progress: 5 });
+    expect(progress.complete).toBe(true);
   });
 
-  it('adds the missing edge when joining two previously completed sections', () => {
-    const progress = new ConnectionProgress(4, [0, 1, 2, 3]);
+  it('rejects restarting behind the connected prefix', () => {
+    const progress = new ConnectionProgress(5, [0, 1, 2, 3, 4]);
 
     progress.begin(0);
     progress.extend(1);
     progress.endStroke();
-    progress.begin(3);
+
+    expect(progress.begin(0)).toMatchObject({ type: 'wrong', reason: 'start-order' });
+    expect(progress.activeIndex).toBeUndefined();
+    expect(progress.isEdgeConnected(0)).toBe(true);
+  });
+
+  it('restores the required frontier after undoing a step', () => {
+    const progress = new ConnectionProgress(4, [0, 1, 2, 3]);
+
+    progress.begin(0);
+    progress.extend(1);
     progress.extend(2);
+    expect(progress.undoLastStep()).toBe(2);
     progress.endStroke();
 
-    progress.begin(1);
-    const joined = progress.extend(2);
+    expect(progress.begin(2)).toMatchObject({ type: 'wrong', reason: 'start-order' });
+    expect(progress.begin(1)).toMatchObject({ type: 'started', index: 1 });
+    expect(progress.extend(2)).toMatchObject({ type: 'advanced', progress: 3 });
+    const completion = progress.extend(3);
 
-    expect(joined).toMatchObject({ type: 'advanced', added: true, complete: true });
-    expect(progress.isEdgeConnected(1)).toBe(true);
+    expect(completion).toMatchObject({ type: 'advanced', added: true, complete: true });
   });
 
   it('ignores already connected cells revisited during the current stroke', () => {

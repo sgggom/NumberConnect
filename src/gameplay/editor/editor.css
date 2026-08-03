@@ -227,7 +227,28 @@
   .editor-simulation-mask, .editor-simulation-overlay { transition: none; }
 }
 
-@media (max-width: 1500px) {
+@media (min-width: 1261px) and (max-width: 1500px) {
+  .editor-screen { padding: 16px 18px 18px; gap: 12px; }
+  .editor-layout {
+    --editor-info-width: 230px;
+    --editor-sidebar-width: 280px;
+    --editor-level-list-width: 230px;
+    grid-template-columns:
+      minmax(210px, var(--editor-info-width))
+      minmax(330px, 1fr)
+      12px
+      minmax(250px, var(--editor-sidebar-width))
+      minmax(210px, var(--editor-level-list-width));
+    gap: 0 8px;
+  }
+  .editor-info-panel, .editor-simulation-panel { padding: 13px; }
+  .editor-sidebar { padding: 16px; gap: 14px; }
+  .editor-toolbar { gap: 12px; }
+  .editor-level-panel { padding: 14px; gap: 10px; }
+  .editor-workspace { padding: 16px; }
+}
+
+@media (max-width: 1260px) {
   .editor-screen { padding: 16px; grid-template-rows: auto max-content; overflow-y: auto; }
   .editor-header { grid-template-columns: 44px 1fr; }
   .save-chip { grid-column: 2; }

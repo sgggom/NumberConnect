@@ -703,7 +703,11 @@ export class BoardScene extends Phaser.Scene {
     this.playSound('victory');
 
     if (session.completionGemColors?.length) {
-      await this.showGemCompletion(view, session.completionGemColors);
+      await this.showGemCompletion(
+        view,
+        session.completionGemColors,
+        session.completionGemDestination ?? 'jar',
+      );
       return;
     }
 
@@ -812,7 +816,11 @@ export class BoardScene extends Phaser.Scene {
     });
   }
 
-  private async showGemCompletion(view: BoardView, gemColors: readonly string[]): Promise<void> {
+  private async showGemCompletion(
+    view: BoardView,
+    gemColors: readonly string[],
+    destination: 'jar' | 'showcase',
+  ): Promise<void> {
     if (!this.session) return;
     const path = this.session.level.solutionPath.slice(0, gemColors.length);
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -893,6 +901,16 @@ export class BoardScene extends Phaser.Scene {
       duration: reducedMotion ? 1 : 300,
       ease: 'Sine.easeOut',
     });
+
+    if (destination === 'showcase') {
+      this.tweens.add({
+        targets: gems,
+        alpha: 0,
+        duration: reducedMotion ? 1 : 360,
+        ease: 'Sine.easeIn',
+      });
+      return;
+    }
 
     const jarSize = Math.max(150, Math.min(230, view.panelWidth * 0.58, view.panelHeight * 0.48));
     const jarX = view.centerX;
@@ -1062,7 +1080,7 @@ export class BoardScene extends Phaser.Scene {
 
   private buildView(session: BoardSessionInput, offsetY: number): BoardView {
     const width = Math.max(this.scale.width, 320);
-    const height = Math.max(this.scale.height, 420);
+    const height = Math.max(this.scale.height, 1);
     const viewportCenterX = width * 0.5;
     const centerX = 0;
     const centerY = height * 0.5;
@@ -1855,9 +1873,10 @@ export class BoardScene extends Phaser.Scene {
 
   private connectionFailureMessage(reason: ConnectionFailure): string {
     if (reason === 'hidden-start') return '请从显示数字开始。';
+    if (reason === 'start-order') return '请从数字 1 开始，并沿当前进度从小到大连续连接。';
     if (reason === 'click-order') return '请按从小到大的顺序点击数字。';
     if (reason === 'no-completion') return '这样连接后，剩余格子无法完成一笔连。';
-    if (reason === 'direction-change') return '一次连线请保持同一数字方向。';
+    if (reason === 'direction-change') return '请按从小到大的顺序连接连续数字。';
     return '请连接相邻的连续数字。';
   }
 

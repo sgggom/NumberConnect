@@ -66,6 +66,7 @@ export interface GameSettings {
   maxVisibleRun: number;
   targetCrossings: number;
   showNextNumber: boolean;
+  showDifficultyScore: boolean;
   soundEnabled: boolean;
   inputMode: InputMode;
   uiTheme: UiTheme;
@@ -143,6 +144,7 @@ export interface BoardSessionInput {
   level: LevelData;
   hiddenCells: Set<string>;
   completionGemColors?: readonly string[];
+  completionGemDestination?: 'jar' | 'showcase';
   showNextNumber: boolean;
   soundEnabled: boolean;
   inputMode: InputMode;
@@ -176,6 +178,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   maxVisibleRun: 4,
   targetCrossings: 5,
   showNextNumber: true,
+  showDifficultyScore: false,
   soundEnabled: true,
   inputMode: 'drag',
   uiTheme: 'default',

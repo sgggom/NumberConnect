@@ -42,10 +42,25 @@ describe('game settings migration', () => {
         targetCrossings: DEFAULT_SETTINGS.targetCrossings,
         selectedLevelId: 4,
         showNextNumber: false,
+        showDifficultyScore: false,
         inputMode: DEFAULT_SETTINGS.inputMode,
         touchPreviewSize: DEFAULT_SETTINGS.touchPreviewSize,
         touchPreviewFollowsPointer: DEFAULT_SETTINGS.touchPreviewFollowsPointer,
       });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('loads difficulty score visibility only when it was explicitly enabled', () => {
+    const getItem = vi.fn()
+      .mockReturnValueOnce(JSON.stringify({}))
+      .mockReturnValueOnce(JSON.stringify({ showDifficultyScore: true }));
+    vi.stubGlobal('window', { localStorage: { getItem } });
+
+    try {
+      expect(loadSettings().showDifficultyScore).toBe(false);
+      expect(loadSettings().showDifficultyScore).toBe(true);
     } finally {
       vi.unstubAllGlobals();
     }
@@ -97,10 +112,10 @@ describe('game settings migration', () => {
 });
 
 describe('level collection migration', () => {
-  it('ignores the obsolete v2 collection and starts from the new bundled levels', () => {
+  it('ignores the obsolete v3 collection and starts from the new bundled levels', () => {
     const bundled = [makeLevel(1)];
     const getItem = vi.fn((key: string) => (
-      key === 'number-connect.level-collection.v2'
+      key === 'number-connect.level-collection.v3'
         ? JSON.stringify([makeLevel(9, true)])
         : null
     ));
@@ -108,17 +123,17 @@ describe('level collection migration', () => {
 
     try {
       expect(loadLevelCollection(bundled)).toEqual(bundled);
-      expect(getItem).toHaveBeenCalledWith('number-connect.level-collection.v3');
-      expect(getItem).not.toHaveBeenCalledWith('number-connect.level-collection.v2');
+      expect(getItem).toHaveBeenCalledWith('number-connect.level-collection.v4');
+      expect(getItem).not.toHaveBeenCalledWith('number-connect.level-collection.v3');
     } finally {
       vi.unstubAllGlobals();
     }
   });
 
-  it('loads and saves editor changes with the v3 collection key', () => {
+  it('loads and saves editor changes with the v4 collection key', () => {
     const stored = [makeLevel(7, true)];
     const getItem = vi.fn((key: string) => (
-      key === 'number-connect.level-collection.v3' ? JSON.stringify(stored) : null
+      key === 'number-connect.level-collection.v4' ? JSON.stringify(stored) : null
     ));
     const setItem = vi.fn();
     vi.stubGlobal('window', { localStorage: { getItem, setItem } });
@@ -127,7 +142,7 @@ describe('level collection migration', () => {
       expect(loadLevelCollection([makeLevel(1)])).toEqual(stored);
       saveLevelCollection(stored);
       expect(setItem).toHaveBeenCalledWith(
-        'number-connect.level-collection.v3',
+        'number-connect.level-collection.v4',
         JSON.stringify(stored),
       );
     } finally {

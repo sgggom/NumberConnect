@@ -2,6 +2,7 @@ import type { PathCompletionSolver } from './pathCompletionSolver';
 
 export type ConnectionFailure =
   | 'hidden-start'
+  | 'start-order'
   | 'non-consecutive'
   | 'no-completion'
   | 'direction-change'
@@ -20,6 +21,8 @@ export interface ConnectionHint {
 
 type Direction = -1 | 1;
 type SwapChoice = 'authored' | 'swapped';
+
+const ASCENDING_DIRECTION: Direction = 1;
 
 interface SwapSegment {
   firstIndex: number;
@@ -98,6 +101,9 @@ export class ConnectionProgress {
 
   public begin(index: number, allowHidden = false): ConnectionAction {
     if (!this.inBounds(index) || this.complete) return { type: 'ignored' };
+    if (index !== this.requiredStartIndex()) {
+      return { type: 'wrong', index, reason: 'start-order' };
+    }
     if (!allowHidden && !this.visibleIndices.has(index)) {
       return { type: 'wrong', index, reason: 'hidden-start' };
     }
@@ -106,7 +112,7 @@ export class ConnectionProgress {
     this.visibleIndices.add(index);
     this.active = index;
     this.previous = undefined;
-    this.direction = segmentDirection;
+    this.direction = ASCENDING_DIRECTION;
     return { type: 'started', index };
   }
 
@@ -285,6 +291,7 @@ export class ConnectionProgress {
 
   public canCompleteAfterStep(from: number, to: number): boolean {
     if (!this.inBounds(from) || !this.inBounds(to) || from === to) return false;
+    if (from !== this.requiredStartIndex()) return false;
     if (!this.completionSolver) return true;
     const connectionKey = edgeKey(from, to);
     if (this.connectedEdges.has(connectionKey)) return true;
@@ -298,26 +305,23 @@ export class ConnectionProgress {
       directedStep: {
         from,
         to,
-        direction: from === this.active ? this.direction : undefined,
+        direction: ASCENDING_DIRECTION,
       },
     }) !== null;
   }
 
   public suggestedNextHint(): ConnectionHint | undefined {
     if (this.active === undefined) return undefined;
-    const directions: Direction[] = this.direction === undefined ? [1, -1] : [this.direction];
     const orderedIndices = this.orderedIndices();
     const activePosition = orderedIndices.indexOf(this.active);
     if (activePosition < 0) return undefined;
-    for (const direction of directions) {
-      let position = activePosition + direction;
-      while (this.inBounds(position)) {
-        const index = orderedIndices[position];
-        if (this.visibleIndices.has(index)) {
-          return { index, consecutive: Math.abs(position - activePosition) === 1 };
-        }
-        position += direction;
+    let position = activePosition + ASCENDING_DIRECTION;
+    while (this.inBounds(position)) {
+      const index = orderedIndices[position];
+      if (this.visibleIndices.has(index)) {
+        return { index, consecutive: position - activePosition === 1 };
       }
+      position += ASCENDING_DIRECTION;
     }
     return undefined;
   }
@@ -338,7 +342,12 @@ export class ConnectionProgress {
     return anchorPosition < 0 ? undefined : orderedIndices[anchorPosition + 1];
   }
 
-  private syncClickAnchor(orderedIndices: ReadonlyArray<number>): void {
+  private requiredStartIndex(): number | undefined {
+    const orderedIndices = this.orderedIndices();
+    return orderedIndices[this.connectedPrefixEndPosition(orderedIndices)];
+  }
+
+  private connectedPrefixEndPosition(orderedIndices: ReadonlyArray<number>): number {
     let position = 0;
     while (
       position < orderedIndices.length - 1
@@ -346,6 +355,11 @@ export class ConnectionProgress {
     ) {
       position += 1;
     }
+    return position;
+  }
+
+  private syncClickAnchor(orderedIndices: ReadonlyArray<number>): void {
+    const position = this.connectedPrefixEndPosition(orderedIndices);
     if (position === 0) return;
     const currentPosition = this.clickAnchor === undefined
       ? -1
