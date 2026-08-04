@@ -15,6 +15,13 @@ import {
 import { calculateEditorLevelMetrics } from './levelMetrics';
 import { LevelEditorModel } from './LevelEditorModel';
 import { mountLevelEditorView } from './LevelEditorView';
+import {
+  loadLevelEditorPreferences,
+  normalizeSimulationReasoningLevel,
+  normalizeSimulationRunCount,
+  saveLevelEditorPreferences,
+  type LevelEditorPreset,
+} from './editorPreferences';
 import { readAlgorithm4BatchConfigFile } from './batchLevelGeneration';
 import { generateAlgorithm4BatchLevelsInWorkers } from './batchLevelGenerationPool';
 import {
@@ -29,6 +36,7 @@ import {
 } from './simulateLevelPlay';
 import {
   formatLevelCollectionTxt,
+  formatLevelListTxt,
   formatSimulatedLevelTsv,
 } from './levelCollectionTxt';
 import {
@@ -67,6 +75,11 @@ interface SimulationOverlayPoint {
   size: number;
 }
 
+const createEditorPresetId = (): string => {
+  if (typeof globalThis.crypto?.randomUUID === 'function') return globalThis.crypto.randomUUID();
+  return `preset-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+};
+
 export class LevelEditorController {
   private readonly model = new LevelEditorModel();
   private painting = false;
@@ -84,7 +97,6 @@ export class LevelEditorController {
   private isImageRecognizing = false;
   private isBatchGenerating = false;
   private isBatchTxtPreparing = false;
-  private isLevelExporting = false;
   private lastBatchGeneratedLevels: LevelData[] = [];
   private lastBatchTxt?: string;
   private imageRecognitionMode: ImageRecognitionMode = 'complete-level';
@@ -98,11 +110,21 @@ export class LevelEditorController {
   private simulationSuccessfulCells: EditorCell[] = [];
   private simulationErrorAttempts: SimulationErrorAttempt[] = [];
   private simulationWindow?: Window;
+  private editorPresets: LevelEditorPreset[] = [];
+  private selectedPresetId?: string;
 
   public constructor(
     private readonly host: HTMLElement,
     private readonly options: LevelEditorControllerOptions,
   ) {
+    const preferences = loadLevelEditorPreferences();
+    this.model.applyConfiguration(preferences.configuration);
+    this.simulationRunCount = normalizeSimulationRunCount(preferences.simulationRunCount);
+    this.simulationReasoningLevel = normalizeSimulationReasoningLevel(
+      preferences.simulationReasoningLevel,
+    );
+    this.editorPresets = preferences.presets;
+    this.selectedPresetId = preferences.selectedPresetId;
     mountLevelEditorView(this.host);
     this.splitPane = new EditorSplitPaneController(
       this.query<HTMLElement>('.editor-layout'),
@@ -128,14 +150,31 @@ export class LevelEditorController {
     });
     this.query<HTMLSelectElement>('#editor-shape').addEventListener('change', (event) => {
       this.model.setShape((event.target as HTMLSelectElement).value as EditorShape);
+      this.persistPreferences();
       this.render();
     });
     this.query<HTMLSelectElement>('#editor-algorithm').addEventListener('change', (event) => {
       const id = (event.target as HTMLSelectElement).value as EditorAlgorithmId;
       this.model.setAlgorithm(id);
+      this.persistPreferences();
       this.render();
       this.setStatus(`已切换为${editorAlgorithmLabel(id)}，请重新生成路径。`);
     });
+    this.query<HTMLSelectElement>('#editor-preset-select').addEventListener('change', (event) => {
+      const id = (event.currentTarget as HTMLSelectElement).value;
+      this.selectedPresetId = id || undefined;
+      this.renderPresetControls();
+      this.persistPreferences();
+    });
+    this.query('#editor-preset-apply').addEventListener('click', () => this.applySelectedPreset());
+    this.query('#editor-preset-save').addEventListener('click', () => this.saveCurrentPreset());
+    this.query('#editor-preset-delete').addEventListener('click', () => this.deleteSelectedPreset());
+    this.query<HTMLInputElement>('#editor-preset-name').addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' || event.isComposing) return;
+      event.preventDefault();
+      this.saveCurrentPreset();
+    });
+    this.renderPresetControls();
     this.query<HTMLSelectElement>('#editor-manual-mode').addEventListener('change', (event) => {
       const mode = (event.target as HTMLSelectElement).value as ManualEditMode;
       this.model.setManualEditMode(mode);
@@ -149,26 +188,32 @@ export class LevelEditorController {
     });
     this.query('#editor-size-minus').addEventListener('click', () => {
       this.model.changeSize(-1);
+      this.persistPreferences();
       this.render();
     });
     this.query('#editor-size-plus').addEventListener('click', () => {
       this.model.changeSize(1);
+      this.persistPreferences();
       this.render();
     });
     this.query('#editor-width-minus').addEventListener('click', () => {
       this.model.changeSize(-1, 'columns');
+      this.persistPreferences();
       this.render();
     });
     this.query('#editor-width-plus').addEventListener('click', () => {
       this.model.changeSize(1, 'columns');
+      this.persistPreferences();
       this.render();
     });
     this.query('#editor-height-minus').addEventListener('click', () => {
       this.model.changeSize(-1, 'rows');
+      this.persistPreferences();
       this.render();
     });
     this.query('#editor-height-plus').addEventListener('click', () => {
       this.model.changeSize(1, 'rows');
+      this.persistPreferences();
       this.render();
     });
     this.query('#editor-clear-button').addEventListener('click', () => {
@@ -188,14 +233,16 @@ export class LevelEditorController {
     this.query('#editor-generate-path-button').addEventListener('click', () => this.generatePath());
     this.query<HTMLInputElement>('#editor-simulation-count').addEventListener('change', (event) => {
       const input = event.currentTarget as HTMLInputElement;
-      this.simulationRunCount = Math.max(1, Math.min(100, Math.round(Number(input.value) || 1)));
+      this.simulationRunCount = normalizeSimulationRunCount(input.value);
       input.value = String(this.simulationRunCount);
+      this.persistPreferences();
       this.clearSimulationResult();
       this.renderSimulationPanel();
     });
     this.query<HTMLSelectElement>('#editor-simulation-reasoning').addEventListener('change', (event) => {
       this.simulationReasoningLevel = (event.currentTarget as HTMLSelectElement)
         .value as SimulationReasoningLevel;
+      this.persistPreferences();
       this.clearSimulationResult();
       this.renderSimulationPanel();
     });
@@ -209,13 +256,13 @@ export class LevelEditorController {
     );
     this.query('#editor-simulation-open-button').addEventListener('click', () => this.openSimulationWindow());
     this.query('#editor-playtest-button').addEventListener('click', () => this.playtest());
-    this.query('#editor-save-button').addEventListener('click', () => this.save());
     this.query('#editor-level-add').addEventListener('click', () => this.save());
     this.query('#editor-level-batch').addEventListener('click', () => (
       this.query<HTMLInputElement>('#editor-level-batch-file').click()
     ));
     this.query('#editor-level-import').addEventListener('click', () => this.query<HTMLInputElement>('#editor-level-file').click());
-    this.query('#editor-level-export').addEventListener('click', () => void this.exportLevels());
+    this.query('#editor-level-export').addEventListener('click', () => this.exportLevels());
+    this.query('#editor-level-clear').addEventListener('click', () => this.clearLevels());
     this.query<HTMLInputElement>('#editor-level-batch-file').addEventListener(
       'change',
       (event) => void this.generateBatchLevels(event),
@@ -442,14 +489,13 @@ export class LevelEditorController {
       activeButton.textContent = '识别中…';
     }
     const nextId = this.options.getNextLevelId();
-    this.query('#editor-save-id').textContent = `下次保存：${nextId}`;
     this.query<HTMLElement>('#editor-preview').style.backgroundImage = `url('./level-backgrounds/${this.model.previewName(nextId)}.png')`;
-    this.query<HTMLButtonElement>('#editor-save-button').disabled = !this.model.hasGeneratedPath || this.isPathAnimating;
     this.query<HTMLButtonElement>('#editor-playtest-button').disabled = !this.model.hasGeneratedPath || this.isPathAnimating;
     this.query<HTMLButtonElement>('#editor-level-add').disabled = !this.model.hasGeneratedPath || this.isPathAnimating;
     this.renderLevelMetrics(rows, columns);
     this.renderSimulationPanel();
     this.renderLevelList();
+    this.syncPresetControls();
   }
 
   private renderLevelMetrics(rows: number, columns: number): void {
@@ -461,14 +507,7 @@ export class LevelEditorController {
     const hiddenPercent = Math.round(metrics.hiddenRatio * 1000) / 10;
     const hiddenTotal = this.model.solutionPath.length || this.model.activeCells.size;
     this.query('#editor-info-size').textContent = `${columns} × ${rows}`;
-    this.query('#editor-info-right-turns').textContent = String(metrics.rightAngleTurns);
-    this.query('#editor-info-acute-turns').textContent = String(metrics.acuteAngleTurns);
-    this.query('#editor-info-obtuse-turns').textContent = String(metrics.obtuseAngleTurns);
-    this.query('#editor-info-straight').textContent = String(metrics.straightContinuations);
-    this.query('#editor-info-crossings').textContent = String(metrics.pathCrossings);
     this.query('#editor-info-hidden-ratio').textContent = `${hiddenPercent}% · ${metrics.hiddenCount}/${hiddenTotal}`;
-    this.query('#editor-info-hidden-run').textContent = String(metrics.longestHiddenRun);
-    this.query('#editor-info-visible-run').textContent = String(metrics.longestVisibleRun);
   }
 
   private simulatePlay(): void {
@@ -857,13 +896,15 @@ export class LevelEditorController {
 
       popupCountInput?.addEventListener('change', (event) => {
         const input = event.currentTarget as HTMLInputElement;
-        this.simulationRunCount = Math.max(1, Math.min(100, Math.round(Number(input.value) || 1)));
+        this.simulationRunCount = normalizeSimulationRunCount(input.value);
+        this.persistPreferences();
         this.clearSimulationResult();
         this.renderSimulationPanel();
       });
       popupReasoningSelect?.addEventListener('change', (event) => {
         this.simulationReasoningLevel = (event.currentTarget as HTMLSelectElement)
           .value as SimulationReasoningLevel;
+        this.persistPreferences();
         this.clearSimulationResult();
         this.renderSimulationPanel();
       });
@@ -1344,6 +1385,7 @@ export class LevelEditorController {
       this.clearSimulationResult();
       this.selectedLevelId = undefined;
       this.model.applyRecognizedLevel(level);
+      this.persistPreferences();
       this.render();
       const hiddenCount = level.hiddenCells?.length ?? 0;
       this.setStatus(
@@ -1407,6 +1449,7 @@ export class LevelEditorController {
         }
       }
       if (error) throw new Error(error);
+      if (mode !== 'hidden-layout') this.persistPreferences();
       if (mode !== 'hidden-layout') this.setRecognitionAmbiguity(ambiguousCells);
       this.selectedLevelId = undefined;
       this.isImageRecognizing = false;
@@ -1606,6 +1649,8 @@ export class LevelEditorController {
     const levels = this.options.getLevels();
     const list = this.query<HTMLElement>('#editor-level-list');
     this.query('#editor-level-count').textContent = `${levels.length} 关`;
+    this.query<HTMLButtonElement>('#editor-level-export').disabled = levels.length === 0;
+    this.query<HTMLButtonElement>('#editor-level-clear').disabled = levels.length === 0;
     if (levels.length === 0) {
       const empty = document.createElement('p');
       empty.className = 'editor-level-empty';
@@ -1659,6 +1704,7 @@ export class LevelEditorController {
   private applyLevel(level: LevelData): void {
     this.selectedLevelId = level.levelId;
     this.model.applyLevel(level);
+    this.persistPreferences();
     this.render();
     this.setStatus(`已应用关卡 ${level.levelId} 到棋盘。`);
   }
@@ -1673,6 +1719,19 @@ export class LevelEditorController {
     this.options.onLevelsChange(levels);
     this.render();
     this.setStatus(`关卡 ${levelId} 已删除，后续编号已顺延。`);
+  }
+
+  private clearLevels(): void {
+    const levelCount = this.options.getLevels().length;
+    if (levelCount === 0) {
+      this.setStatus('列表已经是空的。');
+      return;
+    }
+    if (!window.confirm(`确定清空列表中的 ${levelCount} 个关卡吗？此操作无法撤销。`)) return;
+    this.selectedLevelId = undefined;
+    this.options.onLevelsChange([]);
+    this.render();
+    this.setStatus(`已清空列表中的 ${levelCount} 个关卡。`);
   }
 
   private async importLevels(event: Event): Promise<void> {
@@ -1754,6 +1813,7 @@ export class LevelEditorController {
       }));
       this.selectedLevelId = lastLevel.levelId;
       this.model.applyLevel(lastLevel);
+      this.persistPreferences();
       this.render();
       this.finishBatchProgress(
         result.levels.length,
@@ -1929,7 +1989,7 @@ export class LevelEditorController {
     this.syncLongRunningState();
   }
 
-  private async exportLevels(): Promise<void> {
+  private exportLevels(): void {
     const levels = [...this.options.getLevels()]
       .sort((left, right) => left.levelId - right.levelId);
     if (levels.length === 0) {
@@ -1937,39 +1997,20 @@ export class LevelEditorController {
       return;
     }
 
-    this.setLevelExporting(true);
     try {
-      const text = await formatLevelCollectionTxt(levels, {
-        simulationRunCount: this.simulationRunCount,
-        reasoningLevel: this.simulationReasoningLevel,
-        onProgress: (completed, total, levelId) => {
-          this.setStatus(`正在模拟并导出关卡 ${levelId}（${completed}/${total}）…`);
-        },
-      });
+      const text = formatLevelListTxt(levels);
       this.downloadTxt(text, 'levels.txt');
-      this.setStatus(`已导出 ${levels.length} 个关卡到 levels.txt，每关一行。`);
+      this.setStatus(`已导出 ${levels.length} 个关卡到 levels.txt，仅包含关卡 ID 和 data。`);
     } catch (error) {
       this.setStatus(
         error instanceof Error ? `导出 TXT 失败：${error.message}` : '导出 TXT 失败。',
         true,
       );
-    } finally {
-      this.setLevelExporting(false);
     }
   }
 
-  private setLevelExporting(active: boolean): void {
-    this.isLevelExporting = active;
-    this.host.classList.toggle('is-level-exporting', active);
-    const button = this.query<HTMLButtonElement>('#editor-level-export');
-    button.disabled = active;
-    button.classList.toggle('is-loading', active);
-    button.textContent = active ? '导出中…' : '导出 TXT';
-    this.syncLongRunningState();
-  }
-
   private syncLongRunningState(): void {
-    const busy = this.isBatchGenerating || this.isBatchTxtPreparing || this.isLevelExporting;
+    const busy = this.isBatchGenerating || this.isBatchTxtPreparing;
     this.host.setAttribute('aria-busy', String(busy));
     this.query<HTMLButtonElement>('#editor-back-button').disabled = busy;
   }
@@ -2109,10 +2150,130 @@ export class LevelEditorController {
     parameterHost.dataset.algorithm = this.model.algorithmSelection.id;
     renderEditorAlgorithmParameters(parameterHost, this.model.algorithmSelection, this.model.shape, (selection) => {
       this.model.setAlgorithmSelection(selection);
+      this.persistPreferences();
       this.render();
     });
     parameterHost.querySelectorAll<HTMLInputElement>('input').forEach((input) => {
       input.disabled = input.disabled || this.isPathAnimating;
+    });
+  }
+
+  private selectedPreset(): LevelEditorPreset | undefined {
+    return this.editorPresets.find(({ id }) => id === this.selectedPresetId);
+  }
+
+  private renderPresetControls(): void {
+    const selectedPreset = this.selectedPreset();
+    if (!selectedPreset) this.selectedPresetId = undefined;
+    const select = this.query<HTMLSelectElement>('#editor-preset-select');
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = this.editorPresets.length > 0 ? '新建或选择预设' : '暂无预设';
+    const options = this.editorPresets.map((preset) => {
+      const option = document.createElement('option');
+      option.value = preset.id;
+      option.textContent = preset.name;
+      return option;
+    });
+    select.replaceChildren(placeholder, ...options);
+    select.value = this.selectedPresetId ?? '';
+    this.query<HTMLInputElement>('#editor-preset-name').value = selectedPreset?.name ?? '';
+    this.query('#editor-preset-count').textContent = `${this.editorPresets.length} 个`;
+    this.syncPresetControls();
+  }
+
+  private syncPresetControls(): void {
+    const selectedPreset = this.selectedPreset();
+    const unavailable = this.isPathAnimating;
+    this.query<HTMLSelectElement>('#editor-preset-select').disabled = unavailable
+      || this.editorPresets.length === 0;
+    this.query<HTMLInputElement>('#editor-preset-name').disabled = unavailable;
+    this.query<HTMLButtonElement>('#editor-preset-save').disabled = unavailable;
+    this.query<HTMLButtonElement>('#editor-preset-apply').disabled = unavailable || !selectedPreset;
+    this.query<HTMLButtonElement>('#editor-preset-delete').disabled = unavailable || !selectedPreset;
+  }
+
+  private saveCurrentPreset(): void {
+    const nameInput = this.query<HTMLInputElement>('#editor-preset-name');
+    const name = nameInput.value.trim().replace(/\s+/g, ' ').slice(0, 30);
+    if (!name) {
+      this.setStatus('请输入配置预设名称。', true);
+      nameInput.focus();
+      return;
+    }
+
+    const selectedPreset = this.selectedPreset();
+    if (!selectedPreset && this.editorPresets.length >= 100) {
+      this.setStatus('配置预设最多保存 100 个，请先删除不再使用的预设。', true);
+      return;
+    }
+    const normalizedName = name.toLocaleLowerCase();
+    const duplicate = this.editorPresets.find((preset) => (
+      preset.id !== selectedPreset?.id && preset.name.toLocaleLowerCase() === normalizedName
+    ));
+    if (duplicate) {
+      this.setStatus(`配置预设「${duplicate.name}」已经存在，请换一个名称。`, true);
+      nameInput.focus();
+      nameInput.select();
+      return;
+    }
+
+    const configuration = this.model.configuration();
+    if (selectedPreset) {
+      this.editorPresets = this.editorPresets.map((preset) => (
+        preset.id === selectedPreset.id ? { ...preset, name, configuration } : preset
+      ));
+    } else {
+      let id = createEditorPresetId();
+      while (this.editorPresets.some((preset) => preset.id === id)) id = createEditorPresetId();
+      this.editorPresets = [...this.editorPresets, { id, name, configuration }];
+      this.selectedPresetId = id;
+    }
+    this.persistPreferences();
+    this.renderPresetControls();
+    this.setStatus(
+      selectedPreset
+        ? `已更新配置预设「${name}」。`
+        : `已保存配置预设「${name}」。`,
+    );
+  }
+
+  private applySelectedPreset(): void {
+    const preset = this.selectedPreset();
+    if (!preset) {
+      this.setStatus('请先选择一个配置预设。', true);
+      return;
+    }
+    this.cancelPathAnimation();
+    this.clearRecognitionAmbiguity();
+    this.clearSimulationResult();
+    this.model.applyConfiguration(preset.configuration);
+    this.persistPreferences();
+    this.render();
+    this.setStatus(`已应用配置预设「${preset.name}」，请重新生成路径。`);
+  }
+
+  private deleteSelectedPreset(): void {
+    const preset = this.selectedPreset();
+    if (!preset) {
+      this.setStatus('请先选择要删除的配置预设。', true);
+      return;
+    }
+    if (!window.confirm(`确定删除配置预设「${preset.name}」吗？`)) return;
+    this.editorPresets = this.editorPresets.filter(({ id }) => id !== preset.id);
+    this.selectedPresetId = undefined;
+    this.persistPreferences();
+    this.renderPresetControls();
+    this.setStatus(`已删除配置预设「${preset.name}」。`);
+  }
+
+  private persistPreferences(): void {
+    saveLevelEditorPreferences({
+      configuration: this.model.configuration(),
+      simulationRunCount: this.simulationRunCount,
+      simulationReasoningLevel: this.simulationReasoningLevel,
+      presets: this.editorPresets,
+      selectedPresetId: this.selectedPresetId,
     });
   }
 

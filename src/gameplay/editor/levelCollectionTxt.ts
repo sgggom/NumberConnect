@@ -1,5 +1,5 @@
 import { PathCompletionSolver } from '../../game/pathCompletionSolver';
-import { encodeCompactLevelCollection } from '../../game/levelDataFormat';
+import { encodeCompactLevelCollection, encodeCompactLevelData } from '../../game/levelDataFormat';
 import { BoardShape, type LevelData } from '../../game/types';
 import { editorAlgorithmLabel } from './algorithms';
 import {
@@ -20,6 +20,14 @@ export interface LevelCollectionTxtOptions {
   reasoningLevel: SimulationReasoningLevel;
   onProgress?: (completed: number, total: number, levelId: number) => void;
 }
+
+export const formatLevelListTxt = (
+  levels: ReadonlyArray<LevelData>,
+): string => JSON.stringify(Object.fromEntries(
+  [...levels]
+    .sort((left, right) => left.levelId - right.levelId)
+    .map((level) => [`level_${level.levelId}`, encodeCompactLevelData(level)]),
+));
 
 const editorShapeOf = (shape: BoardShape): EditorShape => {
   if (shape === BoardShape.Diamond) return 'diamond';

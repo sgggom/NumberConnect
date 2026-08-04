@@ -1,4 +1,4 @@
-const LEVEL_EDITOR_VIEW_VERSION = '25';
+const LEVEL_EDITOR_VIEW_VERSION = '30';
 
 export const mountLevelEditorView = (host: HTMLElement): void => {
   const hasCurrentView = host.dataset.editorViewVersion === LEVEL_EDITOR_VIEW_VERSION
@@ -9,48 +9,27 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
   // Rebuild stale markup so newly added controls are available before binding.
   host.replaceChildren();
   host.dataset.editorViewVersion = LEVEL_EDITOR_VIEW_VERSION;
-  host.setAttribute('aria-labelledby', 'editor-title');
+  host.setAttribute('aria-labelledby', 'editor-info-title');
   host.innerHTML = `
-    <header class="editor-header">
-      <button id="editor-back-button" class="icon-button" aria-label="返回大厅">←</button>
-      <div>
-        <h2 id="editor-title">关卡编辑器</h2>
-      </div>
-      <div id="editor-save-id" class="save-chip">下次保存：6</div>
-    </header>
-
     <div class="editor-layout">
       <div class="editor-insights-column">
         <aside class="editor-info-panel" aria-labelledby="editor-info-title">
           <div class="editor-info-panel__header">
+            <button id="editor-back-button" class="icon-button editor-info-back-button" aria-label="返回大厅">←</button>
             <h3 id="editor-info-title">关卡信息</h3>
           </div>
-          <div class="editor-info-size">
-            <span>关卡尺寸</span>
-            <strong id="editor-info-size">8 × 8</strong>
+          <div class="editor-info-summary">
+            <div class="editor-info-size">
+              <span>关卡尺寸</span>
+              <strong id="editor-info-size">8 × 8</strong>
+            </div>
+            <div class="editor-info-hidden">
+              <span>隐藏占比</span>
+              <strong id="editor-info-hidden-ratio">0% · 0/0</strong>
+            </div>
           </div>
-          <section class="editor-info-group" aria-labelledby="editor-info-path-title">
-            <h4 id="editor-info-path-title">路径结构</h4>
-            <dl>
-              <div><dt>直角拐弯次数</dt><dd id="editor-info-right-turns">0</dd></div>
-              <div><dt>锐角拐弯次数</dt><dd id="editor-info-acute-turns">0</dd></div>
-              <div><dt>钝角拐弯次数</dt><dd id="editor-info-obtuse-turns">0</dd></div>
-              <div><dt>直线次数</dt><dd id="editor-info-straight">0</dd></div>
-              <div><dt>路径交叉次数</dt><dd id="editor-info-crossings">0</dd></div>
-            </dl>
-          </section>
-          <section class="editor-info-group" aria-labelledby="editor-info-visibility-title">
-            <h4 id="editor-info-visibility-title">显示与隐藏</h4>
-            <dl>
-              <div class="editor-info-row--stacked"><dt>隐藏占比</dt><dd id="editor-info-hidden-ratio">0% · 0/0</dd></div>
-              <div><dt>最长隐藏长度</dt><dd id="editor-info-hidden-run">0</dd></div>
-              <div><dt>最长显示长度</dt><dd id="editor-info-visible-run">0</dd></div>
-            </dl>
-          </section>
-          <p class="editor-info-note">统计以当前数字路径为准，并随编辑实时更新。</p>
-        </aside>
 
-        <section class="editor-simulation-panel" aria-labelledby="editor-simulation-title">
+          <section class="editor-simulation-panel editor-simulation-panel--embedded" aria-labelledby="editor-simulation-title">
           <div class="editor-simulation-panel__header">
             <div class="editor-simulation-launcher-copy">
               <div class="editor-simulation-launcher-heading">
@@ -89,7 +68,27 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
           <div id="editor-simulation-results" class="editor-simulation-results" aria-live="polite">
             <p class="editor-simulation-empty">生成完整路径后，即可模拟一次玩家体验。</p>
           </div>
-        </section>
+          </section>
+        </aside>
+
+        <aside class="editor-level-panel" aria-label="关卡列表">
+          <div class="editor-level-panel__header">
+            <div>
+              <h3>关卡列表</h3>
+            </div>
+            <span id="editor-level-count" class="editor-level-count">0 关</span>
+          </div>
+          <div class="editor-level-actions">
+            <button id="editor-level-add" class="button button--primary button--small" disabled>添加当前</button>
+            <button id="editor-level-batch" class="button button--secondary button--small" type="button" title="读取算法 4 配置 Excel，每行按生成次数批量追加关卡">批量生成</button>
+            <button id="editor-level-import" class="button button--secondary button--small">读取 JSON</button>
+            <button id="editor-level-export" class="button button--secondary button--small" title="按关卡 ID 导出仅包含 data 的 JSON 文本" disabled>导出 TXT</button>
+            <button id="editor-level-clear" class="button button--secondary button--small" type="button" title="清空关卡列表" disabled>清空列表</button>
+          </div>
+          <div id="editor-level-list" class="editor-level-list"></div>
+          <input id="editor-level-batch-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+          <input id="editor-level-file" type="file" accept=".json,application/json" hidden>
+        </aside>
       </div>
 
       <section class="editor-board-pane" aria-label="棋盘区域">
@@ -110,7 +109,7 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
           <div>
             <h3>关卡配置</h3>
           </div>
-          <label class="editor-algorithm-select">算法
+          <label class="editor-algorithm-select" aria-label="算法">
             <select id="editor-algorithm">
               <option value="algorithm-1">算法1</option>
               <option value="algorithm-2">算法2</option>
@@ -121,6 +120,24 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
           </label>
         </div>
         <div id="editor-algorithm-parameters" class="editor-algorithm-parameters"></div>
+        <section class="editor-presets" aria-labelledby="editor-presets-title">
+          <div class="editor-presets__header">
+            <b id="editor-presets-title">配置预设</b>
+            <small id="editor-preset-count">0 个</small>
+          </div>
+          <div class="editor-preset-picker">
+            <select id="editor-preset-select" aria-label="选择配置预设" disabled>
+              <option value="">暂无预设</option>
+            </select>
+            <button id="editor-preset-apply" class="button button--secondary button--small" type="button" disabled>应用</button>
+            <button id="editor-preset-delete" class="editor-preset-delete" type="button" disabled>删除</button>
+          </div>
+          <div class="editor-preset-save">
+            <input id="editor-preset-name" type="text" maxlength="30" autocomplete="off" placeholder="输入预设名称" aria-label="配置预设名称">
+            <button id="editor-preset-save" class="button button--secondary button--small" type="button">保存当前</button>
+          </div>
+          <small class="editor-presets__hint">保存形状、尺寸、算法及其参数；选中预设后也可改名或更新。</small>
+        </section>
         <div class="editor-toolbar">
           <label>手动编辑
             <select id="editor-manual-mode">
@@ -171,36 +188,16 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
             </div>
             <small class="editor-image-import__shortcut">直接 Ctrl+V：图片使用上次选择，JSON 始终按完整关卡导入</small>
           </div>
-          <div class="editor-board-actions">
-            <button id="editor-fill-button" class="button button--secondary button--small">填满棋盘</button>
-            <button id="editor-clear-button" class="button button--secondary button--small">清空棋盘</button>
-            <button id="editor-undo-delete-button" class="button button--secondary button--small" title="Ctrl+Z" disabled>撤销删除</button>
-          </div>
         </div>
         <div class="editor-actions">
-          <button id="editor-playtest-button" class="button button--secondary" disabled>试玩关卡</button>
+          <button id="editor-fill-button" class="button button--secondary button--small">填满棋盘</button>
+          <button id="editor-clear-button" class="button button--secondary button--small">清空棋盘</button>
           <button id="editor-generate-path-button" class="button button--secondary">生成路径</button>
-          <button id="editor-save-button" class="button button--primary" disabled>添加到列表</button>
+          <button id="editor-undo-delete-button" class="button button--secondary button--small" title="Ctrl+Z" disabled>撤销删除</button>
+          <button id="editor-playtest-button" class="button button--secondary" disabled>试玩关卡</button>
         </div>
       </aside>
 
-      <aside class="editor-level-panel" aria-label="关卡列表">
-        <div class="editor-level-panel__header">
-          <div>
-            <h3>关卡列表</h3>
-          </div>
-          <span id="editor-level-count" class="editor-level-count">0 关</span>
-        </div>
-        <div class="editor-level-actions">
-          <button id="editor-level-add" class="button button--primary button--small" disabled>添加当前</button>
-          <button id="editor-level-batch" class="button button--secondary button--small" type="button" title="读取算法 4 配置 Excel，每行按生成次数批量追加关卡">批量生成</button>
-          <button id="editor-level-import" class="button button--secondary button--small">读取 JSON</button>
-          <button id="editor-level-export" class="button button--secondary button--small" title="逐关模拟并导出 Tab 分隔文本，每关一行">导出 TXT</button>
-        </div>
-        <div id="editor-level-list" class="editor-level-list"></div>
-        <input id="editor-level-batch-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
-        <input id="editor-level-file" type="file" accept=".json,application/json" hidden>
-      </aside>
     </div>
 
     <dialog id="editor-batch-progress-dialog" class="editor-batch-dialog" aria-labelledby="editor-batch-dialog-title" aria-describedby="editor-batch-dialog-message">

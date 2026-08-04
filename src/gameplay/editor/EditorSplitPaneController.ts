@@ -2,7 +2,7 @@ const clamp = (value: number, min: number, max: number): number => Math.min(max,
 const STACKED_LAYOUT_BREAKPOINT = 1260;
 
 export class EditorSplitPaneController {
-  private readonly minimumSidebarWidth = 260;
+  private readonly minimumSidebarWidth = 420;
   private readonly minimumBoardWidth = 380;
   private sidebarWidth?: number;
   private activePointerId?: number;
@@ -49,7 +49,7 @@ export class EditorSplitPaneController {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight' && event.key !== 'Home') return;
     event.preventDefault();
     if (event.key === 'Home') {
-      this.setSidebarWidth(340);
+      this.setSidebarWidth(480);
       return;
     }
     const direction = event.key === 'ArrowLeft' ? 1 : -1;
@@ -60,7 +60,7 @@ export class EditorSplitPaneController {
     const bounds = this.layout.getBoundingClientRect();
     const gap = this.columnGap();
     this.setSidebarWidth(
-      bounds.right - clientX - this.separator.offsetWidth * 0.5 - this.levelPanelWidth() - gap * 2,
+      bounds.right - clientX - this.separator.offsetWidth * 0.5 - gap,
     );
   }
 
@@ -71,8 +71,7 @@ export class EditorSplitPaneController {
         - this.minimumBoardWidth
         - this.infoPanelWidth()
         - this.separator.offsetWidth
-        - this.levelPanelWidth()
-        - this.columnGap() * 4,
+        - this.columnGap() * 3,
     );
     this.sidebarWidth = clamp(requestedWidth, this.minimumSidebarWidth, maximum);
     this.layout.style.setProperty('--editor-sidebar-width', `${this.sidebarWidth}px`);
@@ -81,11 +80,7 @@ export class EditorSplitPaneController {
 
   private currentSidebarWidth(): number {
     const sidebar = this.layout.querySelector<HTMLElement>('.editor-sidebar');
-    return sidebar?.getBoundingClientRect().width ?? 340;
-  }
-
-  private levelPanelWidth(): number {
-    return this.layout.querySelector<HTMLElement>('.editor-level-panel')?.getBoundingClientRect().width ?? 280;
+    return sidebar?.getBoundingClientRect().width ?? 480;
   }
 
   private infoPanelWidth(): number {
@@ -100,8 +95,7 @@ export class EditorSplitPaneController {
     - this.minimumBoardWidth
     - this.infoPanelWidth()
     - this.separator.offsetWidth
-    - this.levelPanelWidth()
-    - this.columnGap() * 4): void {
+    - this.columnGap() * 3): void {
     this.separator.setAttribute('aria-valuemin', String(this.minimumSidebarWidth));
     this.separator.setAttribute('aria-valuemax', String(Math.max(this.minimumSidebarWidth, Math.round(maximum))));
     this.separator.setAttribute('aria-valuenow', String(Math.round(width)));

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { BoardShape, type LevelData } from '../../game/types';
 import { loadBuiltInLevels } from '../../game/storage';
-import { formatLevelCollectionTxt } from './levelCollectionTxt';
+import { formatLevelCollectionTxt, formatLevelListTxt } from './levelCollectionTxt';
 
 const serpentinePath = (rows: number, columns: number) => Array.from(
   { length: rows * columns },
@@ -49,6 +49,19 @@ const createLevel = (
 };
 
 describe('level collection TXT export', () => {
+  it('exports only level ids and compact data in the reference JSON shape', () => {
+    const text = formatLevelListTxt([
+      createLevel(8, 3, 4, BoardShape.Rectangle),
+      createLevel(3, 3, 3, BoardShape.Square),
+    ]);
+
+    expect(JSON.parse(text)).toEqual({
+      level_3: { data: [[1, 2, -3], [6, -5, 4], [7, 8, 9]] },
+      level_8: { data: [[1, 2, -3, 4], [8, 7, 6, -5], [9, 10, 11, 12]] },
+    });
+    expect(text).toBe('{"level_3":{"data":[[1,2,-3],[6,-5,4],[7,8,9]]},"level_8":{"data":[[1,2,-3,4],[8,7,6,-5],[9,10,11,12]]}}');
+  });
+
   it('writes one tab-separated line per level with id, formation, and shape first', async () => {
     const progress = vi.fn();
     const text = await formatLevelCollectionTxt([

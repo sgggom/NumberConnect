@@ -1,6 +1,7 @@
-import { BoardShape, type LevelData } from '../../game/types';
+import { BoardShape, type LevelAlgorithmData, type LevelData } from '../../game/types';
 import {
   DEFAULT_EDITOR_ALGORITHM_ID,
+  EDITOR_ALGORITHMS,
   createEditorAlgorithm,
   normalizeEditorAlgorithm,
   resolveEditorAlgorithmForShape,
@@ -45,6 +46,26 @@ interface DeletionUndoSnapshot {
   targetHiddenCount?: number;
 }
 
+export interface LevelEditorConfiguration {
+  shape: EditorShape;
+  squareSize: number;
+  diamondSize: number;
+  hexSize: number;
+  rectangleColumns: number;
+  rectangleRows: number;
+  algorithm: EditorAlgorithmSelection;
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> => (
+  typeof value === 'object' && value !== null
+);
+
+const normalizedSize = (value: unknown, fallback: number, max: number): number => (
+  Number.isFinite(Number(value))
+    ? clamp(Math.floor(Number(value)), MIN_EDITOR_SIZE, max)
+    : fallback
+);
+
 export class LevelEditorModel {
   private currentShape: EditorShape = 'square';
   private squareSize = 8;
@@ -73,6 +94,54 @@ export class LevelEditorModel {
   public get hiddenCellKeys(): ReadonlySet<string> { return this.manualHiddenCells; }
   public get targetHiddenCount(): number | undefined { return this.generatedTargetHiddenCount; }
   public get canUndoDeletion(): boolean { return this.deletionUndo !== undefined; }
+
+  public configuration(): LevelEditorConfiguration {
+    return {
+      shape: this.currentShape,
+      squareSize: this.squareSize,
+      diamondSize: this.diamondSize,
+      hexSize: this.hexSize,
+      rectangleColumns: this.rectangleColumns,
+      rectangleRows: this.rectangleRows,
+      algorithm: normalizeEditorAlgorithm(serializeEditorAlgorithm(this.algorithm)),
+    };
+  }
+
+  public applyConfiguration(value: unknown): void {
+    if (!isRecord(value)) return;
+    if (
+      value.shape === 'square'
+      || value.shape === 'diamond'
+      || value.shape === 'rectangle'
+      || value.shape === 'hex'
+    ) {
+      this.currentShape = value.shape;
+    }
+    this.squareSize = normalizedSize(value.squareSize, this.squareSize, MAX_EDITOR_SIZE);
+    this.diamondSize = normalizedSize(value.diamondSize, this.diamondSize, MAX_DIAMOND_SIZE);
+    this.hexSize = normalizedSize(value.hexSize, this.hexSize, MAX_HEX_SIZE);
+    this.rectangleColumns = normalizedSize(
+      value.rectangleColumns,
+      this.rectangleColumns,
+      MAX_EDITOR_SIZE,
+    );
+    this.rectangleRows = normalizedSize(value.rectangleRows, this.rectangleRows, MAX_EDITOR_SIZE);
+
+    const storedAlgorithm = value.algorithm;
+    if (
+      isRecord(storedAlgorithm)
+      && typeof storedAlgorithm.id === 'string'
+      && EDITOR_ALGORITHMS.some(({ id }) => id === storedAlgorithm.id)
+    ) {
+      const algorithm: LevelAlgorithmData = {
+        id: storedAlgorithm.id,
+        parameters: isRecord(storedAlgorithm.parameters) ? storedAlgorithm.parameters : {},
+      };
+      this.algorithm = normalizeEditorAlgorithm(algorithm);
+    }
+    this.trimCells();
+    this.invalidatePath();
+  }
 
   public reset(): void {
     this.deletionUndo = undefined;
