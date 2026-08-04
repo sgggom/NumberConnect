@@ -85,6 +85,7 @@ import {
   playBeadShowcaseColorsForBoard,
   renderPlayBeadShowcase,
   savePlayBeadShowcaseProgress,
+  shouldUsePlayBeadShowcase,
   type PlayBeadShowcasePattern,
 } from './gameplay/beads/playBeadShowcase';
 import {
@@ -1726,7 +1727,7 @@ class NumberConnectApp {
       levelId: level.levelId,
       stage: this.mode === 'endless' ? this.stage : undefined,
     };
-    const usesPlayShowcase = this.playContext !== 'bead' && this.playContext !== 'collection';
+    const usesPlayShowcase = shouldUsePlayBeadShowcase(this.playContext);
     return {
       level,
       hiddenCells: level.hiddenCells === undefined
@@ -1792,6 +1793,14 @@ class NumberConnectApp {
   }
 
   private preparePlayBeadShowcase(level: LevelData): void {
+    const isEditorPlaytest = this.playContext === 'editor-playtest';
+    const showcaseSpacer = this.playBeadShowcaseArt.closest<HTMLElement>('.play-top-spacer');
+    if (showcaseSpacer) showcaseSpacer.hidden = isEditorPlaytest;
+    if (isEditorPlaytest) {
+      this.currentPlayBeadReward = [];
+      return;
+    }
+
     if (this.playBeadShowcaseCollected >= this.playBeadShowcasePattern.pixels.length) {
       this.playBeadShowcasePattern = nextPlayBeadShowcasePattern(this.playBeadShowcasePattern);
       this.playBeadShowcaseCollected = 0;
@@ -2504,7 +2513,7 @@ class NumberConnectApp {
       return;
     }
     if (this.playContext === 'editor-playtest') {
-      await this.showPlayBeadCompletion(false);
+      await this.boardScene.showCompletion();
       if (this.playContext === 'editor-playtest') this.showEditorPlaytestResult();
       return;
     }
