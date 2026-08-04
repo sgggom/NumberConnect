@@ -5,6 +5,7 @@ import {
   nextPlayBeadShowcasePattern,
   playBeadShowcaseColorsForBoard,
   playBeadShowcasePatternFor,
+  shouldUsePlayBeadShowcase,
 } from './playBeadShowcase';
 
 describe('play bead showcase', () => {
@@ -29,6 +30,14 @@ describe('play bead showcase', () => {
     const pixels = PLAY_BEAD_SHOWCASE_PATTERNS[1].pixels.slice(40, 76);
     expect(playBeadShowcaseColorsForBoard(pixels, 36)).toHaveLength(36);
     expect(playBeadShowcaseColorsForBoard(pixels, 96)).toHaveLength(96);
+  });
+
+  it('disables the showcase for editor playtests', () => {
+    expect(shouldUsePlayBeadShowcase('editor-playtest')).toBe(false);
+    expect(shouldUsePlayBeadShowcase('bead')).toBe(false);
+    expect(shouldUsePlayBeadShowcase('collection')).toBe(false);
+    expect(shouldUsePlayBeadShowcase('normal')).toBe(true);
+    expect(shouldUsePlayBeadShowcase('daily')).toBe(true);
   });
 
   it('loads saved progress and advances to the next illustration', () => {
