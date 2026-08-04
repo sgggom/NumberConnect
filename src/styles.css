@@ -1166,6 +1166,8 @@ html[data-theme="night"] .primary-tab-button.is-active::before { background: var
     radial-gradient(circle at 92% 88%, rgba(204, 181, 244, .3), transparent 36%),
     linear-gradient(160deg, #fbfdff 0%, #f2f6fb 55%, #f8f5fc 100%);
 }
+.play-screen.is-editor-playtest { grid-template-rows: auto minmax(0, 1fr) auto; }
+.play-screen.is-editor-playtest .play-top-zone { grid-template-rows: auto; }
 .play-top-zone { min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); }
 .play-top-spacer { min-height: 0; padding: 5px 34px 0; display: grid; place-items: center; container-type: size; pointer-events: none; }
 .play-bead-showcase {
