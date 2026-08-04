@@ -1795,6 +1795,7 @@ class NumberConnectApp {
   private preparePlayBeadShowcase(level: LevelData): void {
     const isEditorPlaytest = this.playContext === 'editor-playtest';
     const showcaseSpacer = this.playBeadShowcaseArt.closest<HTMLElement>('.play-top-spacer');
+    this.playScreen.classList.toggle('is-editor-playtest', isEditorPlaytest);
     if (showcaseSpacer) showcaseSpacer.hidden = isEditorPlaytest;
     if (isEditorPlaytest) {
       this.currentPlayBeadReward = [];
