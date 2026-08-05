@@ -9,6 +9,7 @@ export interface EditorAlgorithmContext {
   generationIndex: number;
   fallbackPath?: ReadonlyArray<EditorCell>;
   searchMode?: 'quality' | 'realtime';
+  onProgress?: (progress: number) => void;
 }
 
 export interface Algorithm1Parameters {

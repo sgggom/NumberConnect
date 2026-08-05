@@ -28,9 +28,13 @@ export interface PlayBeadShowcaseProgress {
 }
 
 export type PlayBeadShowcaseContext = 'normal' | 'collection' | 'daily' | 'editor-playtest' | 'bead';
+export type PlayBeadShowcaseMode = 'normal' | 'endless';
 
-export const shouldUsePlayBeadShowcase = (context: PlayBeadShowcaseContext): boolean => (
-  context !== 'bead' && context !== 'collection' && context !== 'editor-playtest'
+export const shouldUsePlayBeadShowcase = (
+  context: PlayBeadShowcaseContext,
+  mode: PlayBeadShowcaseMode,
+): boolean => (
+  context === 'normal' && mode === 'normal'
 );
 
 const browserStorage = (): StorageLike | undefined => {

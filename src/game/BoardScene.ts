@@ -5,6 +5,11 @@ import {
   calculateHeldCellScore,
 } from './boardNeighborhood';
 import {
+  boardArtworkSourceRect,
+  sampleBoardArtworkAverageColors,
+  type BoardArtworkSourceRect,
+} from './boardArtwork';
+import {
   baseCellRadiusForStep,
   CELL_GLOW_RADIUS_MARGIN,
   CELL_GLOW_STROKE_WIDTH,
@@ -28,18 +33,21 @@ import {
   backgroundUrl,
   cellKey,
   usesClickInput,
+  type BoardArtworkInput,
   type BoardSessionInput,
   type Cell,
 } from './types';
 import { levelBallColor } from './levelTheme';
 
 type CellShape = Phaser.GameObjects.Arc | Phaser.GameObjects.Polygon;
+type AlphaGameObject = Phaser.GameObjects.GameObject & Phaser.GameObjects.Components.Alpha;
 
 interface CellView {
   cell: Cell;
   index: number;
   x: number;
   y: number;
+  color: number;
   liquidRing: CellShape;
   circle: CellShape;
   hollowRing: CellShape;
@@ -47,6 +55,12 @@ interface CellView {
   label: Phaser.GameObjects.Text;
   questionMark: Phaser.GameObjects.Text;
   questionShown: boolean;
+}
+
+interface ArtworkColorTileView {
+  column: number;
+  row: number;
+  rectangle: Phaser.GameObjects.Rectangle;
 }
 
 interface BoardView {
@@ -65,6 +79,23 @@ interface BoardView {
   panelWidth: number;
   panelHeight: number;
   ballColor: number;
+  artworkEnabled: boolean;
+  artworkColorTiles: ArtworkColorTileView[];
+  artworkColumns: number;
+  artworkRows: number;
+  artworkImage?: Phaser.GameObjects.Image;
+}
+
+export interface BoardArtworkTextureRegistration {
+  key: string;
+  url: string;
+}
+
+interface ResolvedBoardArtwork {
+  input: BoardArtworkInput;
+  source: BoardArtworkSourceRect;
+  colors: readonly number[];
+  texture: Phaser.Textures.Texture;
 }
 
 const COLORS = {
@@ -99,6 +130,22 @@ const HIDDEN_QUESTION_HIDE_DURATION_MS = 120;
 
 const colorHex = (color: number): string =>
   `#${(color & 0xffffff).toString(16).padStart(6, '0')}`;
+
+const mixColors = (first: number, second: number): number => {
+  const red = Math.round((((first >> 16) & 0xff) + ((second >> 16) & 0xff)) * 0.5);
+  const green = Math.round((((first >> 8) & 0xff) + ((second >> 8) & 0xff)) * 0.5);
+  const blue = Math.round(((first & 0xff) + (second & 0xff)) * 0.5);
+  return red << 16 | green << 8 | blue;
+};
+
+const contrastTextForColor = (color: number): string => {
+  const red = (color >> 16) & 0xff;
+  const green = (color >> 8) & 0xff;
+  const blue = color & 0xff;
+  return red * 0.299 + green * 0.587 + blue * 0.114 > 158
+    ? '#101923'
+    : '#ffffff';
+};
 
 const liquidBallRadius = (radius: number): number => radius + Math.max(1.5, radius * 0.055);
 
@@ -276,6 +323,8 @@ export class BoardScene extends Phaser.Scene {
   private cellSelectionHandler?: (cell: Cell) => void;
   private autoClickTimer?: Phaser.Time.TimerEvent;
   private boardViewportScroll = { x: 0.5, y: 0.5 };
+  private readonly artworkTextures = new Map<string, string>();
+  private readonly artworkColorCache = new Map<string, readonly number[]>();
 
   public constructor() {
     super('board');
@@ -283,6 +332,10 @@ export class BoardScene extends Phaser.Scene {
 
   public whenReady(): Promise<void> {
     return this.readyPromise;
+  }
+
+  public registerArtworkTextures(textures: readonly BoardArtworkTextureRegistration[]): void {
+    textures.forEach(({ key, url }) => this.artworkTextures.set(key, url));
   }
 
   public preload(): void {
@@ -296,6 +349,7 @@ export class BoardScene extends Phaser.Scene {
     for (const name of COLLECTION_ARTWORK_NAMES) {
       this.load.image(`background-${name}`, `./level-backgrounds/${name}.png`);
     }
+    this.artworkTextures.forEach((url, key) => this.load.image(key, url));
   }
 
   public create(): void {
@@ -452,6 +506,36 @@ export class BoardScene extends Phaser.Scene {
       x: canvasBounds.left + (gameX / Math.max(1, this.scale.width)) * canvasBounds.width,
       y: canvasBounds.top + (gameY / Math.max(1, this.scale.height)) * canvasBounds.height,
     };
+  }
+
+  public artworkClientBounds(): {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  } | undefined {
+    const image = this.view?.artworkImage;
+    const root = this.view?.root;
+    if (!image || !root) return undefined;
+    const canvasBounds = this.sys.game.canvas.getBoundingClientRect();
+    const rootScaleX = Math.abs(root.scaleX);
+    const rootScaleY = Math.abs(root.scaleY);
+    const gameWidth = image.displayWidth * rootScaleX;
+    const gameHeight = image.displayHeight * rootScaleY;
+    const gameCenterX = root.x + image.x * root.scaleX;
+    const gameCenterY = root.y + image.y * root.scaleY;
+    const clientScaleX = canvasBounds.width / Math.max(1, this.scale.width);
+    const clientScaleY = canvasBounds.height / Math.max(1, this.scale.height);
+    return {
+      left: canvasBounds.left + (gameCenterX - gameWidth * 0.5) * clientScaleX,
+      top: canvasBounds.top + (gameCenterY - gameHeight * 0.5) * clientScaleY,
+      width: gameWidth * clientScaleX,
+      height: gameHeight * clientScaleY,
+    };
+  }
+
+  public setArtworkCompletionVisible(visible: boolean): void {
+    this.view?.artworkImage?.setVisible(visible);
   }
 
   public setBoardViewportPosition(scrollX: number, scrollY: number): void {
@@ -711,6 +795,11 @@ export class BoardScene extends Phaser.Scene {
       return;
     }
 
+    if (view.artworkEnabled) {
+      await this.showArtworkCompletion(view);
+      return;
+    }
+
     if (!revealImage) {
       await this.showSimpleCompletion(view);
       return;
@@ -801,6 +890,126 @@ export class BoardScene extends Phaser.Scene {
       });
     });
     pieces.forEach((piece) => piece.destroy());
+  }
+
+  private async showArtworkCompletion(view: BoardView): Promise<void> {
+    const image = view.artworkImage;
+    const colorTiles = view.artworkColorTiles.map(({ rectangle }) => rectangle);
+    if (!image || colorTiles.length === 0) {
+      await this.showSimpleCompletion(view);
+      return;
+    }
+
+    const foreground: AlphaGameObject[] = [
+      view.solutionLines,
+      view.lines,
+      view.pointerLine,
+      view.choiceScore,
+    ];
+    view.cells.forEach((cell) => foreground.push(
+      cell.liquidRing,
+      cell.circle,
+      cell.hollowRing,
+      cell.glow,
+      cell.label,
+      cell.questionMark,
+    ));
+    this.tweens.killTweensOf(foreground);
+    this.tweens.killTweensOf(colorTiles);
+    this.tweens.killTweensOf(image);
+    this.fitArtworkCompletionImage(view, image);
+
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      foreground.forEach((object) => object.setAlpha(0));
+      colorTiles.forEach((tile) => tile.setAlpha(1));
+      await new Promise<void>((resolve) => {
+        this.time.delayedCall(1000, resolve);
+      });
+      colorTiles.forEach((tile) => tile.setAlpha(0));
+      image.setAlpha(1);
+      return;
+    }
+
+    await Promise.all([
+      new Promise<void>((resolve) => {
+        this.tweens.add({
+          targets: foreground,
+          alpha: 0,
+          duration: 240,
+          ease: 'Sine.easeIn',
+          onComplete: () => resolve(),
+        });
+      }),
+      new Promise<void>((resolve) => {
+        this.tweens.add({
+          targets: colorTiles,
+          alpha: 1,
+          duration: 280,
+          ease: 'Sine.easeOut',
+          onComplete: () => resolve(),
+        });
+      }),
+    ]);
+
+    await new Promise<void>((resolve) => {
+      this.time.delayedCall(1000, resolve);
+    });
+
+    await Promise.all([
+      new Promise<void>((resolve) => {
+        this.tweens.add({
+          targets: image,
+          alpha: 1,
+          duration: 1400,
+          ease: 'Sine.easeInOut',
+          onComplete: () => resolve(),
+        });
+      }),
+      new Promise<void>((resolve) => {
+        this.tweens.add({
+          targets: colorTiles,
+          alpha: 0,
+          delay: 260,
+          duration: 1140,
+          ease: 'Sine.easeInOut',
+          onComplete: () => resolve(),
+        });
+      }),
+    ]);
+  }
+
+  private fitArtworkCompletionImage(
+    view: BoardView,
+    image: Phaser.GameObjects.Image,
+  ): void {
+    const rootScaleX = Math.max(0.001, Math.abs(view.root.scaleX));
+    const rootScaleY = Math.max(0.001, Math.abs(view.root.scaleY));
+    const availableWidth = Math.max(1, this.scale.width - BOARD_HORIZONTAL_PADDING * 2)
+      / rootScaleX;
+    const availableHeight = Math.max(1, this.scale.height - BOARD_VERTICAL_PADDING * 2)
+      / rootScaleY;
+    const imageScale = Math.min(
+      availableWidth / Math.max(1, image.width),
+      availableHeight / Math.max(1, image.height),
+    );
+    image
+      .setDisplaySize(image.width * imageScale, image.height * imageScale)
+      .setPosition(
+        (this.scale.width * 0.5 - view.root.x) / rootScaleX,
+        (this.scale.height * 0.5 - view.root.y) / rootScaleY,
+      );
+    const tileWidth = image.displayWidth / Math.max(1, view.artworkColumns);
+    const tileHeight = image.displayHeight / Math.max(1, view.artworkRows);
+    const imageLeft = image.x - image.displayWidth * 0.5;
+    const imageTop = image.y - image.displayHeight * 0.5;
+    view.artworkColorTiles.forEach(({ column, row, rectangle }) => {
+      rectangle
+        .setPosition(
+          imageLeft + (column + 0.5) * tileWidth,
+          imageTop + (row + 0.5) * tileHeight,
+        )
+        .setDisplaySize(tileWidth + 1, tileHeight + 1);
+    });
   }
 
   private async showSimpleCompletion(view: BoardView): Promise<void> {
@@ -1078,6 +1287,52 @@ export class BoardScene extends Phaser.Scene {
     view.root.setPosition(layout.rootX, layout.rootY + offsetY);
   }
 
+  private resolveBoardArtwork(
+    session: BoardSessionInput,
+    fallbackColor: number,
+  ): ResolvedBoardArtwork | undefined {
+    const input = session.artwork;
+    if (!input || !this.textures.exists(input.textureKey)) return undefined;
+    const texture = this.textures.get(input.textureKey);
+    const frame = texture.get();
+    const source = boardArtworkSourceRect(frame.realWidth, frame.realHeight, input);
+    const cacheKey = [
+      input.textureKey,
+      input.sourceColumns,
+      input.sourceRows,
+      input.sourceIndex,
+      session.level.columns,
+      session.level.rows,
+    ].join(':');
+    let colors = this.artworkColorCache.get(cacheKey);
+    if (!colors) {
+      try {
+        colors = sampleBoardArtworkAverageColors(
+          texture.getSourceImage() as CanvasImageSource,
+          source,
+          session.level.rows,
+          session.level.columns,
+          fallbackColor,
+        );
+      } catch {
+        colors = Array<number>(session.level.rows * session.level.columns).fill(fallbackColor);
+      }
+      this.artworkColorCache.set(cacheKey, colors);
+    }
+    return { input, source, colors, texture };
+  }
+
+  private artworkFrameName(
+    artwork: BoardArtworkInput,
+  ): string {
+    return [
+      'board-artwork',
+      artwork.sourceColumns,
+      artwork.sourceRows,
+      artwork.sourceIndex,
+    ].join('-');
+  }
+
   private buildView(session: BoardSessionInput, offsetY: number): BoardView {
     const width = Math.max(this.scale.width, 320);
     const height = Math.max(this.scale.height, 1);
@@ -1085,6 +1340,7 @@ export class BoardScene extends Phaser.Scene {
     const centerX = 0;
     const centerY = height * 0.5;
     const ballColor = levelBallColor(session.level.levelId);
+    const artwork = this.resolveBoardArtwork(session, ballColor);
     const positions = new Map<string, { x: number; y: number }>();
     const isHex = session.level.boardShape === BoardShape.Hex;
     const raw = session.level.activeCells.map((cell) => ({
@@ -1109,7 +1365,14 @@ export class BoardScene extends Phaser.Scene {
       Math.max(1, height - BOARD_VERTICAL_PADDING * 2),
       isHex,
     );
-    const step = Math.min(horizontalStep, verticalStep);
+    let step = Math.min(horizontalStep, verticalStep);
+    if (artwork && !isHex) {
+      step = Math.min(
+        step,
+        Math.max(1, width - BOARD_HORIZONTAL_PADDING * 2) / Math.max(1, session.level.columns),
+        Math.max(1, height - BOARD_VERTICAL_PADDING * 2) / Math.max(1, session.level.rows),
+      );
+    }
     const baseRadius = baseCellRadiusForStep(step, isHex);
     const radius = baseRadius * CELL_RADIUS_SCALE;
     const numberFontSize = numberFontSizeForBoard(
@@ -1124,25 +1387,83 @@ export class BoardScene extends Phaser.Scene {
       });
     });
 
-    const panelWidth = Math.min(
-      Math.max(1, width - BOARD_HORIZONTAL_PADDING * 2),
-      rangeX * step + radius * 2,
-    );
-    const panelHeight = Math.min(
-      Math.max(1, height - BOARD_VERTICAL_PADDING * 2),
-      rangeY * step + radius * 2,
-    );
+    const panelWidth = artwork
+      ? Math.min(
+          Math.max(1, width - BOARD_HORIZONTAL_PADDING * 2),
+          session.level.columns * step,
+        )
+      : Math.min(
+          Math.max(1, width - BOARD_HORIZONTAL_PADDING * 2),
+          rangeX * step + radius * 2,
+        );
+    const panelHeight = artwork
+      ? Math.min(
+          Math.max(1, height - BOARD_VERTICAL_PADDING * 2),
+          session.level.rows * step,
+        )
+      : Math.min(
+          Math.max(1, height - BOARD_VERTICAL_PADDING * 2),
+          rangeY * step + radius * 2,
+        );
     const root = this.add.container(viewportCenterX, offsetY);
-    const panel = this.add.rectangle(centerX, centerY, panelWidth, panelHeight, 0xffffff, 0);
+    const panel = this.add.rectangle(
+      centerX,
+      centerY,
+      panelWidth,
+      panelHeight,
+      0xffffff,
+      0,
+    );
     const solutionLines = this.add.graphics();
     const lines = this.add.graphics();
     const pointerLine = this.add.graphics();
-    root.add([panel, solutionLines, lines, pointerLine]);
+    root.add(panel);
+    const artworkColorTiles: ArtworkColorTileView[] = [];
+    if (artwork && !isHex) {
+      session.level.activeCells.forEach((cell) => {
+        const position = positions.get(cellKey(cell));
+        if (!position) return;
+        const color = artwork.colors[cell.y * session.level.columns + cell.x] ?? ballColor;
+        const tile = this.add.rectangle(
+          position.x,
+          position.y,
+          step + 1,
+          step + 1,
+          color,
+          1,
+        ).setAlpha(0);
+        artworkColorTiles.push({
+          column: cell.x,
+          row: cell.y,
+          rectangle: tile,
+        });
+      });
+      root.add(artworkColorTiles.map(({ rectangle }) => rectangle));
+    }
+    let artworkImage: Phaser.GameObjects.Image | undefined;
+    if (artwork) {
+      const frameName = this.artworkFrameName(artwork.input);
+      if (!artwork.texture.has(frameName)) {
+        artwork.texture.add(
+          frameName,
+          0,
+          artwork.source.x,
+          artwork.source.y,
+          artwork.source.width,
+          artwork.source.height,
+        );
+      }
+      artworkImage = this.add.image(centerX, centerY, artwork.input.textureKey, frameName)
+        .setAlpha(0);
+      root.add(artworkImage);
+    }
+    root.add([solutionLines, lines, pointerLine]);
     const cells = new Map<string, CellView>();
 
     session.level.solutionPath.forEach((cell, index) => {
       const position = positions.get(cellKey(cell));
       if (!position) return;
+      const cellColor = artwork?.colors[cell.y * session.level.columns + cell.x] ?? ballColor;
       const glowRadius = radius + CELL_GLOW_RADIUS_MARGIN;
       const glow: CellShape = isHex
         ? this.add.polygon(position.x, position.y, hexagonPoints(glowRadius), COLORS.hint, 0)
@@ -1164,6 +1485,16 @@ export class BoardScene extends Phaser.Scene {
       hollowRing.setVisible(false);
       if (isHex) {
         circle.setInteractive((circle as Phaser.GameObjects.Polygon).geom, Phaser.Geom.Polygon.Contains);
+      } else if (artwork) {
+        circle.setInteractive(
+          new Phaser.Geom.Rectangle(
+            radius - step * 0.5,
+            radius - step * 0.5,
+            step,
+            step,
+          ),
+          Phaser.Geom.Rectangle.Contains,
+        );
       } else {
         circle.setInteractive(
           new Phaser.Geom.Circle(radius, radius, radius),
@@ -1207,6 +1538,7 @@ export class BoardScene extends Phaser.Scene {
         index,
         x: position.x,
         y: position.y,
+        color: cellColor,
         liquidRing,
         circle,
         hollowRing,
@@ -1244,6 +1576,11 @@ export class BoardScene extends Phaser.Scene {
       panelWidth,
       panelHeight,
       ballColor,
+      artworkEnabled: artwork !== undefined,
+      artworkColorTiles,
+      artworkColumns: session.level.columns,
+      artworkRows: session.level.rows,
+      artworkImage,
     };
   }
 
@@ -1277,10 +1614,12 @@ export class BoardScene extends Phaser.Scene {
     const dragQuestionCenter = this.isDrawing && this.connection?.activeIndex !== undefined
       ? path[this.connection.activeIndex]
       : undefined;
+    const artworkEnabled = this.view.artworkEnabled;
     let activeHintCell: CellView | undefined;
 
     this.view.cells.forEach((cellView, key) => {
-      const selected = this.connection?.isNodeConnected(cellView.index) === true
+      const connected = this.connection?.isNodeConnected(cellView.index) === true;
+      const selected = connected
         || this.connection?.activeIndex === cellView.index;
       const numberVisible = this.solutionRevealed || this.connection?.isVisible(cellView.index) === true;
       const revealedHidden = this.solutionRevealed
@@ -1292,26 +1631,44 @@ export class BoardScene extends Phaser.Scene {
         cellView.cell,
         concealed,
       );
+      const cellColor = artworkEnabled && connected
+        ? cellView.color
+        : this.view!.ballColor;
       cellView.label.setText(String(this.connection?.displayNumber(cellView.index) ?? cellView.index + 1));
-      cellView.liquidRing.setFillStyle(this.view!.ballColor, selected ? 1 : 0);
-      cellView.circle.setFillStyle(this.view!.ballColor, concealed ? 0 : 1);
+      cellView.liquidRing.setFillStyle(cellColor, selected ? 1 : 0);
+      cellView.circle.setFillStyle(cellColor, concealed ? 0 : 1);
       cellView.hollowRing.setStrokeStyle(
         hiddenCellRingWidth(this.view!.radius),
-        this.view!.ballColor,
+        cellColor,
         1,
       );
       cellView.hollowRing.setVisible(concealed);
       cellView.label.setVisible(numberVisible);
       cellView.label.setAlpha(1);
       cellView.label.setColor(
-        selected
-          ? COLORS.selectedText
-          : revealedHidden
-            ? COLORS.revealedHiddenText
-            : COLORS.text,
+        artworkEnabled && connected
+          ? contrastTextForColor(cellColor)
+          : selected
+            ? COLORS.selectedText
+            : revealedHidden
+              ? COLORS.revealedHiddenText
+              : COLORS.text,
       );
+      if (artworkEnabled) {
+        const labelColor = connected ? contrastTextForColor(cellColor) : '#ffffff';
+        cellView.label.setStroke(
+          labelColor === '#ffffff' ? '#101923' : '#ffffff',
+          Math.max(2, this.view!.numberFontSize * 0.085),
+        );
+      }
       cellView.label.setFontStyle(revealedHidden ? 'italic 900' : '900');
-      cellView.questionMark.setColor(colorHex(this.view!.ballColor));
+      cellView.questionMark.setColor(colorHex(cellColor));
+      if (artworkEnabled) {
+        cellView.questionMark.setStroke(
+          contrastTextForColor(cellColor),
+          Math.max(1.5, this.view!.numberFontSize * 0.065),
+        );
+      }
       this.setQuestionMarkVisible(cellView, showQuestion);
       const hint = cellView.index === nextHint?.index;
       const clickCurrent = cellView.index === currentClickIndex;
@@ -1319,7 +1676,7 @@ export class BoardScene extends Phaser.Scene {
       const glowColor = selectingCell
         ? COLORS.powerUpTarget
         : clickCurrent
-          ? this.view!.ballColor
+          ? cellColor
           : hintColor;
       cellView.glow.setFillStyle(
         glowColor,
@@ -1398,12 +1755,15 @@ export class BoardScene extends Phaser.Scene {
     const path = this.session.level.solutionPath;
     const baseRadius = liquidBallRadius(this.view.radius);
     this.view.lines.clear();
-    this.view.lines.fillStyle(this.view.ballColor, 1);
 
     for (const [fromIndex, toIndex] of this.connection?.connectedNodePairs() ?? []) {
       const from = this.view.cells.get(cellKey(path[fromIndex]));
       const to = this.view.cells.get(cellKey(path[toIndex]));
       if (!from || !to) continue;
+      this.view.lines.fillStyle(
+        this.view.artworkEnabled ? mixColors(from.color, to.color) : this.view.ballColor,
+        1,
+      );
       const fromScale = Math.max(
         0.01,
         (Math.abs(from.liquidRing.scaleX) + Math.abs(from.liquidRing.scaleY)) * 0.5,
@@ -1772,7 +2132,7 @@ export class BoardScene extends Phaser.Scene {
       localY,
       pointerRadius,
     );
-    pointerLine.fillStyle(this.view.ballColor, 1);
+    pointerLine.fillStyle(this.view.artworkEnabled ? from.color : this.view.ballColor, 1);
     if (bridge.length > 0) pointerLine.fillPoints(bridge, true, true);
     pointerLine.fillCircle(localX, localY, pointerRadius);
   }

@@ -410,6 +410,36 @@ describe('level editor path generation', () => {
     expect(model.solutionPath).toEqual(squarePath);
   });
 
+  it('allows rectangle width and height down to one while keeping square minimums', () => {
+    const model = new LevelEditorModel();
+    model.setShape('rectangle');
+    for (let index = 0; index < 10; index += 1) {
+      model.changeSize(-1, 'columns');
+      model.changeSize(-1, 'rows');
+    }
+
+    expect(model.size()).toEqual({ columns: 1, rows: 1 });
+    model.fill();
+    expect(model.generatePath()).toBe(true);
+    expect(model.createLevel(91)).toMatchObject({
+      rows: 1,
+      columns: 1,
+    });
+
+    model.setShape('square');
+    for (let index = 0; index < 10; index += 1) model.changeSize(-1);
+    expect(model.size()).toEqual({ columns: 3, rows: 3 });
+  });
+
+  it('accepts recognized one-row rectangular paths', () => {
+    const model = new LevelEditorModel();
+    const path = [{ x: 0, y: 0 }, { x: 1, y: 0 }];
+
+    expect(model.applyRecognizedPath(1, 2, path)).toBeNull();
+    expect(model.shape).toBe('rectangle');
+    expect(model.size()).toEqual({ columns: 2, rows: 1 });
+  });
+
   it('fits rectangular editor grids with square cells in either orientation', () => {
     const tall = calculateSquareGridLayout({
       rows: 9,

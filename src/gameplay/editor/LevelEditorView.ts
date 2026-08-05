@@ -192,7 +192,9 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
         <div class="editor-actions">
           <button id="editor-fill-button" class="button button--secondary button--small">填满棋盘</button>
           <button id="editor-clear-button" class="button button--secondary button--small">清空棋盘</button>
-          <button id="editor-generate-path-button" class="button button--secondary">生成路径</button>
+          <button id="editor-generate-path-button" class="button button--secondary" type="button">
+            <span id="editor-generate-path-label">生成路径</span>
+          </button>
           <button id="editor-undo-delete-button" class="button button--secondary button--small" title="Ctrl+Z" disabled>撤销删除</button>
           <button id="editor-playtest-button" class="button button--secondary" disabled>试玩关卡</button>
         </div>

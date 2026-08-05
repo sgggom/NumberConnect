@@ -37,6 +37,7 @@ import {
   BoardShape,
   cellKey,
   isInputMode,
+  isMainGameplay,
   isTouchPreviewSize,
   isUiTheme,
   usesClickInput,
@@ -49,6 +50,7 @@ import {
   type GameSettings,
   type InputMode,
   type LevelData,
+  type MainGameplay,
   type TouchPreviewSize,
   type UiTheme,
 } from './game/types';
@@ -94,6 +96,23 @@ import {
   collectionArtworkUrl,
 } from './gameplay/collection/collectionArtwork';
 import { generateEndlessLevel } from './gameplay/endless/generateEndlessLevel';
+import {
+  PLAY_PUZZLE_PATTERNS,
+  DEFAULT_PLAY_PUZZLE_ROTATION,
+  advancePlayPuzzleProgress,
+  loadPlayPuzzleProgress,
+  loadPlayPuzzleRotation,
+  nextPlayPuzzlePattern,
+  playPuzzleTextureKey,
+  puzzlePieceCount,
+  renderPlayPuzzleShowcase,
+  renderPlayPuzzleFinale,
+  savePlayPuzzleProgress,
+  savePlayPuzzleRotation,
+  type PlayPuzzlePattern,
+  type PlayPuzzleProgress,
+  type PlayPuzzleRotation,
+} from './gameplay/puzzle/playPuzzleShowcase';
 
 const UI_DESIGN_WIDTH = 750;
 const UI_DESIGN_HEIGHT = 1334;
@@ -317,6 +336,14 @@ class NumberConnectApp {
   private readonly playScreen = query<HTMLElement>('#play-screen');
   private readonly gameHost = query<HTMLElement>('#game-host');
   private readonly playBeadShowcaseArt = query<HTMLElement>('#play-bead-showcase-art');
+  private readonly playPuzzleShowcaseArt = query<HTMLElement>('#play-puzzle-showcase-art');
+  private readonly playPuzzleRotationHandle = query<HTMLElement>('#play-puzzle-rotation-handle');
+  private readonly playPuzzleProgressBar = query<HTMLElement>('#play-puzzle-progress');
+  private readonly playPuzzleProgressFill = query<HTMLElement>('#play-puzzle-progress-fill');
+  private readonly playPuzzleProgressText = query<HTMLElement>('#play-puzzle-progress-text');
+  private readonly playPuzzleFinale = query<HTMLElement>('#play-puzzle-finale');
+  private readonly playPuzzleFinaleArt = query<HTMLElement>('#play-puzzle-finale-art');
+  private readonly playPuzzleFinaleButton = query<HTMLButtonElement>('#play-puzzle-finale-button');
   private readonly playLevelButton = query<HTMLButtonElement>('#play-level-button');
   private readonly levelLabel = query<HTMLElement>('#play-level-label');
   private readonly holdScoreFormula = query<HTMLElement>('#hold-score-formula');
@@ -343,6 +370,7 @@ class NumberConnectApp {
   private readonly touchPreviewViewport = query<HTMLElement>('#touch-preview-viewport');
   private readonly touchPreviewSizeControl = query<HTMLElement>('#touch-preview-size');
   private readonly inputModeControl = query<HTMLElement>('#settings-input-mode');
+  private readonly mainGameplayControl = query<HTMLElement>('#settings-main-gameplay');
   private readonly uiThemeControl = query<HTMLElement>('#settings-theme');
   private readonly resultOverlay = query<HTMLElement>('#result-overlay');
   private readonly resultTitle = query<HTMLElement>('#result-title');
@@ -416,6 +444,7 @@ class NumberConnectApp {
   private beadLevels: LevelData[] = [];
   private levels: LevelData[] = [];
   private settings: GameSettings = loadSettings();
+  private activeMainGameplay: MainGameplay = this.settings.mainGameplay;
   private mode: GameMode = 'normal';
   private stage = initialEndlessRunState.stage;
   private lives = 3;
@@ -449,6 +478,21 @@ class NumberConnectApp {
   private currentPlayBeadReward: PlayBeadShowcasePattern['pixels'] = [];
   private playBeadShowcasePattern = PLAY_BEAD_SHOWCASE_PATTERNS[0];
   private playBeadShowcaseCollected = 0;
+  private playPuzzleProgress: PlayPuzzleProgress = loadPlayPuzzleProgress();
+  private playPuzzlePattern: PlayPuzzlePattern = PLAY_PUZZLE_PATTERNS.find(
+    (pattern) => pattern.id === this.playPuzzleProgress.patternId,
+  ) ?? PLAY_PUZZLE_PATTERNS[0];
+  private playPuzzleRotation: PlayPuzzleRotation = loadPlayPuzzleRotation();
+  private playPuzzleRotationDrag?: {
+    pointerId: number;
+    axis: keyof PlayPuzzleRotation;
+    clientX: number;
+    clientY: number;
+    startValue: number;
+  };
+  private playPuzzleFinaleBusy = false;
+  private playPuzzleCornerPressTimer?: number;
+  private readonly playPuzzlePieceFloatTimers = new Set<number>();
   private beadJar: BeadJarItem[] = [];
   private beadRewardAnimating = false;
   private beadJarInFlight = 0;
@@ -497,7 +541,12 @@ class NumberConnectApp {
 
   public constructor() {
     applyUiTheme(this.settings.uiTheme);
+    this.applyPlayPuzzleRotation();
     startLobbyAmbientNetwork();
+    this.boardScene.registerArtworkTextures(PLAY_PUZZLE_PATTERNS.map((pattern) => ({
+      key: playPuzzleTextureKey(pattern),
+      url: pattern.imageUrl,
+    })));
     this.game = new Phaser.Game({
       type: Phaser.CANVAS,
       parent: this.gameHost,
@@ -555,6 +604,7 @@ class NumberConnectApp {
       (pattern) => pattern.id === showcaseProgress.patternId,
     ) ?? PLAY_BEAD_SHOWCASE_PATTERNS[0];
     this.playBeadShowcaseCollected = showcaseProgress.collected;
+    this.normalizePlayPuzzleLevel();
     this.refreshLevels();
     this.bindLobby();
     this.bindPlayControls();
@@ -648,9 +698,100 @@ class NumberConnectApp {
     this.bindSingleTouchInput();
     this.bindTouchPreviewDrag();
     this.bindTouchPreviewViewportDrag();
+    this.bindPlayPuzzleRotationHandle();
+    this.playPuzzleFinaleButton.addEventListener('click', () => void this.completePlayPuzzleFinale());
     this.restartButton.addEventListener('click', () => this.handleResultPrimary());
     this.nextButton.addEventListener('click', () => this.handleResultSecondary());
     this.resultLobbyButton.addEventListener('click', () => this.leavePlayScreen());
+  }
+
+  private applyPlayPuzzleRotation(): void {
+    const showcase = this.playPuzzleShowcaseArt.closest<HTMLElement>('.play-puzzle-showcase');
+    if (!showcase) return;
+    showcase.style.setProperty('--puzzle-rotate-x', `${this.playPuzzleRotation.x}deg`);
+    showcase.style.setProperty('--puzzle-rotate-y', `${this.playPuzzleRotation.y}deg`);
+    showcase.style.setProperty('--puzzle-rotate-z', `${this.playPuzzleRotation.z}deg`);
+    this.playPuzzleRotationHandle.querySelectorAll<HTMLButtonElement>('[data-puzzle-axis]').forEach((button) => {
+      const axis = button.dataset.puzzleAxis as keyof PlayPuzzleRotation;
+      button.setAttribute('aria-valuetext', `${axis.toUpperCase()} 轴 ${Math.round(this.playPuzzleRotation[axis])} 度`);
+    });
+  }
+
+  private bindPlayPuzzleRotationHandle(): void {
+    const limits: Record<keyof PlayPuzzleRotation, [number, number]> = {
+      x: [-50, 50],
+      y: [-65, 65],
+      z: [-15, 15],
+    };
+    const clampAxis = (axis: keyof PlayPuzzleRotation, value: number): number => (
+      Math.max(limits[axis][0], Math.min(limits[axis][1], value))
+    );
+
+    this.playPuzzleRotationHandle.querySelectorAll<HTMLButtonElement>('[data-puzzle-axis]').forEach((handle) => {
+      const axis = handle.dataset.puzzleAxis as keyof PlayPuzzleRotation;
+      const finishDrag = (event: PointerEvent): void => {
+        if (this.playPuzzleRotationDrag?.pointerId !== event.pointerId) return;
+        this.playPuzzleRotationDrag = undefined;
+        handle.classList.remove('is-dragging');
+        if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
+        savePlayPuzzleRotation(this.playPuzzleRotation);
+      };
+
+      handle.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.playPuzzleRotationDrag = {
+          pointerId: event.pointerId,
+          axis,
+          clientX: event.clientX,
+          clientY: event.clientY,
+          startValue: this.playPuzzleRotation[axis],
+        };
+        handle.setPointerCapture(event.pointerId);
+        handle.classList.add('is-dragging');
+      });
+      handle.addEventListener('pointermove', (event) => {
+        const drag = this.playPuzzleRotationDrag;
+        if (!drag || drag.pointerId !== event.pointerId || drag.axis !== axis) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const deltaX = event.clientX - drag.clientX;
+        const deltaY = event.clientY - drag.clientY;
+        const delta = axis === 'x' ? deltaX : axis === 'y' ? -deltaY : (deltaX - deltaY) * 0.5;
+        this.playPuzzleRotation[axis] = clampAxis(axis, drag.startValue + delta * 0.45);
+        this.applyPlayPuzzleRotation();
+      });
+      handle.addEventListener('pointerup', finishDrag);
+      handle.addEventListener('pointercancel', finishDrag);
+      handle.addEventListener('lostpointercapture', () => {
+        if (this.playPuzzleRotationDrag?.axis !== axis) return;
+        this.playPuzzleRotationDrag = undefined;
+        handle.classList.remove('is-dragging');
+        savePlayPuzzleRotation(this.playPuzzleRotation);
+      });
+      handle.addEventListener('dblclick', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.playPuzzleRotation[axis] = DEFAULT_PLAY_PUZZLE_ROTATION[axis];
+        this.applyPlayPuzzleRotation();
+        savePlayPuzzleRotation(this.playPuzzleRotation);
+      });
+      handle.addEventListener('keydown', (event) => {
+        const direction = event.key === 'ArrowLeft' || event.key === 'ArrowDown'
+          ? -1
+          : event.key === 'ArrowRight' || event.key === 'ArrowUp'
+            ? 1
+            : 0;
+        if (direction === 0) return;
+        event.preventDefault();
+        this.playPuzzleRotation[axis] = clampAxis(
+          axis,
+          this.playPuzzleRotation[axis] + direction * (event.shiftKey ? 5 : 2),
+        );
+        this.applyPlayPuzzleRotation();
+        savePlayPuzzleRotation(this.playPuzzleRotation);
+      });
+    });
   }
 
   private bindSingleTouchInput(): void {
@@ -1413,6 +1554,51 @@ class NumberConnectApp {
     });
   }
 
+  private selectedMainGameplay(): MainGameplay {
+    const value = this.mainGameplayControl.querySelector<HTMLInputElement>(
+      'input[name="main-gameplay"]:checked',
+    )?.value;
+    return isMainGameplay(value) ? value : 'beads';
+  }
+
+  private setMainGameplayControl(gameplay: MainGameplay): void {
+    this.mainGameplayControl.querySelectorAll<HTMLInputElement>('input[name="main-gameplay"]').forEach((input) => {
+      input.checked = input.value === gameplay;
+    });
+  }
+
+  private mainGameplayLevelId(gameplay: MainGameplay = this.settings.mainGameplay): number {
+    return gameplay === 'beads'
+      ? this.settings.beadMainLevelId
+      : this.settings.puzzleMainLevelId;
+  }
+
+  private setMainGameplayLevelId(levelId: number, gameplay: MainGameplay): void {
+    if (gameplay === 'beads') this.settings.beadMainLevelId = levelId;
+    else this.settings.puzzleMainLevelId = levelId;
+  }
+
+  private playPuzzlePatternForLevel(levelId = this.settings.puzzleMainLevelId): PlayPuzzlePattern {
+    const index = Math.max(0, Math.min(PLAY_PUZZLE_PATTERNS.length - 1, Math.floor(levelId) - 1));
+    return PLAY_PUZZLE_PATTERNS[index] ?? PLAY_PUZZLE_PATTERNS[0];
+  }
+
+  private normalizePlayPuzzleLevel(): void {
+    if (this.playPuzzleProgress.revealed >= puzzlePieceCount(this.playPuzzlePattern)) {
+      this.playPuzzlePattern = nextPlayPuzzlePattern(this.playPuzzlePattern);
+      this.playPuzzleProgress = { patternId: this.playPuzzlePattern.id, revealed: 0 };
+      savePlayPuzzleProgress(this.playPuzzleProgress);
+    }
+    const patternIndex = PLAY_PUZZLE_PATTERNS.findIndex(
+      (pattern) => pattern.id === this.playPuzzlePattern.id,
+    );
+    const levelId = Math.max(0, patternIndex) + 1;
+    if (this.settings.puzzleMainLevelId !== levelId) {
+      this.settings.puzzleMainLevelId = levelId;
+      saveSettings(this.settings);
+    }
+  }
+
   private renderInputMode(): void {
     this.playScreen.classList.toggle('is-click-input', usesClickInput(this.settings.inputMode));
   }
@@ -1457,9 +1643,14 @@ class NumberConnectApp {
 
   private refreshLevels(): void {
     this.levels = loadLevelCollection(this.builtInLevels);
-    if (!this.levels.some((level) => level.levelId === this.settings.selectedLevelId)) {
-      this.settings.selectedLevelId = this.levels[0]?.levelId ?? 1;
+    if (!this.levels.some((level) => level.levelId === this.settings.beadMainLevelId)) {
+      this.settings.beadMainLevelId = this.levels[0]?.levelId ?? 1;
     }
+    if (
+      !Number.isInteger(this.settings.puzzleMainLevelId)
+      || this.settings.puzzleMainLevelId < 1
+      || this.settings.puzzleMainLevelId > PLAY_PUZZLE_PATTERNS.length
+    ) this.settings.puzzleMainLevelId = 1;
   }
 
   private showScreen(name: ScreenName): void {
@@ -1555,7 +1746,7 @@ class NumberConnectApp {
         this.primaryActionButton.setAttribute('aria-label', '暂无可用关卡');
         return;
       }
-      const levelId = this.settings.selectedLevelId;
+      const levelId = this.mainGameplayLevelId();
       this.primaryActionLabel.textContent = `第 ${levelId} 关`;
       this.primaryActionButton.setAttribute('aria-label', `开始第 ${levelId} 关`);
       return;
@@ -1600,11 +1791,29 @@ class NumberConnectApp {
   }
 
   private selectLevelFromPicker(levelId: number): void {
+    if (this.activeMainGameplay === 'puzzle') {
+      const pattern = PLAY_PUZZLE_PATTERNS[levelId - 1];
+      if (!pattern) return;
+      const changed = this.settings.puzzleMainLevelId !== levelId;
+      this.settings.shape = BoardShape.Level;
+      this.settings.puzzleMainLevelId = levelId;
+      if (changed) {
+        this.playPuzzlePattern = pattern;
+        this.playPuzzleProgress = { patternId: pattern.id, revealed: 0 };
+        savePlayPuzzleProgress(this.playPuzzleProgress);
+      }
+      saveSettings(this.settings);
+      this.renderDefaultLobbyLevelNumber();
+      if (changed) this.setCurrentBoard(this.createNormalLevel());
+      this.levelPickerDialog.close();
+      return;
+    }
+
     const level = this.levels.find((candidate) => candidate.levelId === levelId);
     if (!level) return;
     const changed = this.currentLevel?.levelId !== levelId;
     this.settings.shape = BoardShape.Level;
-    this.settings.selectedLevelId = levelId;
+    this.setMainGameplayLevelId(levelId, this.activeMainGameplay);
     saveSettings(this.settings);
     this.renderDefaultLobbyLevelNumber();
     if (changed) this.setCurrentBoard(level);
@@ -1622,6 +1831,7 @@ class NumberConnectApp {
 
   private async startNormalMode(): Promise<void> {
     if (this.levels.length === 0) return;
+    this.activeMainGameplay = this.settings.mainGameplay;
     this.playContext = 'normal';
     this.mode = 'normal';
     this.lives = 3;
@@ -1702,7 +1912,28 @@ class NumberConnectApp {
   }
 
   private createNormalLevel(): LevelData {
-    const selected = this.levels.find((level) => level.levelId === this.settings.selectedLevelId) ?? this.levels[0];
+    if (this.activeMainGameplay === 'puzzle') {
+      const patternIndex = Math.max(0, Math.min(
+        PLAY_PUZZLE_PATTERNS.length - 1,
+        this.settings.puzzleMainLevelId - 1,
+      ));
+      const stageIndex = Math.max(0, Math.min(
+        puzzlePieceCount(this.playPuzzlePattern) - 1,
+        this.playPuzzleProgress.revealed,
+      ));
+      const puzzleBoards = this.levels.filter(
+        (level) => level.activeCells.length === level.rows * level.columns,
+      );
+      const boardIndex = puzzleBoards.length > 0
+        ? (patternIndex * puzzlePieceCount(this.playPuzzlePattern) + stageIndex) % puzzleBoards.length
+        : -1;
+      const stageLevel = puzzleBoards[boardIndex];
+      if (!stageLevel) throw new Error('没有可用的拼图阶段。');
+      return stageLevel;
+    }
+
+    const selectedLevelId = this.mainGameplayLevelId(this.activeMainGameplay);
+    const selected = this.levels.find((level) => level.levelId === selectedLevelId) ?? this.levels[0];
     if (!selected) throw new Error('没有可用的关卡。');
     return selected;
   }
@@ -1721,18 +1952,40 @@ class NumberConnectApp {
     const hiddenPercent = profile?.hiddenPercent ?? this.settings.hiddenPercent;
     const maxHiddenRun = profile?.maxHiddenRun ?? this.settings.maxHiddenRun;
     const maxVisibleRun = profile?.maxVisibleRun ?? this.settings.maxVisibleRun;
-    const seed = (this.mode === 'endless' ? this.endlessSeed + this.stage * 1000003 : level.levelId) | 0;
+    const usesPuzzleStage = this.playContext === 'normal'
+      && this.mode === 'normal'
+      && this.activeMainGameplay === 'puzzle';
+    const puzzleStage = Math.min(
+      puzzlePieceCount(this.playPuzzlePattern),
+      this.playPuzzleProgress.revealed + 1,
+    );
+    const seed = (
+      this.mode === 'endless'
+        ? this.endlessSeed + this.stage * 1000003
+        : usesPuzzleStage
+          ? this.settings.puzzleMainLevelId * 1000003 + puzzleStage * 9176 + level.levelId
+          : level.levelId
+    ) | 0;
     const eventContext = {
       mode: this.mode,
-      levelId: level.levelId,
-      stage: this.mode === 'endless' ? this.stage : undefined,
+      levelId: usesPuzzleStage ? this.settings.puzzleMainLevelId : level.levelId,
+      stage: this.mode === 'endless' ? this.stage : usesPuzzleStage ? puzzleStage : undefined,
     };
-    const usesPlayShowcase = shouldUsePlayBeadShowcase(this.playContext);
+    const usesPlayShowcase = this.activeMainGameplay === 'beads'
+      && shouldUsePlayBeadShowcase(this.playContext, this.mode);
     return {
       level,
       hiddenCells: level.hiddenCells === undefined
         ? selectHiddenCells(level.solutionPath, hiddenPercent, maxHiddenRun, maxVisibleRun, seed)
         : new Set(level.hiddenCells.map(cellKey)),
+      artwork: usesPuzzleStage
+        ? {
+            textureKey: playPuzzleTextureKey(this.playPuzzlePattern),
+            sourceColumns: this.playPuzzlePattern.columns,
+            sourceRows: this.playPuzzlePattern.rows,
+            sourceIndex: this.playPuzzleProgress.revealed,
+          }
+        : undefined,
       completionGemColors: this.playContext === 'bead'
         ? this.currentBeadReward.map((bead) => bead.color)
         : usesPlayShowcase
@@ -1779,29 +2032,48 @@ class NumberConnectApp {
     this.currentProgress = 0;
     this.currentTotal = level.solutionPath.length;
     this.updateGameHeading(level);
-    this.preparePlayBeadShowcase(level);
+    this.prepareMainGameplayShowcase(level);
     this.boardScene.setBoard(this.makeSession(level, profile));
     this.renderPowerUps();
     if (this.playContext !== 'editor-playtest') {
+      const usesPuzzleStage = this.playContext === 'normal'
+        && this.mode === 'normal'
+        && this.activeMainGameplay === 'puzzle';
       this.events.emit('level.started', {
         mode: this.mode,
-        levelId: level.levelId,
-        stage: this.mode === 'endless' ? this.stage : undefined,
+        levelId: usesPuzzleStage ? this.settings.puzzleMainLevelId : level.levelId,
+        stage: this.mode === 'endless'
+          ? this.stage
+          : usesPuzzleStage
+            ? Math.min(puzzlePieceCount(this.playPuzzlePattern), this.playPuzzleProgress.revealed + 1)
+            : undefined,
         total: level.solutionPath.length,
       });
     }
   }
 
-  private preparePlayBeadShowcase(level: LevelData): void {
+  private prepareMainGameplayShowcase(level: LevelData): void {
     const isEditorPlaytest = this.playContext === 'editor-playtest';
+    const isMainGameplay = shouldUsePlayBeadShowcase(this.playContext, this.mode);
+    const usesBeadShowcase = isMainGameplay && this.activeMainGameplay === 'beads';
+    const usesPuzzleShowcase = isMainGameplay && this.activeMainGameplay === 'puzzle';
     const showcaseSpacer = this.playBeadShowcaseArt.closest<HTMLElement>('.play-top-spacer');
+    const beadShowcase = this.playBeadShowcaseArt.closest<HTMLElement>('.play-bead-showcase');
+    const puzzleShowcase = this.playPuzzleShowcaseArt.closest<HTMLElement>('.play-puzzle-showcase');
     this.playScreen.classList.toggle('is-editor-playtest', isEditorPlaytest);
-    if (showcaseSpacer) showcaseSpacer.hidden = isEditorPlaytest;
-    if (isEditorPlaytest) {
-      this.currentPlayBeadReward = [];
-      return;
-    }
+    this.playScreen.classList.toggle('is-play-showcase-hidden', !isMainGameplay);
+    this.playScreen.classList.toggle('is-puzzle-main-gameplay', usesPuzzleShowcase);
+    if (showcaseSpacer) showcaseSpacer.hidden = !isMainGameplay;
+    if (beadShowcase) beadShowcase.hidden = !usesBeadShowcase;
+    if (puzzleShowcase) puzzleShowcase.hidden = !usesPuzzleShowcase;
+    this.playPuzzleRotationHandle.hidden = true;
+    this.playPuzzleProgressBar.hidden = !usesPuzzleShowcase;
+    this.currentPlayBeadReward = [];
+    if (usesBeadShowcase) this.preparePlayBeadShowcase(level);
+    if (usesPuzzleShowcase) this.preparePlayPuzzleShowcase();
+  }
 
+  private preparePlayBeadShowcase(level: LevelData): void {
     if (this.playBeadShowcaseCollected >= this.playBeadShowcasePattern.pixels.length) {
       this.playBeadShowcasePattern = nextPlayBeadShowcasePattern(this.playBeadShowcasePattern);
       this.playBeadShowcaseCollected = 0;
@@ -1819,6 +2091,32 @@ class NumberConnectApp {
       this.playBeadShowcaseCollected,
       this.playBeadShowcaseCollected + level.solutionPath.length,
     );
+  }
+
+  private preparePlayPuzzleShowcase(): void {
+    const expectedPattern = this.playPuzzlePatternForLevel();
+    if (this.playPuzzleProgress.patternId !== expectedPattern.id) {
+      this.playPuzzlePattern = expectedPattern;
+      this.playPuzzleProgress = { patternId: expectedPattern.id, revealed: 0 };
+      savePlayPuzzleProgress(this.playPuzzleProgress);
+    } else {
+      this.playPuzzlePattern = expectedPattern;
+    }
+    renderPlayPuzzleShowcase(
+      this.playPuzzleShowcaseArt,
+      this.playPuzzlePattern,
+      this.playPuzzleProgress.revealed,
+    );
+    this.renderPlayPuzzleProgress();
+  }
+
+  private renderPlayPuzzleProgress(): void {
+    const total = puzzlePieceCount(this.playPuzzlePattern);
+    const completed = Math.min(total, this.playPuzzleProgress.revealed);
+    this.playPuzzleProgressBar.setAttribute('aria-valuemax', String(total));
+    this.playPuzzleProgressBar.setAttribute('aria-valuenow', String(completed));
+    this.playPuzzleProgressFill.style.width = `${completed / Math.max(1, total) * 100}%`;
+    this.playPuzzleProgressText.textContent = `${completed} / ${total}`;
   }
 
   private updateGameHeading(level: LevelData): void {
@@ -1849,7 +2147,13 @@ class NumberConnectApp {
       this.levelLabel.textContent = `无尽 · 阶段 ${this.stage}`;
       return;
     }
-    this.levelLabel.textContent = `${level.custom ? '自制关卡' : '关卡'} ${level.levelId}`;
+    if (this.activeMainGameplay === 'puzzle') {
+      const totalStages = puzzlePieceCount(this.playPuzzlePattern);
+      const currentStage = Math.min(totalStages, this.playPuzzleProgress.revealed + 1);
+      this.levelLabel.textContent = `拼图 · 关卡 ${this.settings.puzzleMainLevelId} · 阶段 ${currentStage}/${totalStages}`;
+      return;
+    }
+    this.levelLabel.textContent = `拼豆 · ${level.custom ? '自制关卡' : '关卡'} ${level.levelId}`;
   }
 
   private setPowerUpMessage(
@@ -2406,6 +2710,350 @@ class NumberConnectApp {
     return this.playBeadShowcaseCollected >= this.playBeadShowcasePattern.pixels.length;
   }
 
+  private async showPlayPuzzleCompletion(): Promise<boolean> {
+    const revealedPieceIndex = this.playPuzzleProgress.revealed;
+    await this.boardScene.showCompletion();
+    if (
+      this.playContext !== 'normal'
+      || this.mode !== 'normal'
+      || this.activeMainGameplay !== 'puzzle'
+    ) return false;
+
+    await this.flyBoardPuzzlePieceToShowcase(
+      this.boardScene.artworkClientBounds(),
+      revealedPieceIndex,
+    );
+
+    this.playPuzzleProgress = advancePlayPuzzleProgress(
+      this.playPuzzlePattern,
+      this.playPuzzleProgress,
+    );
+    savePlayPuzzleProgress(this.playPuzzleProgress);
+    renderPlayPuzzleShowcase(
+      this.playPuzzleShowcaseArt,
+      this.playPuzzlePattern,
+      this.playPuzzleProgress.revealed,
+    );
+    this.renderPlayPuzzleProgress();
+    const revealedPiece = this.playPuzzleShowcaseArt.querySelector<HTMLElement>(
+      `[data-puzzle-piece="${this.playPuzzleProgress.revealed - 1}"]`,
+    );
+    const puzzleShowcase = this.playPuzzleShowcaseArt.closest<HTMLElement>('.play-puzzle-showcase');
+    if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      revealedPiece?.classList.add('is-newly-revealed');
+      puzzleShowcase?.classList.add('is-piece-landed');
+      await waitFor(620);
+      revealedPiece?.classList.remove('is-newly-revealed');
+      puzzleShowcase?.classList.remove('is-piece-landed');
+    }
+    return this.playPuzzleProgress.revealed >= puzzlePieceCount(this.playPuzzlePattern);
+  }
+
+  private async flyBoardPuzzlePieceToShowcase(
+    source: { left: number; top: number; width: number; height: number } | undefined,
+    pieceIndex: number,
+  ): Promise<void> {
+    const target = this.playPuzzleShowcaseArt.querySelector<HTMLElement>(
+      `[data-puzzle-piece="${pieceIndex}"]`,
+    );
+    if (!source || !target || source.width <= 0 || source.height <= 0) return;
+
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const layer = document.createElement('div');
+    layer.className = 'play-puzzle-piece-flight-layer';
+    layer.setAttribute('aria-hidden', 'true');
+    const flight = document.createElement('i');
+    flight.className = 'play-puzzle-piece-flight';
+    const pieceColumn = pieceIndex % this.playPuzzlePattern.columns;
+    const pieceRow = Math.floor(pieceIndex / this.playPuzzlePattern.columns);
+    flight.style.backgroundImage = `url("${this.playPuzzlePattern.imageUrl}")`;
+    flight.style.backgroundSize = (
+      `${this.playPuzzlePattern.columns * 100}% ${this.playPuzzlePattern.rows * 100}%`
+    );
+    flight.style.backgroundPosition = (
+      `${pieceColumn * 100 / Math.max(1, this.playPuzzlePattern.columns - 1)}% `
+      + `${pieceRow * 100 / Math.max(1, this.playPuzzlePattern.rows - 1)}%`
+    );
+    layer.append(flight);
+    this.appShell.append(layer);
+
+    const appRect = this.appShell.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const scale = this.uiVisualScale();
+    const startWidth = source.width / scale;
+    const startHeight = source.height / scale;
+    const startX = (source.left - appRect.left + source.width * 0.5) / scale;
+    const startY = (source.top - appRect.top + source.height * 0.5) / scale;
+    const targetX = (targetRect.left - appRect.left + targetRect.width * 0.5) / scale;
+    const targetY = (targetRect.top - appRect.top + targetRect.height * 0.5) / scale;
+    const deltaX = targetX - startX;
+    const deltaY = targetY - startY;
+    const landingScale = Math.max(0.06, Math.min(
+      0.9,
+      targetRect.width / source.width,
+      targetRect.height / source.height,
+    ));
+    const middleScale = 1 + (landingScale - 1) * 0.5;
+    const desiredArcLift = Math.max(84, Math.min(180, Math.hypot(deltaX, deltaY) * 0.3));
+    const midpointBaseY = startY + deltaY * 0.5;
+    const visibleArcLift = midpointBaseY - startHeight * middleScale * 0.5 - 12;
+    const arcLift = Math.max(58, Math.min(desiredArcLift, visibleArcLift));
+    const flightTransform = (
+      progress: number,
+      lift: number,
+      rotation: number,
+    ): string => (
+      `translate(calc(-50% + ${deltaX * progress}px), `
+      + `calc(-50% + ${deltaY * progress - arcLift * lift}px)) `
+      + `rotate(${rotation}deg) scale(${1 + (landingScale - 1) * progress})`
+    );
+    flight.style.left = `${startX}px`;
+    flight.style.top = `${startY}px`;
+    flight.style.width = `${startWidth}px`;
+    flight.style.height = `${startHeight}px`;
+    this.boardScene.setArtworkCompletionVisible(false);
+
+    try {
+      if (reducedMotion) return;
+      const animation = flight.animate([
+        {
+          opacity: 1,
+          transform: flightTransform(0, 0, 0),
+        },
+        {
+          opacity: 1,
+          transform: flightTransform(0.25, 0.75, -3),
+          offset: 0.25,
+        },
+        {
+          opacity: 1,
+          transform: flightTransform(0.5, 1, -5),
+          offset: 0.5,
+        },
+        {
+          opacity: 1,
+          transform: flightTransform(0.75, 0.75, -2),
+          offset: 0.75,
+        },
+        {
+          opacity: 1,
+          transform: flightTransform(1, 0, this.playPuzzleRotation.z),
+        },
+      ], {
+        duration: 560,
+        easing: 'cubic-bezier(.24,.7,.2,1)',
+        fill: 'both',
+      });
+      try {
+        await animation.finished;
+      } catch {
+        // A canceled flight still commits the completed piece to the top board.
+      }
+    } finally {
+      layer.remove();
+    }
+  }
+
+  private async showPlayPuzzleFinale(): Promise<void> {
+    if (this.playPuzzleFinaleBusy) return;
+    this.playPuzzleFinaleBusy = true;
+    this.resetPlayPuzzleCornerPress();
+    this.stopPlayPuzzlePieceFloats();
+    this.boardScene.setPaused(true);
+    renderPlayPuzzleFinale(this.playPuzzleFinaleArt, this.playPuzzlePattern);
+    this.playPuzzleFinale.classList.remove('is-visible', 'is-floating', 'is-assembling', 'is-assembled', 'is-leaving');
+    this.playPuzzleFinaleButton.hidden = true;
+    this.playPuzzleFinale.hidden = false;
+    await nextFrame();
+    this.playPuzzleFinale.classList.add('is-visible');
+
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (!reducedMotion) await waitFor(180);
+    this.playPuzzleFinale.classList.add('is-floating');
+    if (!reducedMotion) {
+      await nextFrame();
+      this.startPlayPuzzlePieceFloats();
+      await this.waitForPlayPuzzlePieceGlows();
+      this.stopPlayPuzzlePieceFloats(true);
+    }
+    this.playPuzzleFinale.classList.add('is-assembling');
+    if (reducedMotion) {
+      await waitFor(40);
+    } else {
+      await nextFrame();
+      await this.waitForPlayPuzzlePieceAssembly();
+    }
+    if (this.playPuzzleFinale.hidden) return;
+    this.playPuzzleFinale.classList.add('is-assembled');
+    this.playPuzzleFinaleButton.hidden = false;
+    await nextFrame();
+    if (!reducedMotion) {
+      this.startPlayPuzzleCornerPresses();
+    }
+    this.playPuzzleFinaleButton.focus();
+  }
+
+  private startPlayPuzzleCornerPresses(): void {
+    this.stopPlayPuzzleCornerPresses();
+
+    const pressNextCorner = (): void => {
+      if (this.playPuzzleFinale.hidden || !this.playPuzzleFinale.classList.contains('is-assembled')) {
+        this.playPuzzleCornerPressTimer = undefined;
+        return;
+      }
+
+      const durationMs = 2000 + Math.round(Math.random() * 2000);
+      this.movePlayPuzzleCornerPress(durationMs);
+      this.playPuzzleCornerPressTimer = window.setTimeout(pressNextCorner, durationMs);
+    };
+
+    pressNextCorner();
+  }
+
+  private stopPlayPuzzleCornerPresses(): void {
+    if (this.playPuzzleCornerPressTimer === undefined) return;
+    window.clearTimeout(this.playPuzzleCornerPressTimer);
+    this.playPuzzleCornerPressTimer = undefined;
+  }
+
+  private resetPlayPuzzleCornerPress(): void {
+    this.stopPlayPuzzleCornerPresses();
+    delete this.playPuzzleFinaleArt.dataset.pressCorner;
+    this.playPuzzleFinaleArt.style.setProperty('--complete-press-duration', '0ms');
+    this.playPuzzleFinaleArt.style.setProperty('--complete-press-origin', '50% 50%');
+    this.playPuzzleFinaleArt.style.setProperty('--complete-press-x', '0deg');
+    this.playPuzzleFinaleArt.style.setProperty('--complete-press-y', '0deg');
+    this.playPuzzleFinaleArt.style.setProperty('--complete-press-z', '0deg');
+    this.playPuzzleFinaleArt.style.setProperty('--complete-float-y', '0px');
+    this.playPuzzleFinaleArt.style.setProperty('--complete-float-z', '0px');
+  }
+
+  private movePlayPuzzleCornerPress(durationMs: number): void {
+    const corners = [
+      { id: 'top-left', origin: '100% 100%', x: 1.2, y: -1.4, z: -.08 },
+      { id: 'top-right', origin: '0% 100%', x: 1.2, y: 1.4, z: .08 },
+      { id: 'bottom-left', origin: '100% 0%', x: -1.2, y: -1.4, z: .08 },
+      { id: 'bottom-right', origin: '0% 0%', x: -1.2, y: 1.4, z: -.08 },
+    ] as const;
+    const previousCorner = this.playPuzzleFinaleArt.dataset.pressCorner;
+    const candidates = corners.filter((corner) => corner.id !== previousCorner);
+    const corner = candidates[Math.floor(Math.random() * candidates.length)] ?? corners[0];
+    const strength = .82 + Math.random() * .24;
+    const angle = (value: number): string => `${(value * strength).toFixed(2)}deg`;
+
+    this.playPuzzleFinaleArt.dataset.pressCorner = corner.id;
+    this.playPuzzleFinaleArt.style.setProperty('--complete-press-duration', `${durationMs}ms`);
+    this.playPuzzleFinaleArt.style.setProperty('--complete-press-origin', corner.origin);
+    this.playPuzzleFinaleArt.style.setProperty('--complete-press-x', angle(corner.x));
+    this.playPuzzleFinaleArt.style.setProperty('--complete-press-y', angle(corner.y));
+    this.playPuzzleFinaleArt.style.setProperty('--complete-press-z', angle(corner.z));
+    this.playPuzzleFinaleArt.style.setProperty('--complete-float-y', `${(-1.2 + Math.random() * 2).toFixed(1)}px`);
+    this.playPuzzleFinaleArt.style.setProperty('--complete-float-z', `${(-.5 + Math.random() * 2).toFixed(1)}px`);
+  }
+
+  private async waitForPlayPuzzlePieceGlows(): Promise<void> {
+    const glowAnimations = Array.from(
+      this.playPuzzleFinaleArt.querySelectorAll<HTMLElement>('.play-puzzle-finale__piece-face'),
+    ).flatMap((face) => face.getAnimations().filter(
+      (animation): animation is CSSAnimation => (
+        animation instanceof CSSAnimation
+        && animation.animationName === 'play-puzzle-piece-glow-burst'
+      ),
+    ));
+    await Promise.all(glowAnimations.map((animation) => animation.finished.catch(() => undefined)));
+  }
+
+  private async waitForPlayPuzzlePieceAssembly(): Promise<void> {
+    const assemblyAnimations = Array.from(
+      this.playPuzzleFinaleArt.querySelectorAll<HTMLElement>('.play-puzzle-finale__piece'),
+    ).flatMap((piece) => piece.getAnimations().filter(
+      (animation): animation is CSSAnimation => (
+        animation instanceof CSSAnimation
+        && animation.animationName === 'play-puzzle-piece-assemble'
+      ),
+    ));
+    await Promise.all(assemblyAnimations.map((animation) => animation.finished.catch(() => undefined)));
+  }
+
+  private startPlayPuzzlePieceFloats(): void {
+    this.stopPlayPuzzlePieceFloats();
+    const pieces = this.playPuzzleFinaleArt.querySelectorAll<HTMLElement>('.play-puzzle-finale__piece');
+
+    pieces.forEach((piece) => {
+      let timerId: number | undefined;
+      const pressNextCorner = (): void => {
+        if (timerId !== undefined) this.playPuzzlePieceFloatTimers.delete(timerId);
+        if (
+          this.playPuzzleFinale.hidden
+          || !this.playPuzzleFinale.classList.contains('is-floating')
+          || this.playPuzzleFinale.classList.contains('is-assembling')
+        ) return;
+
+        const durationMs = 2000 + Math.round(Math.random() * 2000);
+        this.movePlayPuzzlePieceFloat(piece, durationMs);
+        timerId = window.setTimeout(pressNextCorner, durationMs);
+        this.playPuzzlePieceFloatTimers.add(timerId);
+      };
+
+      pressNextCorner();
+    });
+  }
+
+  private stopPlayPuzzlePieceFloats(reset = false): void {
+    this.playPuzzlePieceFloatTimers.forEach((timerId) => window.clearTimeout(timerId));
+    this.playPuzzlePieceFloatTimers.clear();
+    if (!reset) return;
+
+    this.playPuzzleFinaleArt.querySelectorAll<HTMLElement>('.play-puzzle-finale__piece').forEach((piece) => {
+      delete piece.dataset.pressCorner;
+      piece.style.setProperty('--piece-press-duration', '700ms');
+      piece.style.setProperty('--piece-press-origin', '50% 50%');
+      piece.style.setProperty('--piece-press-x', '0deg');
+      piece.style.setProperty('--piece-press-y', '0deg');
+      piece.style.setProperty('--piece-press-z', '0deg');
+      piece.style.setProperty('--piece-float-y', '0px');
+      piece.style.setProperty('--piece-float-z', '0px');
+    });
+  }
+
+  private movePlayPuzzlePieceFloat(piece: HTMLElement, durationMs: number): void {
+    const corners = [
+      { id: 'top-left', origin: '100% 100%', x: 1.2, y: -1.4, z: -.08 },
+      { id: 'top-right', origin: '0% 100%', x: 1.2, y: 1.4, z: .08 },
+      { id: 'bottom-left', origin: '100% 0%', x: -1.2, y: -1.4, z: .08 },
+      { id: 'bottom-right', origin: '0% 0%', x: -1.2, y: 1.4, z: -.08 },
+    ] as const;
+    const candidates = corners.filter((corner) => corner.id !== piece.dataset.pressCorner);
+    const corner = candidates[Math.floor(Math.random() * candidates.length)] ?? corners[0];
+    const strength = .82 + Math.random() * .24;
+    const angle = (value: number): string => `${(value * strength).toFixed(2)}deg`;
+
+    piece.dataset.pressCorner = corner.id;
+    piece.style.setProperty('--piece-press-duration', `${durationMs}ms`);
+    piece.style.setProperty('--piece-press-origin', corner.origin);
+    piece.style.setProperty('--piece-press-x', angle(corner.x));
+    piece.style.setProperty('--piece-press-y', angle(corner.y));
+    piece.style.setProperty('--piece-press-z', angle(corner.z));
+    piece.style.setProperty('--piece-float-y', `${(-1.2 + Math.random() * 2).toFixed(1)}px`);
+    piece.style.setProperty('--piece-float-z', `${(-.5 + Math.random() * 2).toFixed(1)}px`);
+  }
+
+  private async completePlayPuzzleFinale(): Promise<void> {
+    if (this.playPuzzleFinaleButton.hidden) return;
+    this.stopPlayPuzzleCornerPresses();
+    this.stopPlayPuzzlePieceFloats();
+    this.playPuzzleFinaleButton.disabled = true;
+    this.playPuzzleFinale.classList.add('is-leaving');
+    if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) await waitFor(220);
+    this.playPuzzleFinale.hidden = true;
+    this.playPuzzleFinale.classList.remove('is-visible', 'is-floating', 'is-assembling', 'is-assembled', 'is-leaving');
+    this.playPuzzleFinaleButton.hidden = true;
+    this.playPuzzleFinaleButton.disabled = false;
+    this.playPuzzleFinaleBusy = false;
+    this.boardScene.setPaused(false);
+    this.nextLevel();
+  }
+
   private async flyBoardBeadsToShowcase(
     sources: Array<{ x: number; y: number } | undefined>,
   ): Promise<void> {
@@ -2519,7 +3167,7 @@ class NumberConnectApp {
       return;
     }
     if (this.playContext === 'daily') {
-      await this.showPlayBeadCompletion();
+      await this.boardScene.showCompletion();
       if (this.playContext !== 'daily') return;
       this.completedDailyChallenges.add(this.dailyChallengeDateKey);
       saveCompletedDailyChallenges(this.completedDailyChallenges);
@@ -2528,7 +3176,7 @@ class NumberConnectApp {
       return;
     }
     if (this.mode === 'endless') {
-      await this.showPlayBeadCompletion();
+      await this.boardScene.showCompletion();
       this.lives += 1;
       this.renderLives();
       this.showEndlessStageResult();
@@ -2539,6 +3187,13 @@ class NumberConnectApp {
       await this.boardScene.showCompletion({ revealImage: true });
       this.completeCollectionLevel();
       this.showCollectionResult();
+    } else if (this.activeMainGameplay === 'puzzle') {
+      const patternComplete = await this.showPlayPuzzleCompletion();
+      if (!patternComplete) {
+        this.nextPuzzleStage();
+        return;
+      }
+      await this.showPlayPuzzleFinale();
     } else {
       const patternComplete = await this.showPlayBeadCompletion();
       if (!patternComplete) {
@@ -2572,7 +3227,7 @@ class NumberConnectApp {
     this.currentProgress = 0;
     this.currentTotal = next.solutionPath.length;
     this.updateGameHeading(next);
-    this.preparePlayBeadShowcase(next);
+    this.prepareMainGameplayShowcase(next);
     this.resetPowerUps();
     this.setPowerUpMessage('正在准备下一关。');
     this.renderPowerUps();
@@ -2640,6 +3295,13 @@ class NumberConnectApp {
     this.setCurrentBoard(this.createNormalLevel());
   }
 
+  private nextPuzzleStage(): void {
+    this.resultOverlay.hidden = true;
+    this.lives = 3;
+    this.renderLives();
+    this.setCurrentBoard(this.createNormalLevel());
+  }
+
   private nextCollectionLevel(): void {
     const nextIndex = this.currentCollectionIndex + 1;
     if (nextIndex >= this.collectionLevelCount()) {
@@ -2655,10 +3317,21 @@ class NumberConnectApp {
 
   private selectNextNormalLevel(): void {
     if (this.levels.length === 0) return;
-    const currentId = this.currentLevel?.levelId ?? this.settings.selectedLevelId;
+    if (this.activeMainGameplay === 'puzzle') {
+      const nextLevelId = this.settings.puzzleMainLevelId % PLAY_PUZZLE_PATTERNS.length + 1;
+      const nextPattern = this.playPuzzlePatternForLevel(nextLevelId);
+      this.settings.puzzleMainLevelId = nextLevelId;
+      this.playPuzzlePattern = nextPattern;
+      this.playPuzzleProgress = { patternId: nextPattern.id, revealed: 0 };
+      savePlayPuzzleProgress(this.playPuzzleProgress);
+      saveSettings(this.settings);
+      this.renderDefaultLobbyLevelNumber();
+      return;
+    }
+    const currentId = this.currentLevel?.levelId ?? this.mainGameplayLevelId(this.activeMainGameplay);
     const index = this.levels.findIndex((level) => level.levelId === currentId);
     const nextIndex = (Math.max(0, index) + 1) % this.levels.length;
-    this.settings.selectedLevelId = this.levels[nextIndex].levelId;
+    this.setMainGameplayLevelId(this.levels[nextIndex].levelId, this.activeMainGameplay);
     saveSettings(this.settings);
     this.renderDefaultLobbyLevelNumber();
   }
@@ -2781,6 +3454,7 @@ class NumberConnectApp {
   }
 
   private populateSettingsForm(): void {
+    this.setMainGameplayControl(this.settings.mainGameplay);
     this.setInputModeControl(this.settings.inputMode);
     query<HTMLInputElement>('#settings-next').checked = this.settings.showNextNumber;
     query<HTMLInputElement>('#settings-difficulty-score').checked = this.settings.showDifficultyScore;
@@ -2793,16 +3467,28 @@ class NumberConnectApp {
   }
 
   private refreshLevelOptions(): void {
-    const options = this.levels.map((level) => {
+    const gameplay = this.playContext === 'normal' && this.mode === 'normal'
+      ? this.activeMainGameplay
+      : this.settings.mainGameplay;
+    const levelOptions = gameplay === 'puzzle'
+      ? PLAY_PUZZLE_PATTERNS.map((pattern, index) => ({
+        levelId: index + 1,
+        label: pattern.name,
+      }))
+      : this.levels.map((level) => ({
+        levelId: level.levelId,
+        label: level.custom ? '自制关卡' : '关卡',
+      }));
+    const options = levelOptions.map((level) => {
       const option = document.createElement('button');
-      const selected = level.levelId === this.settings.selectedLevelId;
+      const selected = level.levelId === this.mainGameplayLevelId(gameplay);
       option.type = 'button';
       option.className = 'level-picker-option';
       option.dataset.levelId = String(level.levelId);
       option.setAttribute('role', 'listitem');
       option.classList.toggle('is-selected', selected);
       if (selected) option.setAttribute('aria-current', 'true');
-      option.innerHTML = `<strong>${level.levelId}</strong><small>${level.custom ? '自制关卡' : '关卡'}</small>`;
+      option.innerHTML = `<strong>${level.levelId}</strong><small>${level.label}</small>`;
       option.addEventListener('click', () => this.selectLevelFromPicker(level.levelId));
       return option;
     });
@@ -2820,7 +3506,7 @@ class NumberConnectApp {
   private renderDefaultLobbyLevelNumber(): void {
     const hasLevels = this.levels.length > 0;
     query<HTMLElement>('#default-level-number').textContent = hasLevels
-      ? String(this.settings.selectedLevelId)
+      ? String(this.mainGameplayLevelId())
       : '—';
     query<HTMLButtonElement>('#default-start-button').disabled = !hasLevels;
     query<HTMLButtonElement>('#start-button').disabled = !hasLevels;
@@ -2836,6 +3522,8 @@ class NumberConnectApp {
   }
 
   private applySettingsChange(): void {
+    const previousMainGameplay = this.settings.mainGameplay;
+    this.settings.mainGameplay = this.selectedMainGameplay();
     this.settings.inputMode = this.selectedInputMode();
     this.settings.showNextNumber = query<HTMLInputElement>('#settings-next').checked;
     this.settings.showDifficultyScore = query<HTMLInputElement>('#settings-difficulty-score').checked;
@@ -2857,6 +3545,18 @@ class NumberConnectApp {
       touchPreviewRingDepth: this.settings.touchPreviewSize === 'large' ? 2 : 1,
       boardZoomEnabled: this.isTouchPreviewZoomMode(),
     });
+
+    if (
+      previousMainGameplay !== this.settings.mainGameplay
+      && this.settingsContext === 'play'
+      && this.playContext === 'normal'
+      && this.mode === 'normal'
+    ) {
+      this.activeMainGameplay = this.settings.mainGameplay;
+      this.lives = 3;
+      this.renderLives();
+      this.setCurrentBoard(this.createNormalLevel());
+    }
 
     if (this.settingsContext === 'play') {
       this.setSolutionReveal(this.solutionToggle.checked);

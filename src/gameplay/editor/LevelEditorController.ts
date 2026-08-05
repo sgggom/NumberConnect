@@ -25,6 +25,10 @@ import {
 import { readAlgorithm4BatchConfigFile } from './batchLevelGeneration';
 import { generateAlgorithm4BatchLevelsInWorkers } from './batchLevelGenerationPool';
 import {
+  startEditorPathGeneration,
+  type EditorPathGenerationTask,
+} from './pathGenerationWorker';
+import {
   decodeClipboardLevelJson,
   looksLikeClipboardLevelJson,
 } from './clipboardLevelJson';
@@ -93,6 +97,10 @@ export class LevelEditorController {
   private pathAnimationTimer?: number;
   private pathAnimationRun = 0;
   private isPathAnimating = false;
+  private pathGenerationTask?: EditorPathGenerationTask;
+  private pathGenerationRun = 0;
+  private isPathCalculating = false;
+  private pathCalculationProgress = 0;
   private imageRecognitionRun = 0;
   private isImageRecognizing = false;
   private isBatchGenerating = false;
@@ -144,6 +152,7 @@ export class LevelEditorController {
     this.workspaceResizeObserver.observe(this.query<HTMLElement>('.editor-workspace'));
     this.query('#editor-back-button').addEventListener('click', () => {
       this.cancelPathAnimation();
+      this.cancelPathCalculation();
       this.cancelImageRecognition();
       this.closeSimulationWindow();
       this.options.onBack();
@@ -230,7 +239,7 @@ export class LevelEditorController {
     this.query('#editor-image-hidden-button').addEventListener('click', () => void this.readRecognitionInputFromClipboard('hidden-layout'));
     this.query('#editor-image-formation-button').addEventListener('click', () => void this.readRecognitionInputFromClipboard('initial-formation'));
     this.query('#editor-undo-delete-button').addEventListener('click', () => this.undoLastDeletion());
-    this.query('#editor-generate-path-button').addEventListener('click', () => this.generatePath());
+    this.query('#editor-generate-path-button').addEventListener('click', () => void this.generatePath());
     this.query<HTMLInputElement>('#editor-simulation-count').addEventListener('change', (event) => {
       const input = event.currentTarget as HTMLInputElement;
       this.simulationRunCount = normalizeSimulationRunCount(input.value);
@@ -289,7 +298,7 @@ export class LevelEditorController {
       this.lastManualPathHitKey = undefined;
     });
     window.addEventListener('keydown', (event) => {
-      if (this.host.hidden || (!event.ctrlKey && !event.metaKey) || event.shiftKey || event.key.toLowerCase() !== 'z') return;
+      if (this.host.hidden || this.isPathBusy() || (!event.ctrlKey && !event.metaKey) || event.shiftKey || event.key.toLowerCase() !== 'z') return;
       const target = event.target;
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || (target instanceof HTMLElement && target.isContentEditable)) return;
       if (!this.model.canUndoDeletion) return;
@@ -297,7 +306,7 @@ export class LevelEditorController {
       this.undoLastDeletion();
     });
     window.addEventListener('paste', (event) => {
-      if (this.host.hidden || this.isImageRecognizing) return;
+      if (this.host.hidden || this.isImageRecognizing || this.isPathBusy()) return;
       const target = event.target;
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || (target instanceof HTMLElement && target.isContentEditable)) return;
       const text = event.clipboardData?.getData('text/plain') ?? '';
@@ -320,6 +329,7 @@ export class LevelEditorController {
 
   public open(): void {
     this.cancelPathAnimation();
+    this.cancelPathCalculation();
     this.clearRecognitionAmbiguity();
     this.clearSimulationResult();
     this.closeBatchProgressDialog(true);
@@ -333,12 +343,14 @@ export class LevelEditorController {
 
   public resumeFromPlaytest(): void {
     this.cancelPathAnimation();
+    this.cancelPathCalculation();
     this.render();
     this.setStatus('已返回编辑器，可继续调整当前关卡。');
   }
 
   private render(): void {
     const { rows, columns } = this.model.size();
+    const pathBusy = this.isPathBusy();
     if (
       this.recognitionAmbiguousPathSignature !== undefined
       && this.recognitionAmbiguousPathSignature !== this.currentPathSignature()
@@ -363,8 +375,9 @@ export class LevelEditorController {
       : '';
     grid.dataset.shape = this.model.shape;
     grid.dataset.manualMode = this.model.manualEditMode;
-    grid.setAttribute('aria-busy', String(this.isPathAnimating));
+    grid.setAttribute('aria-busy', String(pathBusy));
     this.host.classList.toggle('is-path-animating', this.isPathAnimating);
+    this.host.classList.toggle('is-path-calculating', this.isPathCalculating);
     this.host.classList.toggle('is-image-recognizing', this.isImageRecognizing);
     const order = this.model.pathOrder();
     const visiblePathLength = this.pathRevealCount ?? this.model.solutionPath.length;
@@ -444,17 +457,18 @@ export class LevelEditorController {
 
     const shapeSelect = this.query<HTMLSelectElement>('#editor-shape');
     shapeSelect.value = this.model.shape;
-    shapeSelect.disabled = this.isPathAnimating;
+    shapeSelect.disabled = pathBusy;
     const manualModeSelect = this.query<HTMLSelectElement>('#editor-manual-mode');
     manualModeSelect.value = this.model.manualEditMode;
-    manualModeSelect.disabled = this.isPathAnimating;
+    manualModeSelect.disabled = pathBusy;
     this.renderAlgorithmControls();
     const fillButton = this.query<HTMLButtonElement>('#editor-fill-button');
     fillButton.hidden = false;
-    fillButton.disabled = this.isPathAnimating;
-    this.query<HTMLButtonElement>('#editor-clear-button').disabled = this.isPathAnimating;
-    this.query<HTMLButtonElement>('#editor-generate-path-button').disabled = this.model.manualEditMode !== 'off' || this.isPathAnimating;
-    this.query<HTMLButtonElement>('#editor-undo-delete-button').disabled = !this.model.canUndoDeletion || this.isPathAnimating;
+    fillButton.disabled = pathBusy;
+    this.query<HTMLButtonElement>('#editor-clear-button').disabled = pathBusy;
+    this.query<HTMLButtonElement>('#editor-generate-path-button').disabled = this.model.manualEditMode !== 'off' || pathBusy;
+    this.renderPathGenerationButton();
+    this.query<HTMLButtonElement>('#editor-undo-delete-button').disabled = !this.model.canUndoDeletion || pathBusy;
     const sizeLimits = this.model.sizeLimits();
     const isRectangle = this.model.shape === 'rectangle';
     this.query<HTMLElement>('#editor-uniform-size').hidden = isRectangle;
@@ -462,17 +476,17 @@ export class LevelEditorController {
     this.query('#editor-size-value').textContent = `${columns} × ${rows}`;
     this.query('#editor-width-value').textContent = String(columns);
     this.query('#editor-height-value').textContent = String(rows);
-    this.query<HTMLButtonElement>('#editor-size-minus').disabled = this.isPathAnimating || rows <= sizeLimits.min;
-    this.query<HTMLButtonElement>('#editor-size-plus').disabled = this.isPathAnimating || rows >= sizeLimits.max;
-    this.query<HTMLButtonElement>('#editor-width-minus').disabled = this.isPathAnimating || columns <= sizeLimits.min;
-    this.query<HTMLButtonElement>('#editor-width-plus').disabled = this.isPathAnimating || columns >= sizeLimits.max;
-    this.query<HTMLButtonElement>('#editor-height-minus').disabled = this.isPathAnimating || rows <= sizeLimits.min;
-    this.query<HTMLButtonElement>('#editor-height-plus').disabled = this.isPathAnimating || rows >= sizeLimits.max;
+    this.query<HTMLButtonElement>('#editor-size-minus').disabled = pathBusy || rows <= sizeLimits.min;
+    this.query<HTMLButtonElement>('#editor-size-plus').disabled = pathBusy || rows >= sizeLimits.max;
+    this.query<HTMLButtonElement>('#editor-width-minus').disabled = pathBusy || columns <= sizeLimits.min;
+    this.query<HTMLButtonElement>('#editor-width-plus').disabled = pathBusy || columns >= sizeLimits.max;
+    this.query<HTMLButtonElement>('#editor-height-minus').disabled = pathBusy || rows <= sizeLimits.min;
+    this.query<HTMLButtonElement>('#editor-height-plus').disabled = pathBusy || rows >= sizeLimits.max;
     const imageLevelButton = this.query<HTMLButtonElement>('#editor-image-level-button');
     const imageHiddenButton = this.query<HTMLButtonElement>('#editor-image-hidden-button');
     const imageFormationButton = this.query<HTMLButtonElement>('#editor-image-formation-button');
     [imageLevelButton, imageHiddenButton, imageFormationButton].forEach((button) => {
-      button.disabled = this.isPathAnimating || this.isImageRecognizing;
+      button.disabled = pathBusy || this.isImageRecognizing;
       button.classList.remove('is-loading');
     });
     imageHiddenButton.disabled ||= !this.model.hasGeneratedPath;
@@ -490,8 +504,8 @@ export class LevelEditorController {
     }
     const nextId = this.options.getNextLevelId();
     this.query<HTMLElement>('#editor-preview').style.backgroundImage = `url('./level-backgrounds/${this.model.previewName(nextId)}.png')`;
-    this.query<HTMLButtonElement>('#editor-playtest-button').disabled = !this.model.hasGeneratedPath || this.isPathAnimating;
-    this.query<HTMLButtonElement>('#editor-level-add').disabled = !this.model.hasGeneratedPath || this.isPathAnimating;
+    this.query<HTMLButtonElement>('#editor-playtest-button').disabled = !this.model.hasGeneratedPath || pathBusy;
+    this.query<HTMLButtonElement>('#editor-level-add').disabled = !this.model.hasGeneratedPath || pathBusy;
     this.renderLevelMetrics(rows, columns);
     this.renderSimulationPanel();
     this.renderLevelList();
@@ -661,7 +675,7 @@ export class LevelEditorController {
     const results = this.query<HTMLElement>('#editor-simulation-results');
     const countInput = this.query<HTMLInputElement>('#editor-simulation-count');
     const reasoningSelect = this.query<HTMLSelectElement>('#editor-simulation-reasoning');
-    const controlsUnavailable = !this.model.hasGeneratedPath || this.isPathAnimating || this.isImageRecognizing;
+    const controlsUnavailable = !this.model.hasGeneratedPath || this.isPathBusy() || this.isImageRecognizing;
     button.disabled = controlsUnavailable;
     button.textContent = this.simulationResult ? '重新模拟' : '开始模拟';
     exportButton.disabled = controlsUnavailable;
@@ -1550,9 +1564,45 @@ export class LevelEditorController {
     this.setStatus(`已撤销删除，恢复 ${restoredCount} 段路径及对应格子。`);
   }
 
-  private generatePath(): void {
+  private async generatePath(): Promise<void> {
     this.cancelPathAnimation();
-    if (!this.model.generatePath()) {
+    this.cancelPathCalculation();
+    const run = ++this.pathGenerationRun;
+    const request = this.model.preparePathGeneration();
+    this.isPathCalculating = true;
+    this.pathCalculationProgress = 0;
+    this.render();
+    this.updatePathCalculationProgress(0);
+
+    const task = startEditorPathGeneration(request, (progress) => {
+      if (run !== this.pathGenerationRun) return;
+      this.updatePathCalculationProgress(progress);
+    });
+    this.pathGenerationTask = task;
+
+    let generated;
+    try {
+      generated = await task.promise;
+    } catch (error) {
+      if (run !== this.pathGenerationRun || (error instanceof Error && error.name === 'AbortError')) return;
+      this.pathGenerationTask = undefined;
+      this.isPathCalculating = false;
+      this.pathCalculationProgress = 0;
+      this.model.applyPathGenerationResult(null);
+      this.render();
+      this.setStatus(
+        error instanceof Error ? `路径生成失败：${error.message}` : '路径生成失败。',
+        true,
+      );
+      return;
+    }
+
+    if (run !== this.pathGenerationRun) return;
+    this.pathGenerationTask = undefined;
+    this.updatePathCalculationProgress(1);
+    this.isPathCalculating = false;
+    this.pathCalculationProgress = 0;
+    if (!this.model.applyPathGenerationResult(generated)) {
       this.render();
       this.setStatus('当前算法无法生成覆盖全部格子的路径，请调整棋盘或更换算法。', true);
       return;
@@ -1563,6 +1613,33 @@ export class LevelEditorController {
         ? `，隐藏 ${this.model.hiddenCellKeys.size} 格，纯运气分叉 0`
         : `，隐藏 ${this.model.hiddenCellKeys.size}/${this.model.targetHiddenCount} 格，纯运气分叉 0`;
     this.animateGeneratedPath(`第 ${this.model.pathGenerationCount} 次路径生成成功：共 ${this.model.solutionPath.length} 个格子${hiddenSummary}。`);
+  }
+
+  private updatePathCalculationProgress(progress: number): void {
+    if (!this.isPathCalculating) return;
+    const percentage = Math.max(
+      this.pathCalculationProgress,
+      Math.min(100, Math.round((Number.isFinite(progress) ? progress : 0) * 100)),
+    );
+    if (percentage === this.pathCalculationProgress && percentage !== 0) return;
+    this.pathCalculationProgress = percentage;
+    this.renderPathGenerationButton();
+    this.setStatus(`正在计算路径 ${percentage}%…`);
+  }
+
+  private renderPathGenerationButton(): void {
+    const button = this.query<HTMLButtonElement>('#editor-generate-path-button');
+    const label = this.query<HTMLElement>('#editor-generate-path-label');
+    const percentage = Math.max(0, Math.min(100, this.pathCalculationProgress));
+    button.classList.toggle('is-calculating', this.isPathCalculating);
+    button.style.setProperty('--editor-path-generation-progress', String(percentage / 100));
+    button.setAttribute('aria-busy', String(this.isPathCalculating));
+    label.textContent = this.isPathCalculating ? `计算中 ${percentage}%` : '生成路径';
+    if (this.isPathCalculating) {
+      button.setAttribute('aria-label', `正在计算路径，${percentage}%`);
+    } else {
+      button.removeAttribute('aria-label');
+    }
   }
 
   private animateGeneratedPath(completionMessage: string): void {
@@ -1596,7 +1673,7 @@ export class LevelEditorController {
         : `正在生成 ${nextCount}/${total}：第 ${cell.y + 1} 行，第 ${cell.x + 1} 列`);
 
       if (nextCount < total) {
-        this.pathAnimationTimer = window.setTimeout(revealNext, 80);
+        this.pathAnimationTimer = window.setTimeout(revealNext, 5);
         return;
       }
       this.pathAnimationTimer = window.setTimeout(() => {
@@ -1619,6 +1696,19 @@ export class LevelEditorController {
     this.pathRevealCount = undefined;
     this.isPathAnimating = false;
     this.host.classList.remove('is-path-animating');
+  }
+
+  private cancelPathCalculation(): void {
+    this.pathGenerationRun += 1;
+    this.pathGenerationTask?.cancel();
+    this.pathGenerationTask = undefined;
+    this.isPathCalculating = false;
+    this.pathCalculationProgress = 0;
+    this.host.classList.remove('is-path-calculating');
+  }
+
+  private isPathBusy(): boolean {
+    return this.isPathCalculating || this.isPathAnimating;
   }
 
   private playtest(): void {
@@ -2145,7 +2235,7 @@ export class LevelEditorController {
     });
     select.replaceChildren(...options);
     select.value = this.model.algorithmSelection.id;
-    select.disabled = this.isPathAnimating;
+    select.disabled = this.isPathBusy();
     const parameterHost = this.query<HTMLElement>('#editor-algorithm-parameters');
     parameterHost.dataset.algorithm = this.model.algorithmSelection.id;
     renderEditorAlgorithmParameters(parameterHost, this.model.algorithmSelection, this.model.shape, (selection) => {
@@ -2154,7 +2244,7 @@ export class LevelEditorController {
       this.render();
     });
     parameterHost.querySelectorAll<HTMLInputElement>('input').forEach((input) => {
-      input.disabled = input.disabled || this.isPathAnimating;
+      input.disabled = input.disabled || this.isPathBusy();
     });
   }
 
@@ -2184,7 +2274,7 @@ export class LevelEditorController {
 
   private syncPresetControls(): void {
     const selectedPreset = this.selectedPreset();
-    const unavailable = this.isPathAnimating;
+    const unavailable = this.isPathBusy();
     this.query<HTMLSelectElement>('#editor-preset-select').disabled = unavailable
       || this.editorPresets.length === 0;
     this.query<HTMLInputElement>('#editor-preset-name').disabled = unavailable;

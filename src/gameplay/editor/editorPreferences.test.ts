@@ -79,6 +79,19 @@ describe('level editor preferences', () => {
     expect(loadLevelEditorPreferences()).toEqual(preferences);
   });
 
+  it('restores rectangle dimensions below the shared editor minimum', () => {
+    const model = new LevelEditorModel();
+
+    model.applyConfiguration({
+      ...model.configuration(),
+      shape: 'rectangle',
+      rectangleColumns: 0,
+      rectangleRows: 2,
+    });
+
+    expect(model.size()).toEqual({ columns: 1, rows: 2 });
+  });
+
   it('normalizes persisted presets and drops malformed or duplicate entries', () => {
     const stored = {
       presets: [

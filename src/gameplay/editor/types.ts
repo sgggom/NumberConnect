@@ -3,6 +3,7 @@ export type ManualEditMode = 'off' | 'path' | 'hidden';
 export type EditorSizeAxis = 'rows' | 'columns';
 
 export const MIN_EDITOR_SIZE = 3;
+export const MIN_RECTANGLE_EDITOR_SIZE = 1;
 export const MAX_EDITOR_SIZE = 20;
 
 export interface EditorCell {

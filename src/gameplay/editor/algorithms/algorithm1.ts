@@ -21,7 +21,11 @@ export const runAlgorithm1 = (
     context.shape,
     selection.parameters.targetCrossings,
     context.generationIndex,
-    { crossingMode: 'maximum' },
+    {
+      crossingMode: 'maximum',
+      onProgress: (progress) => context.onProgress?.(progress * 0.98),
+    },
   );
+  context.onProgress?.(1);
   return path ? { path } : null;
 };

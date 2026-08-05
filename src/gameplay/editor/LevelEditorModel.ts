@@ -7,13 +7,16 @@ import {
   resolveEditorAlgorithmForShape,
   runEditorAlgorithm,
   serializeEditorAlgorithm,
+  type EditorAlgorithmContext,
   type EditorAlgorithmId,
+  type EditorAlgorithmResult,
   type EditorAlgorithmSelection,
 } from './algorithms';
 import { areEditorCellsNeighbors } from './findEditorPath';
 import {
   MAX_EDITOR_SIZE,
   MIN_EDITOR_SIZE,
+  MIN_RECTANGLE_EDITOR_SIZE,
   type EditorCell,
   type EditorShape,
   type EditorSize,
@@ -56,13 +59,23 @@ export interface LevelEditorConfiguration {
   algorithm: EditorAlgorithmSelection;
 }
 
+export interface LevelEditorPathGenerationRequest {
+  selection: EditorAlgorithmSelection;
+  context: Omit<EditorAlgorithmContext, 'onProgress'>;
+}
+
 const isRecord = (value: unknown): value is Record<string, unknown> => (
   typeof value === 'object' && value !== null
 );
 
-const normalizedSize = (value: unknown, fallback: number, max: number): number => (
+const normalizedSize = (
+  value: unknown,
+  fallback: number,
+  max: number,
+  min = MIN_EDITOR_SIZE,
+): number => (
   Number.isFinite(Number(value))
-    ? clamp(Math.floor(Number(value)), MIN_EDITOR_SIZE, max)
+    ? clamp(Math.floor(Number(value)), min, max)
     : fallback
 );
 
@@ -124,8 +137,14 @@ export class LevelEditorModel {
       value.rectangleColumns,
       this.rectangleColumns,
       MAX_EDITOR_SIZE,
+      MIN_RECTANGLE_EDITOR_SIZE,
     );
-    this.rectangleRows = normalizedSize(value.rectangleRows, this.rectangleRows, MAX_EDITOR_SIZE);
+    this.rectangleRows = normalizedSize(
+      value.rectangleRows,
+      this.rectangleRows,
+      MAX_EDITOR_SIZE,
+      MIN_RECTANGLE_EDITOR_SIZE,
+    );
 
     const storedAlgorithm = value.algorithm;
     if (
@@ -183,8 +202,8 @@ export class LevelEditorModel {
       this.diamondSize = clamp(Math.max(level.rows, level.columns), MIN_EDITOR_SIZE, MAX_DIAMOND_SIZE);
     } else if (level.boardShape === BoardShape.Rectangle) {
       this.currentShape = 'rectangle';
-      this.rectangleColumns = clamp(level.columns, MIN_EDITOR_SIZE, MAX_EDITOR_SIZE);
-      this.rectangleRows = clamp(level.rows, MIN_EDITOR_SIZE, MAX_EDITOR_SIZE);
+      this.rectangleColumns = clamp(level.columns, MIN_RECTANGLE_EDITOR_SIZE, MAX_EDITOR_SIZE);
+      this.rectangleRows = clamp(level.rows, MIN_RECTANGLE_EDITOR_SIZE, MAX_EDITOR_SIZE);
     } else if (level.boardShape === BoardShape.Hex) {
       this.currentShape = 'hex';
       this.hexSize = clamp(Math.max(level.rows, level.columns), MIN_EDITOR_SIZE, MAX_HEX_SIZE);
@@ -221,17 +240,20 @@ export class LevelEditorModel {
     path: ReadonlyArray<EditorCell>,
     hiddenCells?: ReadonlyArray<EditorCell>,
   ): string | null {
+    const shape: EditorShape = rows === columns ? 'square' : 'rectangle';
+    const minimumSize = shape === 'rectangle'
+      ? MIN_RECTANGLE_EDITOR_SIZE
+      : MIN_EDITOR_SIZE;
     if (
       !Number.isInteger(rows)
       || !Number.isInteger(columns)
-      || rows < MIN_EDITOR_SIZE
+      || rows < minimumSize
       || rows > MAX_EDITOR_SIZE
-      || columns < MIN_EDITOR_SIZE
+      || columns < minimumSize
       || columns > MAX_EDITOR_SIZE
     ) {
-      return `编辑器支持的图片棋盘尺寸为每边 ${MIN_EDITOR_SIZE}–${MAX_EDITOR_SIZE} 格，当前为 ${columns}×${rows}。`;
+      return `编辑器支持的图片棋盘尺寸为每边 ${minimumSize}–${MAX_EDITOR_SIZE} 格，当前为 ${columns}×${rows}。`;
     }
-    const shape: EditorShape = rows === columns ? 'square' : 'rectangle';
     if (path.length !== rows * columns) return '图片路径没有覆盖全部格子。';
     const keys = new Set(path.map(keyOf));
     if (keys.size !== path.length) return '图片路径中存在重复格子。';
@@ -340,7 +362,9 @@ export class LevelEditorModel {
 
   public sizeLimits(): { min: number; max: number } {
     return {
-      min: MIN_EDITOR_SIZE,
+      min: this.currentShape === 'rectangle'
+        ? MIN_RECTANGLE_EDITOR_SIZE
+        : MIN_EDITOR_SIZE,
       max: this.currentShape === 'diamond'
         ? MAX_DIAMOND_SIZE
         : this.currentShape === 'hex'
@@ -464,7 +488,7 @@ export class LevelEditorModel {
     return restoredCount;
   }
 
-  public generatePath(): boolean {
+  public preparePathGeneration(): LevelEditorPathGenerationRequest {
     const { rows, columns } = this.size();
     const generationIndex = (
       createGenerationSeed()
@@ -476,13 +500,19 @@ export class LevelEditorModel {
     this.manualHiddenCells.clear();
     this.manualHiddenConfigured = false;
     this.generatedTargetHiddenCount = undefined;
-    const result = runEditorAlgorithm(this.algorithm, {
-      rows,
-      columns,
-      activeCells: this.paintedCells,
-      shape: this.currentShape,
-      generationIndex,
-    });
+    return {
+      selection: normalizeEditorAlgorithm(serializeEditorAlgorithm(this.algorithm)),
+      context: {
+        rows,
+        columns,
+        activeCells: new Set(this.paintedCells),
+        shape: this.currentShape,
+        generationIndex,
+      },
+    };
+  }
+
+  public applyPathGenerationResult(result: EditorAlgorithmResult | null): boolean {
     this.path = result?.path ?? [];
     if (result?.hiddenCells) {
       result.hiddenCells.forEach((cell) => this.manualHiddenCells.add(keyOf(cell)));
@@ -490,6 +520,14 @@ export class LevelEditorModel {
       this.generatedTargetHiddenCount = result.targetHiddenCount;
     }
     return result !== null;
+  }
+
+  public generatePath(): boolean {
+    const request = this.preparePathGeneration();
+    return this.applyPathGenerationResult(runEditorAlgorithm(
+      request.selection,
+      request.context,
+    ));
   }
 
   public previewName(levelId: number): string {

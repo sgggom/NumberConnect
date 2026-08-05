@@ -412,6 +412,7 @@ export const runEditorAlgorithm = (
   selection: EditorAlgorithmSelection,
   context: EditorAlgorithmContext,
 ) => {
+  context.onProgress?.(0);
   const resolved = resolveEditorAlgorithmForShape(selection, context.shape);
   switch (resolved.id) {
     case 'algorithm-1':

@@ -163,9 +163,23 @@
             <figure class="play-bead-showcase">
               <div id="play-bead-showcase-art" class="play-bead-showcase__art" role="img"></div>
             </figure>
+            <figure class="play-puzzle-showcase" hidden>
+              <div id="play-puzzle-showcase-art" class="play-puzzle-showcase__art" role="img"></div>
+            </figure>
+            <div id="play-puzzle-rotation-handle" class="play-puzzle-rotation-handle" role="group" aria-label="拼图三轴旋转手柄" hidden>
+              <i class="play-puzzle-rotation-origin" aria-hidden="true"></i>
+              <button class="play-puzzle-axis play-puzzle-axis--x" data-puzzle-axis="x" type="button" aria-label="拖动调整 X 轴旋转，双击重置 X 轴">X</button>
+              <button class="play-puzzle-axis play-puzzle-axis--y" data-puzzle-axis="y" type="button" aria-label="拖动调整 Y 轴旋转，双击重置 Y 轴">Y</button>
+              <button class="play-puzzle-axis play-puzzle-axis--z" data-puzzle-axis="z" type="button" aria-label="拖动调整 Z 轴旋转，双击重置 Z 轴">Z</button>
+            </div>
           </div>
         </div>
-        <div id="game-host" class="game-host" aria-label="数字连接棋盘"></div>
+        <div id="game-host" class="game-host" aria-label="数字连接棋盘">
+          <div id="play-puzzle-progress" class="play-puzzle-progress" role="progressbar" aria-label="拼图完成进度" aria-valuemin="0" aria-valuemax="4" aria-valuenow="0" hidden>
+            <i id="play-puzzle-progress-fill"></i>
+            <span id="play-puzzle-progress-text">0 / 4</span>
+          </div>
+        </div>
         <footer id="power-up-bar" class="power-up-bar" aria-label="关卡道具">
           <p id="power-up-status" class="power-up-status" role="status" aria-live="polite">道具可重复使用</p>
           <div class="power-up-actions">
@@ -202,6 +216,13 @@
               <button id="next-button" class="button button--primary">下一关</button>
             </div>
             <button id="result-lobby-button" class="text-button">返回大厅</button>
+          </div>
+        </div>
+        <div id="play-puzzle-finale" class="play-puzzle-finale" role="dialog" aria-modal="true" aria-labelledby="play-puzzle-finale-title" hidden>
+          <div class="play-puzzle-finale__stage">
+            <div id="play-puzzle-finale-art" class="play-puzzle-finale__art" role="img"></div>
+            <h2 id="play-puzzle-finale-title">拼图完成！</h2>
+            <button id="play-puzzle-finale-button" class="button button--primary play-puzzle-finale__button" type="button" hidden>完成</button>
           </div>
         </div>
       </section>
@@ -393,6 +414,7 @@
       <form method="dialog" class="settings-card">
         <header><div><h2>游戏设置</h2></div><button id="settings-close-button" class="icon-button" value="cancel" aria-label="关闭">×</button></header>
         <div class="settings-list">
+          <div class="setting-row setting-row--main-gameplay"><span><b>主玩法</b><small>两种玩法分别保存关卡和作品进度</small></span><div id="settings-main-gameplay" class="setting-segmented setting-main-gameplay-control" role="radiogroup" aria-label="主玩法"><label><input type="radio" name="main-gameplay" value="beads" checked /><span>拼豆</span></label><label><input type="radio" name="main-gameplay" value="puzzle" /><span>拼图</span></label></div></div>
           <div class="setting-row setting-row--input-mode"><span><b>操作方式</b><small>逐格点击、自动连接连续显示数字，或拖动连线</small></span><div id="settings-input-mode" class="setting-segmented setting-input-mode-control" role="radiogroup" aria-label="操作方式"><label><input type="radio" name="input-mode" value="click" /><span>点击</span></label><label><input type="radio" name="input-mode" value="auto-click" /><span>自动点击</span></label><label><input type="radio" name="input-mode" value="drag" checked /><span>拖动</span></label></div></div>
           <label class="setting-row"><span><b>下一个数字提示</b><small>高亮下一处可见数字</small></span><input id="settings-next" class="switch" type="checkbox" checked /></label>
           <label class="setting-row"><span><b>显示难度分</b><small>按住棋盘时显示当前格的难度评分</small></span><input id="settings-difficulty-score" class="switch" type="checkbox" /></label>
