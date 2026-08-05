@@ -85,4 +85,11 @@ describe('level editor view layout', () => {
     expect(playtestIndex).toBeGreaterThan(undoIndex);
     expect(markup).not.toContain('class="editor-board-actions"');
   });
+
+  it('keeps a dedicated label layer inside the path generation progress button', () => {
+    const markup = renderEditorMarkup();
+
+    expect(markup).toContain('id="editor-generate-path-button"');
+    expect(markup).toContain('id="editor-generate-path-label">生成路径</span>');
+  });
 });

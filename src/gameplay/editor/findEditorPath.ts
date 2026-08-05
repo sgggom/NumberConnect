@@ -9,6 +9,7 @@ export interface EditorPathGenerationOptions {
   startMode?: 'guided' | 'any';
   turnProbability?: number;
   maxNodes?: number;
+  onProgress?: (progress: number) => void;
 }
 
 const DIRECTIONS: ReadonlyArray<Readonly<EditorCell>> = [
@@ -282,9 +283,13 @@ export const randomizeEditorPath = (
   maximumCrossings: number,
   seed: number,
   turnProbability = 65,
+  onProgress?: (progress: number) => void,
 ): EditorCell[] => {
   let path = source.map((cell) => ({ ...cell }));
-  if (path.length < 4) return path;
+  if (path.length < 4) {
+    onProgress?.(1);
+    return path;
+  }
 
   let randomState = seed >>> 0;
   const random = (): number => {
@@ -300,8 +305,10 @@ export const randomizeEditorPath = (
   );
   let turnDistance = Math.abs(countPathTurns(path) - targetTurns);
   const attempts = Math.max(160, path.length * 28);
+  const progressInterval = Math.max(1, Math.floor(attempts / 100));
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (attempt % progressInterval === 0) onProgress?.(attempt / attempts);
     let candidate: EditorCell[] | null = null;
     if (random() < 0.52) {
       const start = 1 + Math.floor(random() * (path.length - 2));
@@ -349,6 +356,7 @@ export const randomizeEditorPath = (
     turnDistance = candidateTurnDistance;
   }
 
+  onProgress?.(1);
   return path;
 };
 
@@ -454,6 +462,7 @@ export const findEditorPath = (
   );
   const safeTargetCrossings = Math.max(0, Math.floor(targetCrossings));
   let searched = 0;
+  const progressInterval = Math.max(1, Math.floor(maxNodes / 100));
   let bestPath: EditorCell[] | null = null;
   let bestDistance = Number.POSITIVE_INFINITY;
   let bestVarietyScore = Number.POSITIVE_INFINITY;
@@ -462,6 +471,9 @@ export const findEditorPath = (
     const visited = new Set<string>([cellKey(start)]);
     const search = (): boolean => {
       searched += 1;
+      if (searched % progressInterval === 0) {
+        options.onProgress?.(Math.min(1, searched / maxNodes));
+      }
       if (searched > maxNodes) return false;
       if (path.length === active.size) {
         const completedCrossings = countEditorPathCrossings(path, shape);

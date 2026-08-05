@@ -30,6 +30,9 @@ export const generateAlgorithm2Path = (
   context: EditorAlgorithmContext,
   parameters: Pick<Algorithm2Selection['parameters'], 'targetCrossings' | 'turnProbability'>,
 ): EditorCell[] | null => {
+  const reportProgress = (progress: number): void => context.onProgress?.(
+    Math.max(0, Math.min(0.98, progress)),
+  );
   const providedFallback = context.fallbackPath?.map((cell) => ({ ...cell }));
   const fallbackKeys = new Set(providedFallback?.map((cell) => `${cell.x},${cell.y}`));
   const hasValidFallback = providedFallback?.length === context.activeCells.size
@@ -46,8 +49,14 @@ export const generateAlgorithm2Path = (
         context.shape,
         parameters.targetCrossings,
         context.generationIndex,
-        { crossingMode: 'maximum', startMode: 'any', ...(realtime ? { maxNodes: 6000 } : {}) },
+        {
+          crossingMode: 'maximum',
+          startMode: 'any',
+          ...(realtime ? { maxNodes: 6000 } : {}),
+          onProgress: (progress) => reportProgress(progress * 0.16),
+        },
       );
+  reportProgress(0.16);
   const candidates: EditorCell[][] = [];
   const zeroCrossingLimit = parameters.targetCrossings <= 0;
   const attempts = realtime
@@ -57,6 +66,8 @@ export const generateAlgorithm2Path = (
       : context.activeCells.size <= 64 ? 5 : 4;
   const candidateNodeBudget = realtime ? 6000 : zeroCrossingLimit ? 15000 : 40000;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const attemptStart = 0.16 + 0.58 * attempt / attempts;
+    const attemptSpan = 0.58 / attempts;
     const candidate = findEditorPath(
       context.rows,
       context.columns,
@@ -70,8 +81,10 @@ export const generateAlgorithm2Path = (
         startMode: 'any',
         turnProbability: parameters.turnProbability,
         maxNodes: candidateNodeBudget,
+        onProgress: (progress) => reportProgress(attemptStart + attemptSpan * progress),
       },
     );
+    reportProgress(attemptStart + attemptSpan);
     if (!candidate) continue;
     candidates.push(candidate);
   }
@@ -86,13 +99,16 @@ export const generateAlgorithm2Path = (
     : fallbackPath;
   if (!selectedPath) return null;
 
-  return randomizeEditorPath(
+  const randomizedPath = randomizeEditorPath(
     selectedPath,
     context.shape,
     parameters.targetCrossings,
     candidateSeed ^ 0xa511e9b3,
     parameters.turnProbability,
+    (progress) => reportProgress(0.74 + progress * 0.24),
   );
+  reportProgress(0.98);
+  return randomizedPath;
 };
 
 export const runAlgorithm2 = (
@@ -101,6 +117,7 @@ export const runAlgorithm2 = (
 ): EditorAlgorithmResult | null => {
   const path = generateAlgorithm2Path(context, selection.parameters);
   if (!path) return null;
+  context.onProgress?.(0.98);
 
   const seed = Math.imul(context.generationIndex + 1, 104729)
     ^ Math.imul(context.rows + 1, 73856093)
@@ -118,6 +135,7 @@ export const runAlgorithm2 = (
     Math.max(0, path.length - 2),
     Math.max(0, Math.round(path.length * selection.parameters.hiddenPercent / 100)),
   );
+  context.onProgress?.(1);
 
   return {
     path,

@@ -32,12 +32,13 @@ describe('play bead showcase', () => {
     expect(playBeadShowcaseColorsForBoard(pixels, 96)).toHaveLength(96);
   });
 
-  it('disables the showcase for editor playtests', () => {
-    expect(shouldUsePlayBeadShowcase('editor-playtest')).toBe(false);
-    expect(shouldUsePlayBeadShowcase('bead')).toBe(false);
-    expect(shouldUsePlayBeadShowcase('collection')).toBe(false);
-    expect(shouldUsePlayBeadShowcase('normal')).toBe(true);
-    expect(shouldUsePlayBeadShowcase('daily')).toBe(true);
+  it('uses the showcase only in the main gameplay mode', () => {
+    expect(shouldUsePlayBeadShowcase('normal', 'normal')).toBe(true);
+    expect(shouldUsePlayBeadShowcase('normal', 'endless')).toBe(false);
+    expect(shouldUsePlayBeadShowcase('daily', 'normal')).toBe(false);
+    expect(shouldUsePlayBeadShowcase('bead', 'normal')).toBe(false);
+    expect(shouldUsePlayBeadShowcase('collection', 'normal')).toBe(false);
+    expect(shouldUsePlayBeadShowcase('editor-playtest', 'normal')).toBe(false);
   });
 
   it('loads saved progress and advances to the next illustration', () => {

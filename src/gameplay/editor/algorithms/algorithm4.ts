@@ -203,6 +203,7 @@ export const runAlgorithm4 = (
 ): EditorAlgorithmResult | null => {
   const path = generateAlgorithm2Path(context, selection.parameters);
   if (!path) return null;
+  context.onProgress?.(0.98);
 
   const seed = Math.imul(context.generationIndex + 1, 104729)
     ^ Math.imul(context.rows + 1, 73856093)
@@ -210,6 +211,7 @@ export const runAlgorithm4 = (
     ^ path.length
     ^ 0x4f1bbcdc;
   const hiddenCells = selectAlgorithm4HiddenCells(path, context.shape, selection, seed);
+  context.onProgress?.(1);
 
   return {
     path,

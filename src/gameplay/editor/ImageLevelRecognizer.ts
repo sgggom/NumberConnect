@@ -1,6 +1,7 @@
 import {
   MAX_EDITOR_SIZE,
   MIN_EDITOR_SIZE,
+  MIN_RECTANGLE_EDITOR_SIZE,
   type EditorCell,
 } from './types';
 
@@ -252,10 +253,13 @@ const createGridLayout = (
   const regularYAxes = regularizeAxis(yClusters);
   const xAxes = imageWidth === undefined ? regularXAxes : extendAxisToImageEdges(regularXAxes, imageWidth);
   const yAxes = imageHeight === undefined ? regularYAxes : extendAxisToImageEdges(regularYAxes, imageHeight);
+  const minimumGridSize = xAxes.length === yAxes.length
+    ? MIN_GRID_SIZE
+    : MIN_RECTANGLE_EDITOR_SIZE;
   if (
-    xAxes.length < MIN_GRID_SIZE
+    xAxes.length < minimumGridSize
     || xAxes.length > MAX_GRID_SIZE
-    || yAxes.length < MIN_GRID_SIZE
+    || yAxes.length < minimumGridSize
     || yAxes.length > MAX_GRID_SIZE
   ) {
     throw new Error(`无法确定棋盘尺寸（暂时识别为 ${xAxes.length}×${yAxes.length}），请只截取规则的数字棋盘。`);

@@ -75,6 +75,16 @@ describe('clipboard level JSON', () => {
     expect(level.solutionPath).toHaveLength(48);
   });
 
+  it('decodes rectangular levels with a one-cell side', () => {
+    const level = decodeClipboardLevelJson('{"data":[[1,2]]}');
+
+    expect(level).toMatchObject({
+      boardShape: BoardShape.Rectangle,
+      rows: 1,
+      columns: 2,
+    });
+  });
+
   it('rejects invalid text and multi-level collections', () => {
     expect(() => decodeClipboardLevelJson('not json'))
       .toThrow('剪贴板文本不是有效的关卡 JSON');

@@ -8,7 +8,7 @@ import {
 import { BoardShape } from '../game/types';
 
 describe('built-in level collection', () => {
-  it('contains the 9 square levels exported from the local editor', () => {
+  it('contains the 9 campaign levels exported from the local editor', () => {
     const levels = decodeCompactLevelCollection(levelsJson, false);
     const sizeCounts = levels.reduce<Record<string, number>>((counts, level) => {
       const size = `${level.rows}×${level.columns}`;
@@ -20,11 +20,15 @@ describe('built-in level collection', () => {
     expect(levels.map((level) => level.levelId)).toEqual(
       Array.from({ length: 9 }, (_, index) => index + 1),
     );
-    expect(levels.every((level) => level.boardShape === BoardShape.Square)).toBe(true);
+    expect(levels.filter((level) => level.boardShape === BoardShape.Square)).toHaveLength(5);
+    expect(levels.filter((level) => level.boardShape === BoardShape.Rectangle)).toHaveLength(4);
     expect(sizeCounts).toEqual({
-      '6×6': 3,
-      '7×7': 3,
-      '5×5': 3,
+      '1×5': 1,
+      '5×1': 1,
+      '3×5': 1,
+      '5×4': 1,
+      '5×5': 1,
+      '6×6': 4,
     });
     expect(encodeCompactLevelCollection(levels)).toEqual(levelsJson);
   });

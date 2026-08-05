@@ -9,4 +9,9 @@ export {
 } from './registry';
 export { renderEditorAlgorithmParameters } from './parameterEditors';
 export { serializeEditorAlgorithm } from './types';
-export type { EditorAlgorithmId, EditorAlgorithmResult, EditorAlgorithmSelection } from './types';
+export type {
+  EditorAlgorithmContext,
+  EditorAlgorithmId,
+  EditorAlgorithmResult,
+  EditorAlgorithmSelection,
+} from './types';

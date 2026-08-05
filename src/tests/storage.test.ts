@@ -41,7 +41,9 @@ describe('game settings migration', () => {
         hiddenPercent: DEFAULT_SETTINGS.hiddenPercent,
         maxHiddenRun: DEFAULT_SETTINGS.maxHiddenRun,
         targetCrossings: DEFAULT_SETTINGS.targetCrossings,
-        selectedLevelId: 4,
+        mainGameplay: 'beads',
+        beadMainLevelId: 4,
+        puzzleMainLevelId: 4,
         showNextNumber: false,
         showDifficultyScore: false,
         inputMode: DEFAULT_SETTINGS.inputMode,
@@ -106,6 +108,25 @@ describe('game settings migration', () => {
       expect(loadSettings().inputMode).toBe('auto-click');
       expect(loadSettings().inputMode).toBe('click');
       expect(loadSettings().inputMode).toBe('drag');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('keeps the two main gameplay selections and level progress independent', () => {
+    const getItem = vi.fn(() => JSON.stringify({
+      mainGameplay: 'puzzle',
+      beadMainLevelId: 3,
+      puzzleMainLevelId: 8,
+    }));
+    vi.stubGlobal('window', { localStorage: { getItem } });
+
+    try {
+      expect(loadSettings()).toMatchObject({
+        mainGameplay: 'puzzle',
+        beadMainLevelId: 3,
+        puzzleMainLevelId: 8,
+      });
     } finally {
       vi.unstubAllGlobals();
     }

@@ -1,6 +1,10 @@
 import { decodeCompactLevelCollection } from '../../game/levelDataFormat';
-import type { LevelData } from '../../game/types';
-import { MAX_EDITOR_SIZE, MIN_EDITOR_SIZE } from './types';
+import { BoardShape, type LevelData } from '../../game/types';
+import {
+  MAX_EDITOR_SIZE,
+  MIN_EDITOR_SIZE,
+  MIN_RECTANGLE_EDITOR_SIZE,
+} from './types';
 
 const getClipboardJsonCandidate = (text: string): string => {
   const trimmed = text.trim();
@@ -44,14 +48,17 @@ export const decodeClipboardLevelJson = (text: string): LevelData => {
     throw new Error('识别完整关卡一次只能读取一个关卡 JSON。');
   }
   const level = levels[0];
+  const minimumSize = level.boardShape === BoardShape.Rectangle
+    ? MIN_RECTANGLE_EDITOR_SIZE
+    : MIN_EDITOR_SIZE;
   if (
-    level.rows < MIN_EDITOR_SIZE
+    level.rows < minimumSize
     || level.rows > MAX_EDITOR_SIZE
-    || level.columns < MIN_EDITOR_SIZE
+    || level.columns < minimumSize
     || level.columns > MAX_EDITOR_SIZE
   ) {
     throw new Error(
-      `编辑器支持的 JSON 棋盘尺寸为每边 ${MIN_EDITOR_SIZE}–${MAX_EDITOR_SIZE} 格，`
+      `编辑器支持的 JSON 棋盘尺寸为每边 ${minimumSize}–${MAX_EDITOR_SIZE} 格，`
       + `当前为 ${level.columns}×${level.rows}。`,
     );
   }

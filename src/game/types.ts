@@ -15,6 +15,9 @@ export type UiTheme = typeof UI_THEMES[number];
 export const INPUT_MODES = ['drag', 'click', 'auto-click'] as const;
 export type InputMode = typeof INPUT_MODES[number];
 
+export const MAIN_GAMEPLAYS = ['beads', 'puzzle'] as const;
+export type MainGameplay = typeof MAIN_GAMEPLAYS[number];
+
 export const isTouchPreviewSize = (value: unknown): value is TouchPreviewSize => (
   typeof value === 'string' && (TOUCH_PREVIEW_SIZES as readonly string[]).includes(value)
 );
@@ -25,6 +28,10 @@ export const isUiTheme = (value: unknown): value is UiTheme => (
 
 export const isInputMode = (value: unknown): value is InputMode => (
   typeof value === 'string' && (INPUT_MODES as readonly string[]).includes(value)
+);
+
+export const isMainGameplay = (value: unknown): value is MainGameplay => (
+  typeof value === 'string' && (MAIN_GAMEPLAYS as readonly string[]).includes(value)
 );
 
 export const usesClickInput = (mode: InputMode): boolean => mode !== 'drag';
@@ -60,7 +67,9 @@ export interface GameSettings {
   diamondSize: number;
   hexSize: number;
   rectangleSizeIndex: number;
-  selectedLevelId: number;
+  mainGameplay: MainGameplay;
+  beadMainLevelId: number;
+  puzzleMainLevelId: number;
   hiddenPercent: number;
   maxHiddenRun: number;
   maxVisibleRun: number;
@@ -129,6 +138,13 @@ export interface BoardHoldScore {
   badgeScore: number;
 }
 
+export interface BoardArtworkInput {
+  textureKey: string;
+  sourceColumns: number;
+  sourceRows: number;
+  sourceIndex: number;
+}
+
 export interface EndlessStageSettings {
   rows: number;
   columns: number;
@@ -143,6 +159,7 @@ export type GameMode = 'normal' | 'endless';
 export interface BoardSessionInput {
   level: LevelData;
   hiddenCells: Set<string>;
+  artwork?: BoardArtworkInput;
   completionGemColors?: readonly string[];
   completionGemDestination?: 'jar' | 'showcase';
   showNextNumber: boolean;
@@ -172,7 +189,9 @@ export const DEFAULT_SETTINGS: GameSettings = {
   diamondSize: 6,
   hexSize: 6,
   rectangleSizeIndex: 1,
-  selectedLevelId: 1,
+  mainGameplay: 'beads',
+  beadMainLevelId: 1,
+  puzzleMainLevelId: 1,
   hiddenPercent: 35,
   maxHiddenRun: 3,
   maxVisibleRun: 4,

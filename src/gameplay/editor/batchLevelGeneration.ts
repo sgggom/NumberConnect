@@ -7,7 +7,11 @@ import {
   serializeEditorAlgorithm,
   type Algorithm4Selection,
 } from './algorithms/types';
-import type { EditorShape } from './types';
+import {
+  MIN_EDITOR_SIZE,
+  MIN_RECTANGLE_EDITOR_SIZE,
+  type EditorShape,
+} from './types';
 
 export const ALGORITHM4_BATCH_HEADERS = [
   '棋盘形状',
@@ -220,8 +224,11 @@ export const parseAlgorithm4BatchConfigRows = (
     if (isBlankRow(row)) return [];
     const sourceRow = headerRowIndex + offset + 2;
     const shape = parseShape(row[indexes.shape], sourceRow);
-    const parsedRows = parseInteger(row[indexes.rows], sourceRow, '行数', 3, 20);
-    const columns = parseInteger(row[indexes.columns], sourceRow, '列数', 3, 20);
+    const minimumSize = shape === 'rectangle'
+      ? MIN_RECTANGLE_EDITOR_SIZE
+      : MIN_EDITOR_SIZE;
+    const parsedRows = parseInteger(row[indexes.rows], sourceRow, '行数', minimumSize, 20);
+    const columns = parseInteger(row[indexes.columns], sourceRow, '列数', minimumSize, 20);
     validateShapeSize(shape, parsedRows, columns, sourceRow);
     return [{
       sourceRow,

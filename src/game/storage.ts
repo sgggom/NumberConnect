@@ -2,6 +2,7 @@ import {
   BoardShape,
   DEFAULT_SETTINGS,
   isInputMode,
+  isMainGameplay,
   isTouchPreviewSize,
   isUiTheme,
   type GameSettings,
@@ -46,7 +47,7 @@ export const loadSettings = (): GameSettings => {
   if (!hasStorage()) return { ...DEFAULT_SETTINGS };
   try {
     const stored = JSON.parse(window.localStorage.getItem(SETTINGS_KEY) ?? '{}') as (
-      Partial<GameSettings> & { touchPreviewEnabled?: boolean }
+      Partial<GameSettings> & { touchPreviewEnabled?: boolean; selectedLevelId?: number }
     );
     const { touchPreviewEnabled, ...currentSettings } = stored;
     const touchPreviewSize = isTouchPreviewSize(stored.touchPreviewSize)
@@ -56,10 +57,25 @@ export const loadSettings = (): GameSettings => {
         : DEFAULT_SETTINGS.touchPreviewSize;
     const uiTheme = isUiTheme(stored.uiTheme) ? stored.uiTheme : DEFAULT_SETTINGS.uiTheme;
     const inputMode = isInputMode(stored.inputMode) ? stored.inputMode : DEFAULT_SETTINGS.inputMode;
+    const mainGameplay = isMainGameplay(stored.mainGameplay)
+      ? stored.mainGameplay
+      : DEFAULT_SETTINGS.mainGameplay;
+    const legacyLevelId = Number.isInteger(stored.selectedLevelId) && Number(stored.selectedLevelId) > 0
+      ? Number(stored.selectedLevelId)
+      : 1;
+    const beadMainLevelId = Number.isInteger(stored.beadMainLevelId) && Number(stored.beadMainLevelId) > 0
+      ? Number(stored.beadMainLevelId)
+      : legacyLevelId;
+    const puzzleMainLevelId = Number.isInteger(stored.puzzleMainLevelId) && Number(stored.puzzleMainLevelId) > 0
+      ? Number(stored.puzzleMainLevelId)
+      : legacyLevelId;
     return {
       ...DEFAULT_SETTINGS,
       ...currentSettings,
       inputMode,
+      mainGameplay,
+      beadMainLevelId,
+      puzzleMainLevelId,
       uiTheme,
       touchPreviewSize,
       showDifficultyScore: stored.showDifficultyScore === true,

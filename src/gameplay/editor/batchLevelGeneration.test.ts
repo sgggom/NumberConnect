@@ -62,6 +62,19 @@ describe('algorithm 4 batch level generation', () => {
     ])).toThrow('第 2 行：六边形蜂窝棋盘的行数和列数必须相同');
   });
 
+  it('accepts one-cell rectangle dimensions while retaining other shape minimums', () => {
+    const [rectangle] = parseAlgorithm4BatchConfigRows([
+      [...ALGORITHM4_BATCH_HEADERS],
+      ['长方形', 1, 2, 0, 40, 50, 50, 50, 3, 4, 0, 0, 0, 1],
+    ]);
+
+    expect(rectangle).toMatchObject({ shape: 'rectangle', rows: 1, columns: 2 });
+    expect(() => parseAlgorithm4BatchConfigRows([
+      [...ALGORITHM4_BATCH_HEADERS],
+      ['正方形', 2, 2, 0, 40, 50, 50, 50, 3, 4, 0, 0, 0, 1],
+    ])).toThrow('必须是 3–20 的整数');
+  });
+
   it('requires every probability to use a 0–100 integer value', () => {
     expect(() => parseAlgorithm4BatchConfigRows([
       [...ALGORITHM4_BATCH_HEADERS],
