@@ -40,7 +40,7 @@ import {
 import { levelBallColor } from './levelTheme';
 
 type CellShape = Phaser.GameObjects.Arc | Phaser.GameObjects.Polygon;
-type AlphaGameObject = Phaser.GameObjects.GameObject & Phaser.GameObjects.Components.Alpha;
+type AlphaGameObject = Phaser.GameObjects.Components.Alpha | Phaser.GameObjects.Components.AlphaSingle;
 
 interface CellView {
   cell: Cell;
