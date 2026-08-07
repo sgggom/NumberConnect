@@ -21,6 +21,7 @@ import {
   normalizeSimulationRunCount,
   saveLevelEditorPreferences,
   type LevelEditorPreset,
+  type LevelEditorPreferencesSaveResult,
 } from './editorPreferences';
 import { readAlgorithm4BatchConfigFile } from './batchLevelGeneration';
 import { generateAlgorithm4BatchLevelsInWorkers } from './batchLevelGenerationPool';
@@ -2319,8 +2320,23 @@ export class LevelEditorController {
       this.editorPresets = [...this.editorPresets, { id, name, configuration }];
       this.selectedPresetId = id;
     }
-    this.persistPreferences();
+    const saveResult = this.persistPreferences();
     this.renderPresetControls();
+    if (saveResult === 'unavailable') {
+      this.setStatus(
+        `配置预设「${name}」只保留在当前页面，浏览器存储不可用，刷新后可能丢失。`,
+        true,
+      );
+      return;
+    }
+    if (saveResult === 'session') {
+      this.setStatus(
+        `已保存配置预设「${name}」；刷新后仍会保留，关闭当前标签页后可能失效。`,
+        false,
+        true,
+      );
+      return;
+    }
     this.setStatus(
       selectedPreset
         ? `已更新配置预设「${name}」。`
@@ -2357,8 +2373,8 @@ export class LevelEditorController {
     this.setStatus(`已删除配置预设「${preset.name}」。`);
   }
 
-  private persistPreferences(): void {
-    saveLevelEditorPreferences({
+  private persistPreferences(): LevelEditorPreferencesSaveResult {
+    return saveLevelEditorPreferences({
       configuration: this.model.configuration(),
       simulationRunCount: this.simulationRunCount,
       simulationReasoningLevel: this.simulationReasoningLevel,

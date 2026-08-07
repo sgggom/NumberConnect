@@ -70,13 +70,64 @@ describe('level editor preferences', () => {
       selectedPresetId: 'preset-expert',
     };
 
-    saveLevelEditorPreferences(preferences);
+    expect(saveLevelEditorPreferences(preferences)).toBe('persistent');
 
     expect(setItem).toHaveBeenCalledWith(
       'number-connect.level-editor.preferences.v1',
       JSON.stringify(preferences),
     );
     expect(loadLevelEditorPreferences()).toEqual(preferences);
+  });
+
+  it('keeps presets across reloads in the current tab when durable storage is unavailable', () => {
+    const values = new Map<string, string>();
+    const sessionStorage = {
+      getItem: vi.fn((key: string) => values.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => values.set(key, value)),
+    };
+    vi.stubGlobal('window', {
+      localStorage: {
+        getItem: vi.fn(() => null),
+        setItem: vi.fn(() => { throw new Error('storage blocked'); }),
+      },
+      sessionStorage,
+    });
+    const model = new LevelEditorModel();
+    const preferences = {
+      configuration: model.configuration(),
+      simulationRunCount: 12,
+      simulationReasoningLevel: 'medium' as const,
+      presets: [{
+        id: 'preset-session',
+        name: '刷新后保留',
+        configuration: model.configuration(),
+      }],
+      selectedPresetId: 'preset-session',
+    };
+
+    expect(saveLevelEditorPreferences(preferences)).toBe('session');
+    expect(loadLevelEditorPreferences()).toEqual(preferences);
+    expect(sessionStorage.setItem).toHaveBeenCalledOnce();
+  });
+
+  it('prefers the current-tab copy over stale durable preferences', () => {
+    const model = new LevelEditorModel();
+    const storedPreference = (name: string) => JSON.stringify({
+      configuration: model.configuration(),
+      simulationRunCount: 1,
+      simulationReasoningLevel: 'medium',
+      presets: [{ id: `preset-${name}`, name, configuration: model.configuration() }],
+      selectedPresetId: `preset-${name}`,
+    });
+    vi.stubGlobal('window', {
+      localStorage: { getItem: vi.fn(() => storedPreference('旧预设')) },
+      sessionStorage: { getItem: vi.fn(() => storedPreference('新预设')) },
+    });
+
+    expect(loadLevelEditorPreferences()).toMatchObject({
+      selectedPresetId: 'preset-新预设',
+      presets: [{ id: 'preset-新预设', name: '新预设' }],
+    });
   });
 
   it('restores rectangle dimensions below the shared editor minimum', () => {

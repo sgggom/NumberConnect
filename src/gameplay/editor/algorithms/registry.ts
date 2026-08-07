@@ -5,6 +5,8 @@ import { createAlgorithm2Selection, runAlgorithm2 } from './algorithm2';
 import { createAlgorithm3Selection, runAlgorithm3 } from './algorithm3';
 import { createAlgorithm4Selection, runAlgorithm4 } from './algorithm4';
 import { createAlgorithm5Selection, runAlgorithm5 } from './algorithm5';
+import { createAlgorithm6Selection, runAlgorithm6 } from './algorithm6';
+import { createAlgorithm7Selection, runAlgorithm7 } from './algorithm7';
 import type {
   EditorAlgorithmContext,
   EditorAlgorithmDescriptor,
@@ -12,7 +14,7 @@ import type {
   EditorAlgorithmSelection,
 } from './types';
 
-export const DEFAULT_EDITOR_ALGORITHM_ID: EditorAlgorithmId = 'algorithm-5';
+export const DEFAULT_EDITOR_ALGORITHM_ID: EditorAlgorithmId = 'algorithm-6';
 const LEGACY_EDITOR_ALGORITHM_ID: EditorAlgorithmId = 'algorithm-1';
 
 export const EDITOR_ALGORITHMS: readonly EditorAlgorithmDescriptor[] = [
@@ -41,6 +43,16 @@ export const EDITOR_ALGORITHMS: readonly EditorAlgorithmDescriptor[] = [
     label: '算法5',
     description: '沿用算法4的路径与阶段隐藏规则，同行或同列已隐藏数字越多，候选数字的隐藏跳过概率越高。',
   },
+  {
+    id: 'algorithm-6',
+    label: '算法6',
+    description: '复制算法5的路径生成、阶段隐藏与同行同列隐藏跳过规则。',
+  },
+  {
+    id: 'algorithm-7',
+    label: '算法7',
+    description: '生成候选路径后，以逐步求解和玩家模拟结果为目标，反向搜索接近指定难度的隐藏布局。',
+  },
 ];
 
 export const createEditorAlgorithm = (id: EditorAlgorithmId): EditorAlgorithmSelection => {
@@ -55,6 +67,10 @@ export const createEditorAlgorithm = (id: EditorAlgorithmId): EditorAlgorithmSel
       return createAlgorithm4Selection();
     case 'algorithm-5':
       return createAlgorithm5Selection();
+    case 'algorithm-6':
+      return createAlgorithm6Selection();
+    case 'algorithm-7':
+      return createAlgorithm7Selection();
   }
 };
 
@@ -358,6 +374,154 @@ export const normalizeEditorAlgorithm = (
       },
     };
   }
+  if (value?.id === 'algorithm-6') {
+    const defaults = createAlgorithm6Selection();
+    const legacyHiddenProbability = normalizedInteger(
+      value.parameters?.hiddenPercent,
+      defaults.parameters.earlyHiddenProbability,
+      0,
+      100,
+    );
+    return {
+      id: 'algorithm-6',
+      parameters: {
+        topology: 'board-shape',
+        pathMode: 'single-stroke-multiple-solutions',
+        targetCrossings: normalizedInteger(
+          value.parameters?.targetCrossings,
+          defaults.parameters.targetCrossings,
+          0,
+          99,
+        ),
+        turnProbability: normalizedInteger(
+          value.parameters?.turnProbability,
+          defaults.parameters.turnProbability,
+          0,
+          100,
+        ),
+        earlyHiddenProbability: normalizedInteger(
+          value.parameters?.earlyHiddenProbability,
+          legacyHiddenProbability,
+          0,
+          100,
+        ),
+        middleHiddenProbability: normalizedInteger(
+          value.parameters?.middleHiddenProbability,
+          legacyHiddenProbability,
+          0,
+          100,
+        ),
+        lateHiddenProbability: normalizedInteger(
+          value.parameters?.lateHiddenProbability,
+          legacyHiddenProbability,
+          0,
+          100,
+        ),
+        earlyRowColumnHiddenSkipProbability: normalizedInteger(
+          value.parameters?.earlyRowColumnHiddenSkipProbability
+            ?? value.parameters?.earlyAdjacentHiddenSkipProbability,
+          normalizedLegacySkipProbability(
+            value.parameters?.earlySkipAdjacentHidden,
+            defaults.parameters.earlyRowColumnHiddenSkipProbability,
+          ),
+          0,
+          100,
+        ),
+        middleRowColumnHiddenSkipProbability: normalizedInteger(
+          value.parameters?.middleRowColumnHiddenSkipProbability
+            ?? value.parameters?.middleAdjacentHiddenSkipProbability,
+          normalizedLegacySkipProbability(
+            value.parameters?.middleSkipAdjacentHidden,
+            defaults.parameters.middleRowColumnHiddenSkipProbability,
+          ),
+          0,
+          100,
+        ),
+        lateRowColumnHiddenSkipProbability: normalizedInteger(
+          value.parameters?.lateRowColumnHiddenSkipProbability
+            ?? value.parameters?.lateAdjacentHiddenSkipProbability,
+          normalizedLegacySkipProbability(
+            value.parameters?.lateSkipAdjacentHidden,
+            defaults.parameters.lateRowColumnHiddenSkipProbability,
+          ),
+          0,
+          100,
+        ),
+        maxHiddenRun: normalizedInteger(
+          value.parameters?.maxHiddenRun,
+          defaults.parameters.maxHiddenRun,
+          1,
+          8,
+        ),
+        maxVisibleRun: normalizedInteger(
+          value.parameters?.maxVisibleRun,
+          defaults.parameters.maxVisibleRun,
+          1,
+          12,
+        ),
+      },
+    };
+  }
+  if (value?.id === 'algorithm-7') {
+    const defaults = createAlgorithm7Selection();
+    const minimumHiddenPercent = normalizedInteger(
+      value.parameters?.minimumHiddenPercent,
+      defaults.parameters.minimumHiddenPercent,
+      0,
+      90,
+    );
+    const maximumHiddenPercent = normalizedInteger(
+      value.parameters?.maximumHiddenPercent,
+      defaults.parameters.maximumHiddenPercent,
+      minimumHiddenPercent,
+      90,
+    );
+    return {
+      id: 'algorithm-7',
+      parameters: {
+        topology: 'board-shape',
+        pathMode: 'difficulty-inversion-multiple-solutions',
+        targetCrossings: normalizedInteger(
+          value.parameters?.targetCrossings,
+          defaults.parameters.targetCrossings,
+          0,
+          99,
+        ),
+        turnProbability: normalizedInteger(
+          value.parameters?.turnProbability,
+          defaults.parameters.turnProbability,
+          0,
+          100,
+        ),
+        targetDifficulty: normalizedInteger(
+          value.parameters?.targetDifficulty,
+          defaults.parameters.targetDifficulty,
+          1,
+          5,
+        ),
+        searchIterations: normalizedInteger(
+          value.parameters?.searchIterations,
+          defaults.parameters.searchIterations,
+          1,
+          30,
+        ),
+        minimumHiddenPercent,
+        maximumHiddenPercent,
+        maxHiddenRun: normalizedInteger(
+          value.parameters?.maxHiddenRun,
+          defaults.parameters.maxHiddenRun,
+          1,
+          12,
+        ),
+        maxVisibleRun: normalizedInteger(
+          value.parameters?.maxVisibleRun,
+          defaults.parameters.maxVisibleRun,
+          1,
+          16,
+        ),
+      },
+    };
+  }
   return createEditorAlgorithm(LEGACY_EDITOR_ALGORITHM_ID);
 };
 
@@ -405,6 +569,20 @@ export const resolveEditorAlgorithmForShape = (
             parameters: { ...selection.parameters, targetCrossings: 0 },
           }
         : selection;
+    case 'algorithm-6':
+      return shape === 'hex'
+        ? {
+            ...selection,
+            parameters: { ...selection.parameters, targetCrossings: 0 },
+          }
+        : selection;
+    case 'algorithm-7':
+      return shape === 'hex'
+        ? {
+            ...selection,
+            parameters: { ...selection.parameters, targetCrossings: 0 },
+          }
+        : selection;
   }
 };
 
@@ -425,6 +603,10 @@ export const runEditorAlgorithm = (
       return runAlgorithm4(context, resolved);
     case 'algorithm-5':
       return runAlgorithm5(context, resolved);
+    case 'algorithm-6':
+      return runAlgorithm6(context, resolved);
+    case 'algorithm-7':
+      return runAlgorithm7(context, resolved);
   }
 };
 

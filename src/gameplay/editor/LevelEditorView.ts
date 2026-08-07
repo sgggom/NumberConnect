@@ -1,4 +1,4 @@
-const LEVEL_EDITOR_VIEW_VERSION = '30';
+const LEVEL_EDITOR_VIEW_VERSION = '32';
 
 export const mountLevelEditorView = (host: HTMLElement): void => {
   const hasCurrentView = host.dataset.editorViewVersion === LEVEL_EDITOR_VIEW_VERSION
@@ -115,7 +115,9 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
               <option value="algorithm-2">算法2</option>
               <option value="algorithm-3">算法3</option>
               <option value="algorithm-4">算法4</option>
-              <option value="algorithm-5" selected>算法5</option>
+              <option value="algorithm-5">算法5</option>
+              <option value="algorithm-6" selected>算法6</option>
+              <option value="algorithm-7">算法7</option>
             </select>
           </label>
         </div>
