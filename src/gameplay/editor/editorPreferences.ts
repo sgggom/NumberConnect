@@ -3,6 +3,8 @@ import { LevelEditorModel, type LevelEditorConfiguration } from './LevelEditorMo
 
 const LEVEL_EDITOR_PREFERENCES_KEY = 'number-connect.level-editor.preferences.v1';
 
+export type LevelEditorPreferencesSaveResult = 'persistent' | 'session' | 'unavailable';
+
 export interface LevelEditorPreferences {
   configuration: LevelEditorConfiguration;
   simulationRunCount: number;
@@ -63,11 +65,11 @@ export const normalizeSimulationReasoningLevel = (
   value === 'low' || value === 'medium' || value === 'high' ? value : 'medium'
 );
 
-export const loadLevelEditorPreferences = (): StoredLevelEditorPreferences => {
-  if (typeof window === 'undefined' || !('localStorage' in window)) return { presets: [] };
+const parseLevelEditorPreferences = (value: string | null): StoredLevelEditorPreferences | undefined => {
+  if (value === null) return undefined;
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(LEVEL_EDITOR_PREFERENCES_KEY) ?? '{}') as unknown;
-    if (!isRecord(parsed)) return { presets: [] };
+    const parsed = JSON.parse(value) as unknown;
+    if (!isRecord(parsed)) return undefined;
     const presets = normalizeLevelEditorPresets(parsed.presets);
     const selectedPresetId = typeof parsed.selectedPresetId === 'string'
       && presets.some(({ id }) => id === parsed.selectedPresetId)
@@ -81,15 +83,58 @@ export const loadLevelEditorPreferences = (): StoredLevelEditorPreferences => {
       selectedPresetId,
     };
   } catch {
-    return { presets: [] };
+    return undefined;
   }
 };
 
-export const saveLevelEditorPreferences = (preferences: LevelEditorPreferences): void => {
-  if (typeof window === 'undefined' || !('localStorage' in window)) return;
+const browserStorage = (name: 'localStorage' | 'sessionStorage'): Storage | undefined => {
+  if (typeof window === 'undefined' || !(name in window)) return undefined;
   try {
-    window.localStorage.setItem(LEVEL_EDITOR_PREFERENCES_KEY, JSON.stringify(preferences));
+    return window[name];
   } catch {
-    // Keep the editor usable for the current session when storage is unavailable.
+    return undefined;
   }
+};
+
+const loadPreferencesFromStorage = (storage: Storage | undefined): StoredLevelEditorPreferences | undefined => {
+  if (!storage) return undefined;
+  try {
+    return parseLevelEditorPreferences(storage.getItem(LEVEL_EDITOR_PREFERENCES_KEY));
+  } catch {
+    return undefined;
+  }
+};
+
+export const loadLevelEditorPreferences = (): StoredLevelEditorPreferences => (
+  // The session copy is written together with the durable copy. Prefer it in the
+  // current tab so a rejected or stale localStorage write cannot erase presets on reload.
+  loadPreferencesFromStorage(browserStorage('sessionStorage'))
+  ?? loadPreferencesFromStorage(browserStorage('localStorage'))
+  ?? { presets: [] }
+);
+
+const savePreferencesToStorage = (storage: Storage | undefined, value: string): boolean => {
+  if (!storage) return false;
+  try {
+    storage.setItem(LEVEL_EDITOR_PREFERENCES_KEY, value);
+    return storage.getItem(LEVEL_EDITOR_PREFERENCES_KEY) === value;
+  } catch {
+    return false;
+  }
+};
+
+export const saveLevelEditorPreferences = (
+  preferences: LevelEditorPreferences,
+): LevelEditorPreferencesSaveResult => {
+  let value: string;
+  try {
+    value = JSON.stringify(preferences);
+  } catch {
+    return 'unavailable';
+  }
+
+  const sessionSaved = savePreferencesToStorage(browserStorage('sessionStorage'), value);
+  const persistentSaved = savePreferencesToStorage(browserStorage('localStorage'), value);
+  if (persistentSaved) return 'persistent';
+  return sessionSaved ? 'session' : 'unavailable';
 };

@@ -119,7 +119,8 @@ export const renderEditorAlgorithmParameters = (
       host.append(note);
       break;
     }
-    case 'algorithm-5': {
+    case 'algorithm-5':
+    case 'algorithm-6': {
       const description = document.createElement('p');
       description.textContent = EDITOR_ALGORITHMS.find((item) => item.id === selection.id)?.description ?? '';
       const update = (parameters: Partial<typeof selection.parameters>): void => onChange({
@@ -146,6 +147,40 @@ export const renderEditorAlgorithmParameters = (
       );
       const note = document.createElement('small');
       note.textContent = '路径按前 25%、中间 50%、后 25% 依次判断。候选先按隐藏概率选中；同行或同列已有隐藏数字时，实际跳过概率为本阶段配置值 ×（同行同列已隐藏数 ÷ 同行同列有效数字总数）。所有概率填写 0–100 整数；即将超过最长连续显示时会强制隐藏。';
+      host.append(note);
+      break;
+    }
+    case 'algorithm-7': {
+      const description = document.createElement('p');
+      description.textContent = EDITOR_ALGORITHMS.find((item) => item.id === selection.id)?.description ?? '';
+      const update = (parameters: Partial<typeof selection.parameters>): void => onChange({
+        ...selection,
+        parameters: { ...selection.parameters, ...parameters },
+      });
+      const targetCrossings = shape === 'hex' ? 0 : selection.parameters.targetCrossings;
+      const crossings = numberField('最大交叉数量', targetCrossings, 0, 99, (value) => update({ targetCrossings: value }));
+      const crossingsInput = crossings.querySelector('input')!;
+      crossingsInput.disabled = shape === 'hex';
+      crossingsInput.title = shape === 'hex' ? '六边形蜂窝棋盘不会产生交叉' : '路径生成阶段允许出现的最大交叉数量';
+      host.append(
+        description,
+        crossings,
+        numberField('路径拐弯概率 %', selection.parameters.turnProbability, 0, 100, (value) => update({ turnProbability: value })),
+        numberField('目标难度（1–5）', selection.parameters.targetDifficulty, 1, 5, (value) => update({ targetDifficulty: value })),
+        numberField('搜索次数', selection.parameters.searchIterations, 1, 30, (value) => update({ searchIterations: value })),
+        numberField('最低隐藏占比 %', selection.parameters.minimumHiddenPercent, 0, 90, (value) => update({
+          minimumHiddenPercent: value,
+          maximumHiddenPercent: Math.max(value, selection.parameters.maximumHiddenPercent),
+        })),
+        numberField('最高隐藏占比 %', selection.parameters.maximumHiddenPercent, 0, 90, (value) => update({
+          maximumHiddenPercent: value,
+          minimumHiddenPercent: Math.min(value, selection.parameters.minimumHiddenPercent),
+        })),
+        numberField('最长连续隐藏', selection.parameters.maxHiddenRun, 1, 12, (value) => update({ maxHiddenRun: value })),
+        numberField('最长连续显示', selection.parameters.maxVisibleRun, 1, 16, (value) => update({ maxVisibleRun: value })),
+      );
+      const note = document.createElement('small');
+      note.textContent = '算法会反复增删或移动隐藏数字，同时限制隐藏区和显示区的最大空间连通块并提高交错边界。64 格以内使用完整完成性求解模拟；更大棋盘使用快速结构估算。搜索次数越高越接近目标，但生成时间也越长。';
       host.append(note);
       break;
     }

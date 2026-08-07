@@ -91,12 +91,52 @@ export interface Algorithm5Selection {
   parameters: Algorithm5Parameters;
 }
 
+export interface Algorithm6Parameters {
+  topology: 'board-shape';
+  pathMode: 'single-stroke-multiple-solutions';
+  targetCrossings: number;
+  turnProbability: number;
+  earlyHiddenProbability: number;
+  middleHiddenProbability: number;
+  lateHiddenProbability: number;
+  earlyRowColumnHiddenSkipProbability: number;
+  middleRowColumnHiddenSkipProbability: number;
+  lateRowColumnHiddenSkipProbability: number;
+  maxHiddenRun: number;
+  maxVisibleRun: number;
+}
+
+export interface Algorithm6Selection {
+  id: 'algorithm-6';
+  parameters: Algorithm6Parameters;
+}
+
+export interface Algorithm7Parameters {
+  topology: 'board-shape';
+  pathMode: 'difficulty-inversion-multiple-solutions';
+  targetCrossings: number;
+  turnProbability: number;
+  targetDifficulty: number;
+  searchIterations: number;
+  minimumHiddenPercent: number;
+  maximumHiddenPercent: number;
+  maxHiddenRun: number;
+  maxVisibleRun: number;
+}
+
+export interface Algorithm7Selection {
+  id: 'algorithm-7';
+  parameters: Algorithm7Parameters;
+}
+
 export type EditorAlgorithmSelection =
   | Algorithm1Selection
   | Algorithm2Selection
   | Algorithm3Selection
   | Algorithm4Selection
-  | Algorithm5Selection;
+  | Algorithm5Selection
+  | Algorithm6Selection
+  | Algorithm7Selection;
 export type EditorAlgorithmId = EditorAlgorithmSelection['id'];
 
 export interface EditorAlgorithmDescriptor {
