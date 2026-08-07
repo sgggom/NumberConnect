@@ -75,13 +75,15 @@ describe('level editor view layout', () => {
     const fillIndex = markup.indexOf('id="editor-fill-button"');
     const clearIndex = markup.indexOf('id="editor-clear-button"');
     const generateIndex = markup.indexOf('id="editor-generate-path-button"');
+    const hiddenIndex = markup.indexOf('id="editor-calculate-hidden-button"');
     const undoIndex = markup.indexOf('id="editor-undo-delete-button"');
     const playtestIndex = markup.indexOf('id="editor-playtest-button"');
 
     expect(fillIndex).toBeGreaterThan(actionsIndex);
     expect(clearIndex).toBeGreaterThan(fillIndex);
     expect(generateIndex).toBeGreaterThan(clearIndex);
-    expect(undoIndex).toBeGreaterThan(generateIndex);
+    expect(hiddenIndex).toBeGreaterThan(generateIndex);
+    expect(undoIndex).toBeGreaterThan(hiddenIndex);
     expect(playtestIndex).toBeGreaterThan(undoIndex);
     expect(markup).not.toContain('class="editor-board-actions"');
   });
@@ -91,5 +93,7 @@ describe('level editor view layout', () => {
 
     expect(markup).toContain('id="editor-generate-path-button"');
     expect(markup).toContain('id="editor-generate-path-label">生成路径</span>');
+    expect(markup).toContain('id="editor-calculate-hidden-button"');
+    expect(markup).toContain('id="editor-calculate-hidden-label">计算隐藏</span>');
   });
 });

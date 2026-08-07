@@ -1,4 +1,4 @@
-const LEVEL_EDITOR_VIEW_VERSION = '32';
+const LEVEL_EDITOR_VIEW_VERSION = '33';
 
 export const mountLevelEditorView = (host: HTMLElement): void => {
   const hasCurrentView = host.dataset.editorViewVersion === LEVEL_EDITOR_VIEW_VERSION
@@ -196,6 +196,9 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
           <button id="editor-clear-button" class="button button--secondary button--small">清空棋盘</button>
           <button id="editor-generate-path-button" class="button button--secondary" type="button">
             <span id="editor-generate-path-label">生成路径</span>
+          </button>
+          <button id="editor-calculate-hidden-button" class="button button--secondary" type="button" disabled>
+            <span id="editor-calculate-hidden-label">计算隐藏</span>
           </button>
           <button id="editor-undo-delete-button" class="button button--secondary button--small" title="Ctrl+Z" disabled>撤销删除</button>
           <button id="editor-playtest-button" class="button button--secondary" disabled>试玩关卡</button>

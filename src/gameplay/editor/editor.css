@@ -188,11 +188,11 @@
 .stepper b { text-align: center; }
 .editor-actions { margin-top: auto; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .editor-actions .button { min-width: 0; }
-.editor-actions #editor-generate-path-button { --editor-path-generation-progress: 0; position: relative; isolation: isolate; overflow: hidden; display: inline-grid; place-items: center; }
-.editor-actions #editor-generate-path-button::before { content: ""; position: absolute; inset: 0; z-index: 0; border-radius: inherit; background: linear-gradient(90deg, #2f9e83, #58d0aa); transform: scaleX(var(--editor-path-generation-progress)); transform-origin: left center; transition: transform .08s linear; pointer-events: none; }
-.editor-actions #editor-generate-path-button > span { position: relative; z-index: 1; color: inherit; font-variant-numeric: tabular-nums; }
-.editor-actions #editor-generate-path-button.is-calculating { border-color: rgba(115,241,203,.72); color: #fff; box-shadow: inset 0 0 0 1px rgba(215,255,243,.1), 0 0 14px rgba(88,208,170,.14); }
-.editor-actions #editor-generate-path-button.is-calculating:disabled { cursor: wait; opacity: 1; }
+.editor-actions :is(#editor-generate-path-button, #editor-calculate-hidden-button) { --editor-path-generation-progress: 0; position: relative; isolation: isolate; overflow: hidden; display: inline-grid; place-items: center; }
+.editor-actions :is(#editor-generate-path-button, #editor-calculate-hidden-button)::before { content: ""; position: absolute; inset: 0; z-index: 0; border-radius: inherit; background: linear-gradient(90deg, #2f9e83, #58d0aa); transform: scaleX(var(--editor-path-generation-progress)); transform-origin: left center; transition: transform .08s linear; pointer-events: none; }
+.editor-actions :is(#editor-generate-path-button, #editor-calculate-hidden-button) > span { position: relative; z-index: 1; color: inherit; font-variant-numeric: tabular-nums; }
+.editor-actions :is(#editor-generate-path-button, #editor-calculate-hidden-button).is-calculating { border-color: rgba(115,241,203,.72); color: #fff; box-shadow: inset 0 0 0 1px rgba(215,255,243,.1), 0 0 14px rgba(88,208,170,.14); }
+.editor-actions :is(#editor-generate-path-button, #editor-calculate-hidden-button).is-calculating:disabled { cursor: wait; opacity: 1; }
 .editor-actions #editor-playtest-button { grid-column: 1 / -1; }
 .editor-level-panel { min-width: 0; min-height: 0; padding: 18px; display: grid; grid-template-rows: auto auto minmax(0, 1fr); gap: 12px; overflow: hidden; border: 1px solid var(--line); border-radius: 22px; background: var(--panel); }
 .editor-level-panel__header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
@@ -242,7 +242,7 @@
 @keyframes editor-image-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
   .editor-cell, .editor-grid { transition: none; }
-  .editor-actions #editor-generate-path-button::before { transition: none; }
+  .editor-actions :is(#editor-generate-path-button, #editor-calculate-hidden-button)::before { transition: none; }
   .editor-simulation-mask, .editor-simulation-overlay { transition: none; }
 }
 

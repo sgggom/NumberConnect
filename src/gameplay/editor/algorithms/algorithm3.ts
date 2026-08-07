@@ -174,9 +174,14 @@ export const runAlgorithm3 = (
   context: EditorAlgorithmContext,
   selection: Algorithm3Selection,
 ): EditorAlgorithmResult | null => {
-  const path = generateAlgorithm2Path(context, selection.parameters);
+  const path = context.fixedPath?.map((cell) => ({ ...cell }))
+    ?? generateAlgorithm2Path(context, selection.parameters);
   if (!path) return null;
   context.onProgress?.(0.98);
+  if (context.generationPhase === 'path') {
+    context.onProgress?.(1);
+    return { path };
+  }
 
   const seed = Math.imul(context.generationIndex + 1, 104729)
     ^ Math.imul(context.rows + 1, 73856093)

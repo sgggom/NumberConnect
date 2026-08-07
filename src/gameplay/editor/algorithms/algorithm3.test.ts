@@ -201,6 +201,7 @@ describe('editor algorithm 3', () => {
     });
 
     expect(model.generatePath()).toBe(true);
+    expect(model.generateHiddenLayout()).toBe(true);
     const level = model.createLevel(303);
     expect(level?.algorithm).toMatchObject({
       id: 'algorithm-3',

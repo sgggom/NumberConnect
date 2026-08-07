@@ -102,6 +102,7 @@ export class LevelEditorController {
   private pathGenerationRun = 0;
   private isPathCalculating = false;
   private pathCalculationProgress = 0;
+  private pathCalculationMode: 'path' | 'hidden' = 'path';
   private imageRecognitionRun = 0;
   private isImageRecognizing = false;
   private isBatchGenerating = false;
@@ -241,6 +242,7 @@ export class LevelEditorController {
     this.query('#editor-image-formation-button').addEventListener('click', () => void this.readRecognitionInputFromClipboard('initial-formation'));
     this.query('#editor-undo-delete-button').addEventListener('click', () => this.undoLastDeletion());
     this.query('#editor-generate-path-button').addEventListener('click', () => void this.generatePath());
+    this.query('#editor-calculate-hidden-button').addEventListener('click', () => void this.calculateHiddenLayout());
     this.query<HTMLInputElement>('#editor-simulation-count').addEventListener('change', (event) => {
       const input = event.currentTarget as HTMLInputElement;
       this.simulationRunCount = normalizeSimulationRunCount(input.value);
@@ -468,6 +470,12 @@ export class LevelEditorController {
     fillButton.disabled = pathBusy;
     this.query<HTMLButtonElement>('#editor-clear-button').disabled = pathBusy;
     this.query<HTMLButtonElement>('#editor-generate-path-button').disabled = this.model.manualEditMode !== 'off' || pathBusy;
+    this.query<HTMLButtonElement>('#editor-calculate-hidden-button').disabled = (
+      this.model.manualEditMode !== 'off'
+      || !this.model.hasGeneratedPath
+      || this.model.algorithmSelection.id === 'algorithm-1'
+      || pathBusy
+    );
     this.renderPathGenerationButton();
     this.query<HTMLButtonElement>('#editor-undo-delete-button').disabled = !this.model.canUndoDeletion || pathBusy;
     const sizeLimits = this.model.sizeLimits();
@@ -1570,6 +1578,7 @@ export class LevelEditorController {
     this.cancelPathCalculation();
     const run = ++this.pathGenerationRun;
     const request = this.model.preparePathGeneration();
+    this.pathCalculationMode = 'path';
     this.isPathCalculating = true;
     this.pathCalculationProgress = 0;
     this.render();
@@ -1589,7 +1598,7 @@ export class LevelEditorController {
       this.pathGenerationTask = undefined;
       this.isPathCalculating = false;
       this.pathCalculationProgress = 0;
-      this.model.applyPathGenerationResult(null);
+      this.model.applyGeneratedPathResult(null);
       this.render();
       this.setStatus(
         error instanceof Error ? `路径生成失败：${error.message}` : '路径生成失败。',
@@ -1603,17 +1612,69 @@ export class LevelEditorController {
     this.updatePathCalculationProgress(1);
     this.isPathCalculating = false;
     this.pathCalculationProgress = 0;
-    if (!this.model.applyPathGenerationResult(generated)) {
+    if (!this.model.applyGeneratedPathResult(generated)) {
       this.render();
       this.setStatus('当前算法无法生成覆盖全部格子的路径，请调整棋盘或更换算法。', true);
       return;
     }
-    const hiddenSummary = this.model.algorithmSelection.id === 'algorithm-1'
+    const nextStep = this.model.algorithmSelection.id === 'algorithm-1'
       ? ''
-      : this.model.targetHiddenCount === undefined
-        ? `，隐藏 ${this.model.hiddenCellKeys.size} 格，纯运气分叉 0`
-        : `，隐藏 ${this.model.hiddenCellKeys.size}/${this.model.targetHiddenCount} 格，纯运气分叉 0`;
-    this.animateGeneratedPath(`第 ${this.model.pathGenerationCount} 次路径生成成功：共 ${this.model.solutionPath.length} 个格子${hiddenSummary}。`);
+      : '，请点击“计算隐藏”生成隐藏布局';
+    this.animateGeneratedPath(`第 ${this.model.pathGenerationCount} 次路径生成成功：共 ${this.model.solutionPath.length} 个格子${nextStep}。`);
+  }
+
+  private async calculateHiddenLayout(): Promise<void> {
+    const request = this.model.prepareHiddenGeneration();
+    if (!request) {
+      this.setStatus('请先生成完整路径，再计算隐藏。', true);
+      return;
+    }
+    this.cancelPathAnimation();
+    this.cancelPathCalculation();
+    const run = ++this.pathGenerationRun;
+    this.pathCalculationMode = 'hidden';
+    this.isPathCalculating = true;
+    this.pathCalculationProgress = 0;
+    this.render();
+    this.updatePathCalculationProgress(0);
+
+    const task = startEditorPathGeneration(request, (progress) => {
+      if (run !== this.pathGenerationRun) return;
+      this.updatePathCalculationProgress(progress);
+    });
+    this.pathGenerationTask = task;
+
+    let generated;
+    try {
+      generated = await task.promise;
+    } catch (error) {
+      if (run !== this.pathGenerationRun || (error instanceof Error && error.name === 'AbortError')) return;
+      this.pathGenerationTask = undefined;
+      this.isPathCalculating = false;
+      this.pathCalculationProgress = 0;
+      this.render();
+      this.setStatus(
+        error instanceof Error ? `隐藏计算失败：${error.message}` : '隐藏计算失败。',
+        true,
+      );
+      return;
+    }
+
+    if (run !== this.pathGenerationRun) return;
+    this.pathGenerationTask = undefined;
+    this.updatePathCalculationProgress(1);
+    this.isPathCalculating = false;
+    this.pathCalculationProgress = 0;
+    if (!this.model.applyHiddenGenerationResult(generated)) {
+      this.render();
+      this.setStatus('当前算法无法为这条路径计算隐藏布局。', true);
+      return;
+    }
+    this.render();
+    const targetSummary = this.model.targetHiddenCount === undefined
+      ? ''
+      : `/${this.model.targetHiddenCount}`;
+    this.setStatus(`隐藏计算完成：隐藏 ${this.model.hiddenCellKeys.size}${targetSummary} 格；完整路径保持不变。`);
   }
 
   private updatePathCalculationProgress(progress: number): void {
@@ -1625,22 +1686,29 @@ export class LevelEditorController {
     if (percentage === this.pathCalculationProgress && percentage !== 0) return;
     this.pathCalculationProgress = percentage;
     this.renderPathGenerationButton();
-    this.setStatus(`正在计算路径 ${percentage}%…`);
+    this.setStatus(`正在计算${this.pathCalculationMode === 'path' ? '路径' : '隐藏'} ${percentage}%…`);
   }
 
   private renderPathGenerationButton(): void {
-    const button = this.query<HTMLButtonElement>('#editor-generate-path-button');
-    const label = this.query<HTMLElement>('#editor-generate-path-label');
     const percentage = Math.max(0, Math.min(100, this.pathCalculationProgress));
-    button.classList.toggle('is-calculating', this.isPathCalculating);
-    button.style.setProperty('--editor-path-generation-progress', String(percentage / 100));
-    button.setAttribute('aria-busy', String(this.isPathCalculating));
-    label.textContent = this.isPathCalculating ? `计算中 ${percentage}%` : '生成路径';
-    if (this.isPathCalculating) {
-      button.setAttribute('aria-label', `正在计算路径，${percentage}%`);
-    } else {
-      button.removeAttribute('aria-label');
-    }
+    const renderButton = (
+      mode: 'path' | 'hidden',
+      buttonId: string,
+      labelId: string,
+      idleLabel: string,
+    ): void => {
+      const button = this.query<HTMLButtonElement>(buttonId);
+      const label = this.query<HTMLElement>(labelId);
+      const active = this.isPathCalculating && this.pathCalculationMode === mode;
+      button.classList.toggle('is-calculating', active);
+      button.style.setProperty('--editor-path-generation-progress', String(active ? percentage / 100 : 0));
+      button.setAttribute('aria-busy', String(active));
+      label.textContent = active ? `计算中 ${percentage}%` : idleLabel;
+      if (active) button.setAttribute('aria-label', `正在计算${mode === 'path' ? '路径' : '隐藏'}，${percentage}%`);
+      else button.removeAttribute('aria-label');
+    };
+    renderButton('path', '#editor-generate-path-button', '#editor-generate-path-label', '生成路径');
+    renderButton('hidden', '#editor-calculate-hidden-button', '#editor-calculate-hidden-label', '计算隐藏');
   }
 
   private animateGeneratedPath(completionMessage: string): void {
@@ -2240,9 +2308,15 @@ export class LevelEditorController {
     const parameterHost = this.query<HTMLElement>('#editor-algorithm-parameters');
     parameterHost.dataset.algorithm = this.model.algorithmSelection.id;
     renderEditorAlgorithmParameters(parameterHost, this.model.algorithmSelection, this.model.shape, (selection) => {
+      const hadPath = this.model.hasGeneratedPath;
       this.model.setAlgorithmSelection(selection);
       this.persistPreferences();
       this.render();
+      if (hadPath && this.model.hasGeneratedPath) {
+        this.setStatus('隐藏参数已更新，完整路径已保留，请重新计算隐藏。');
+      } else if (hadPath) {
+        this.setStatus('路径参数已更新，请重新生成路径。');
+      }
     });
     parameterHost.querySelectorAll<HTMLInputElement>('input').forEach((input) => {
       input.disabled = input.disabled || this.isPathBusy();

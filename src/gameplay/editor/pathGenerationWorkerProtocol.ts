@@ -11,6 +11,8 @@ export interface EditorPathGenerationWorkerContext {
   shape: EditorShape;
   generationIndex: number;
   fallbackPath?: EditorCell[];
+  fixedPath?: EditorCell[];
+  generationPhase?: 'combined' | 'path' | 'hidden';
   searchMode?: 'quality' | 'realtime';
 }
 
