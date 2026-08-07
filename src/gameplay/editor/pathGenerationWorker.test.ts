@@ -97,9 +97,15 @@ describe('single path generation worker', () => {
   it('serializes active cells and forwards worker progress before completion', async () => {
     vi.stubGlobal('Worker', FakePathGenerationWorker);
     const progress: number[] = [];
+    const request = generationRequest();
+    request.context.generationPhase = 'hidden';
+    request.context.fixedPath = [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+    ];
 
     const result = await startEditorPathGeneration(
-      generationRequest(),
+      request,
       (value) => progress.push(value),
     ).promise;
 
@@ -109,6 +115,8 @@ describe('single path generation worker', () => {
       '0,1',
       '1,1',
     ]);
+    expect(FakePathGenerationWorker.lastRequest?.context.generationPhase).toBe('hidden');
+    expect(FakePathGenerationWorker.lastRequest?.context.fixedPath).toEqual(request.context.fixedPath);
     expect(progress).toEqual([0.42]);
     expect(result?.path).toHaveLength(2);
     expect(FakePathGenerationWorker.instances[0].terminated).toBe(true);

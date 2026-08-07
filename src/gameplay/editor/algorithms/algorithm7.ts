@@ -530,13 +530,19 @@ export const runAlgorithm7 = (
   context: EditorAlgorithmContext,
   selection: Algorithm7Selection,
 ): EditorAlgorithmResult | null => {
-  const path = generateAlgorithm2Path({
+  const fixedPath = context.fixedPath?.map((cell) => ({ ...cell }));
+  const pathProgressWeight = fixedPath ? 0 : 0.34;
+  const path = fixedPath ?? generateAlgorithm2Path({
     ...context,
     searchMode: context.activeCells.size > 81 ? 'realtime' : context.searchMode,
-    onProgress: (progress) => context.onProgress?.(progress * 0.34),
+    onProgress: (progress) => context.onProgress?.(progress * pathProgressWeight),
   }, selection.parameters);
   if (!path) return null;
-  context.onProgress?.(0.34);
+  context.onProgress?.(pathProgressWeight);
+  if (context.generationPhase === 'path') {
+    context.onProgress?.(1);
+    return { path };
+  }
 
   const seed = Math.imul(context.generationIndex + 1, 104729)
     ^ Math.imul(context.rows + 1, 73856093)
@@ -548,7 +554,9 @@ export const runAlgorithm7 = (
     context.shape,
     selection,
     seed,
-    (progress) => context.onProgress?.(0.34 + progress * 0.66),
+    (progress) => context.onProgress?.(
+      pathProgressWeight + progress * (1 - pathProgressWeight),
+    ),
   );
   context.onProgress?.(1);
   return {

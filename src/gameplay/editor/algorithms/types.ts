@@ -8,6 +8,8 @@ export interface EditorAlgorithmContext {
   shape: EditorShape;
   generationIndex: number;
   fallbackPath?: ReadonlyArray<EditorCell>;
+  fixedPath?: ReadonlyArray<EditorCell>;
+  generationPhase?: 'combined' | 'path' | 'hidden';
   searchMode?: 'quality' | 'realtime';
   onProgress?: (progress: number) => void;
 }

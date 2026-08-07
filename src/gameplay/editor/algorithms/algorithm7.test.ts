@@ -114,9 +114,17 @@ describe('editor algorithm 7 difficulty inversion', () => {
       searchMode: 'quality' as const,
     };
 
-    const first = runAlgorithm7(context, selection);
-    const second = runAlgorithm7(context, selection);
+    const pathOnly = runAlgorithm7({ ...context, generationPhase: 'path' }, selection);
+    expect(pathOnly?.hiddenCells).toBeUndefined();
+    const hiddenContext = {
+      ...context,
+      generationPhase: 'hidden' as const,
+      fixedPath: pathOnly?.path,
+    };
+    const first = runAlgorithm7(hiddenContext, selection);
+    const second = runAlgorithm7(hiddenContext, selection);
     expect(first).toEqual(second);
+    expect(first?.path).toEqual(pathOnly?.path);
     expect(first?.path).toHaveLength(9);
     expect(first?.hiddenCells?.length).toBeGreaterThanOrEqual(2);
     expect(first?.hiddenCells?.length).toBeLessThanOrEqual(7);

@@ -38,6 +38,18 @@ const createGenerationSeed = (): number => {
   return Math.floor(Math.random() * 0x100000000) >>> 0;
 };
 
+const pathGenerationSignature = (selection: EditorAlgorithmSelection): string => {
+  const parameters = selection.parameters as {
+    targetCrossings: number;
+    turnProbability?: number;
+  };
+  return JSON.stringify({
+    id: selection.id,
+    targetCrossings: parameters.targetCrossings,
+    turnProbability: parameters.turnProbability,
+  });
+};
+
 interface DeletionUndoSnapshot {
   paintedCells: string[];
   path: EditorCell[];
@@ -322,8 +334,11 @@ export class LevelEditorModel {
   }
 
   public setAlgorithmSelection(selection: EditorAlgorithmSelection): void {
+    const pathChanged = pathGenerationSignature(this.algorithm)
+      !== pathGenerationSignature(selection);
     this.algorithm = selection;
-    this.invalidatePath();
+    if (pathChanged) this.invalidatePath();
+    else this.invalidateHiddenLayout();
   }
 
   public setManualEditMode(mode: ManualEditMode): void {
@@ -508,8 +523,41 @@ export class LevelEditorModel {
         activeCells: new Set(this.paintedCells),
         shape: this.currentShape,
         generationIndex,
+        generationPhase: 'path',
       },
     };
+  }
+
+  public prepareHiddenGeneration(): LevelEditorPathGenerationRequest | null {
+    if (!this.hasGeneratedPath || this.algorithm.id === 'algorithm-1') return null;
+    const { rows, columns } = this.size();
+    return {
+      selection: normalizeEditorAlgorithm(serializeEditorAlgorithm(this.algorithm)),
+      context: {
+        rows,
+        columns,
+        activeCells: new Set(this.paintedCells),
+        shape: this.currentShape,
+        generationIndex: createGenerationSeed(),
+        generationPhase: 'hidden',
+        fixedPath: this.path.map((cell) => ({ ...cell })),
+      },
+    };
+  }
+
+  public applyGeneratedPathResult(result: EditorAlgorithmResult | null): boolean {
+    this.path = result?.path ?? [];
+    this.invalidateHiddenLayout();
+    return result !== null;
+  }
+
+  public applyHiddenGenerationResult(result: EditorAlgorithmResult | null): boolean {
+    if (!result) return false;
+    this.manualHiddenCells.clear();
+    result.hiddenCells?.forEach((cell) => this.manualHiddenCells.add(keyOf(cell)));
+    this.manualHiddenConfigured = true;
+    this.generatedTargetHiddenCount = result.targetHiddenCount;
+    return true;
   }
 
   public applyPathGenerationResult(result: EditorAlgorithmResult | null): boolean {
@@ -524,7 +572,16 @@ export class LevelEditorModel {
 
   public generatePath(): boolean {
     const request = this.preparePathGeneration();
-    return this.applyPathGenerationResult(runEditorAlgorithm(
+    return this.applyGeneratedPathResult(runEditorAlgorithm(
+      request.selection,
+      request.context,
+    ));
+  }
+
+  public generateHiddenLayout(): boolean {
+    const request = this.prepareHiddenGeneration();
+    if (!request) return false;
+    return this.applyHiddenGenerationResult(runEditorAlgorithm(
       request.selection,
       request.context,
     ));
@@ -585,6 +642,13 @@ export class LevelEditorModel {
     this.deletionUndo = undefined;
     this.path = [];
     this.generationCount = 0;
+    this.manualHiddenCells.clear();
+    this.manualHiddenConfigured = false;
+    this.generatedTargetHiddenCount = undefined;
+  }
+
+  private invalidateHiddenLayout(): void {
+    this.deletionUndo = undefined;
     this.manualHiddenCells.clear();
     this.manualHiddenConfigured = false;
     this.generatedTargetHiddenCount = undefined;

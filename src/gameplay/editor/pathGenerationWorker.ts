@@ -130,6 +130,7 @@ export const startEditorPathGeneration = (
       ...request.context,
       activeCells: [...request.context.activeCells],
       fallbackPath: request.context.fallbackPath?.map((cell) => ({ ...cell })),
+      fixedPath: request.context.fixedPath?.map((cell) => ({ ...cell })),
     },
   };
   try {

@@ -71,9 +71,21 @@ describe('level editor path generation', () => {
     model.setAlgorithm('algorithm-2');
 
     expect(model.generatePath()).toBe(true);
+    const generatedPath = model.solutionPath.map((cell) => ({ ...cell }));
+    expect(model.createLevel(100)?.hiddenCells).toBeUndefined();
+    const selection = model.algorithmSelection;
+    if (selection.id !== 'algorithm-2') throw new Error('算法2未正确加载。');
+    model.setAlgorithmSelection({
+      ...selection,
+      parameters: { ...selection.parameters, hiddenPercent: 65 },
+    });
+    expect(model.solutionPath).toEqual(generatedPath);
+    expect(model.generateHiddenLayout()).toBe(true);
+    expect(model.solutionPath).toEqual(generatedPath);
     const level = model.createLevel(101);
     expect(level?.algorithm?.id).toBe('algorithm-2');
     expect(level?.algorithm?.parameters.turnProbability).toBe(40);
+    expect(level?.algorithm?.parameters.hiddenPercent).toBe(65);
     expect(level?.algorithm?.parameters.pathMode).toBe('single-stroke-multiple-solutions');
     expect(level?.hiddenCells).toBeDefined();
     expect(level?.hiddenCells?.length).toBeGreaterThan(0);
