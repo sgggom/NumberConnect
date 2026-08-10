@@ -15,7 +15,7 @@ export type UiTheme = typeof UI_THEMES[number];
 export const INPUT_MODES = ['drag', 'click', 'auto-click'] as const;
 export type InputMode = typeof INPUT_MODES[number];
 
-export const MAIN_GAMEPLAYS = ['beads', 'puzzle'] as const;
+export const MAIN_GAMEPLAYS = ['beads', 'puzzle', 'mode3', 'mode4'] as const;
 export type MainGameplay = typeof MAIN_GAMEPLAYS[number];
 
 export const isTouchPreviewSize = (value: unknown): value is TouchPreviewSize => (
@@ -70,6 +70,8 @@ export interface GameSettings {
   mainGameplay: MainGameplay;
   beadMainLevelId: number;
   puzzleMainLevelId: number;
+  mode3MainLevelId: number;
+  mode4MainLevelId: number;
   hiddenPercent: number;
   maxHiddenRun: number;
   maxVisibleRun: number;
@@ -192,6 +194,8 @@ export const DEFAULT_SETTINGS: GameSettings = {
   mainGameplay: 'beads',
   beadMainLevelId: 1,
   puzzleMainLevelId: 1,
+  mode3MainLevelId: 1,
+  mode4MainLevelId: 1,
   hiddenPercent: 35,
   maxHiddenRun: 3,
   maxVisibleRun: 4,

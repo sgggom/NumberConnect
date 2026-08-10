@@ -3,6 +3,7 @@ import {
   loadBeadLevels,
   loadBuiltInLevels,
   loadLevelCollection,
+  loadMode3Levels,
   loadSettings,
   saveLevelCollection,
 } from '../game/storage';
@@ -44,6 +45,8 @@ describe('game settings migration', () => {
         mainGameplay: 'beads',
         beadMainLevelId: 4,
         puzzleMainLevelId: 4,
+        mode3MainLevelId: 4,
+        mode4MainLevelId: 4,
         showNextNumber: false,
         showDifficultyScore: false,
         inputMode: DEFAULT_SETTINGS.inputMode,
@@ -140,19 +143,23 @@ describe('game settings migration', () => {
     }
   });
 
-  it('keeps the two main gameplay selections and level progress independent', () => {
+  it('keeps the four main gameplay selections and level progress independent', () => {
     const getItem = vi.fn(() => JSON.stringify({
-      mainGameplay: 'puzzle',
+      mainGameplay: 'mode4',
       beadMainLevelId: 3,
       puzzleMainLevelId: 8,
+      mode3MainLevelId: 5,
+      mode4MainLevelId: 7,
     }));
     vi.stubGlobal('window', { localStorage: { getItem } });
 
     try {
       expect(loadSettings()).toMatchObject({
-        mainGameplay: 'puzzle',
+        mainGameplay: 'mode4',
         beadMainLevelId: 3,
         puzzleMainLevelId: 8,
+        mode3MainLevelId: 5,
+        mode4MainLevelId: 7,
       });
     } finally {
       vi.unstubAllGlobals();
@@ -199,7 +206,7 @@ describe('level collection migration', () => {
     }
   });
 
-  it('loads separate official level pools for the campaign and bead gameplay', async () => {
+  it('loads separate official level pools for the campaign, bead gameplay, and gameplay 3', async () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,
       json: async () => [{ data: [[1]] }],
@@ -219,8 +226,15 @@ describe('level collection migration', () => {
         algorithm: { id: 'algorithm-4' },
         custom: false,
       }]);
+      await expect(loadMode3Levels()).resolves.toMatchObject([{
+        levelId: 1,
+        pathSource: 'generated',
+        algorithm: { id: 'algorithm-8' },
+        custom: false,
+      }]);
       expect(fetchMock).toHaveBeenNthCalledWith(1, './levels/levels.json');
       expect(fetchMock).toHaveBeenNthCalledWith(2, './levels/bead-levels.json');
+      expect(fetchMock).toHaveBeenNthCalledWith(3, './levels/mode3-levels.json');
     } finally {
       vi.unstubAllGlobals();
     }

@@ -1811,7 +1811,7 @@ html[data-theme="night"] .primary-tab-button.is-active::before { background: var
 .setting-segmented input:checked + span { color: #fff; background: #3978b8; box-shadow: 0 4px 10px rgba(57,120,184,.22); }
 .setting-segmented input:focus-visible + span { outline: 3px solid rgba(107,182,255,.65); outline-offset: 1px; }
 .setting-theme-control { width: 132px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.setting-main-gameplay-control { width: 132px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.setting-main-gameplay-control { width: 252px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .setting-input-mode-control { width: 184px; grid-template-columns: 1fr 1.55fr 1fr; }
 .setting-row--button { width: 100%; padding: 0; color: inherit; text-align: left; background: transparent; border-right: 0; border-bottom: 0; border-left: 0; cursor: pointer; font: inherit; }
 .setting-row--button strong { color: #2f987b; font-size: .8rem; transition: color .16s ease; }

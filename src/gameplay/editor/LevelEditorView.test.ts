@@ -15,14 +15,16 @@ const renderEditorMarkup = (): string => {
 };
 
 describe('level editor view layout', () => {
-  it('keeps only size and hidden ratio in the information summary', () => {
+  it('shows size, hidden ratio, and longest visibility runs in the information summary', () => {
     const markup = renderEditorMarkup();
 
     expect(markup).toContain('id="editor-info-size"');
     expect(markup).toContain('id="editor-info-hidden-ratio"');
+    expect(markup).toContain('id="editor-info-longest-visible-run">0 格</strong>');
+    expect(markup).toContain('id="editor-info-longest-hidden-run">0 格</strong>');
     expect(markup).not.toContain('路径结构');
-    expect(markup).not.toContain('最长隐藏长度');
-    expect(markup).not.toContain('最长显示长度');
+    expect(markup).toContain('最长连续显示');
+    expect(markup).toContain('最长连续隐藏');
   });
 
   it('places simulation and the level list in the insights column before the board', () => {

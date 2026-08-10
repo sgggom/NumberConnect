@@ -165,7 +165,25 @@ export const decodeCompactLevelCollection = (
   value: unknown,
   custom: boolean,
 ): LevelData[] => {
-  const source = Array.isArray(value) ? value : [value];
+  let namedSource: unknown[] | undefined;
+  if (isRecord(value) && !('data' in value)) {
+    const entries = Object.entries(value).map(([key, level]) => {
+      const match = /^level_([1-9]\d*)$/.exec(key);
+      return match ? { levelId: Number(match[1]), level } : undefined;
+    });
+    if (entries.length > 0 && entries.every((entry) => entry !== undefined)) {
+      const ordered = entries
+        .filter((entry): entry is { levelId: number; level: unknown } => entry !== undefined)
+        .sort((left, right) => left.levelId - right.levelId);
+      ordered.forEach((entry, index) => {
+        if (entry.levelId !== index + 1) {
+          throw new Error('命名关卡必须从 level_1 开始连续编号。');
+        }
+      });
+      namedSource = ordered.map((entry) => entry.level);
+    }
+  }
+  const source = Array.isArray(value) ? value : namedSource ?? [value];
   if (source.length === 0) throw new Error('关卡数组不能为空。');
   return source.map((level, index) => decodeCompactLevelData(level, index + 1, custom));
 };

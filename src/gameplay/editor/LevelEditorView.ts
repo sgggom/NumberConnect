@@ -1,4 +1,4 @@
-const LEVEL_EDITOR_VIEW_VERSION = '33';
+const LEVEL_EDITOR_VIEW_VERSION = '34';
 
 export const mountLevelEditorView = (host: HTMLElement): void => {
   const hasCurrentView = host.dataset.editorViewVersion === LEVEL_EDITOR_VIEW_VERSION
@@ -26,6 +26,14 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
             <div class="editor-info-hidden">
               <span>隐藏占比</span>
               <strong id="editor-info-hidden-ratio">0% · 0/0</strong>
+            </div>
+            <div class="editor-info-run editor-info-visible-run">
+              <span>最长连续显示</span>
+              <strong id="editor-info-longest-visible-run">0 格</strong>
+            </div>
+            <div class="editor-info-run editor-info-hidden-run">
+              <span>最长连续隐藏</span>
+              <strong id="editor-info-longest-hidden-run">0 格</strong>
             </div>
           </div>
 

@@ -3,6 +3,8 @@ import {
   ALGORITHM8_MAX_HIDDEN_COMPONENT_RATIO,
   algorithm8AdjacentExpansionCount,
   algorithm8AdjacentExpansionProbability,
+  algorithm8BaseSelectionCount,
+  algorithm8EffectiveHiddenPercent,
   calculateAlgorithm8ExperienceMetrics,
   calculateAlgorithm8ExperienceValue,
   calculateAlgorithm8SpatialLoss,
@@ -12,6 +14,7 @@ import {
   runAlgorithm8,
   selectAlgorithm8HiddenLayout,
 } from './algorithm8';
+import { calculateEditorLevelMetrics } from '../levelMetrics';
 import {
   editorAlgorithmLabel,
   normalizeEditorAlgorithm,
@@ -46,6 +49,8 @@ describe('editor algorithm 8 spatial hidden selection', () => {
         turnProbability: -1,
         hiddenPercent: 120,
         targetDifficulty: 99,
+        maxVisibleRun: 120,
+        maxHiddenRun: 0,
       },
     });
 
@@ -56,6 +61,8 @@ describe('editor algorithm 8 spatial hidden selection', () => {
         turnProbability: 0,
         hiddenPercent: 100,
         targetDifficulty: 10,
+        maxVisibleRun: 99,
+        maxHiddenRun: 1,
       },
     });
     expect(editorAlgorithmLabel('algorithm-8')).toBe('算法8');
@@ -94,7 +101,7 @@ describe('editor algorithm 8 spatial hidden selection', () => {
     expect(first).toEqual(second);
     expect(first?.path).toEqual(pathOnly?.path);
     expect(first?.path).toHaveLength(9);
-    expect(first?.hiddenCells).toHaveLength(4);
+    expect(first?.hiddenCells).toHaveLength(5);
     expect(first?.hiddenCells).not.toContainEqual(first?.path[0]);
     expect(first?.hiddenCells).not.toContainEqual(first?.path[8]);
   });
@@ -108,6 +115,44 @@ describe('editor algorithm 8 spatial hidden selection', () => {
     expect(selectAlgorithm8HiddenLayout(path, 'square', 0, 3, 8).size).toBe(0);
     expect(selectAlgorithm8HiddenLayout(path, 'square', 33, 3, 8).size).toBe(3);
     expect(selectAlgorithm8HiddenLayout(path, 'square', 100, 3, 8).size).toBe(7);
+  });
+
+  it('adds the difficulty level as extra hidden percentage points', () => {
+    const path = Array.from({ length: 64 }, (_, index) => {
+      const y = Math.floor(index / 8);
+      const offset = index % 8;
+      return { x: y % 2 === 0 ? offset : 7 - offset, y };
+    });
+
+    expect(algorithm8EffectiveHiddenPercent(35, 1)).toBe(36);
+    expect(algorithm8EffectiveHiddenPercent(35, 6)).toBe(41);
+    expect(algorithm8EffectiveHiddenPercent(35, 10)).toBe(45);
+    expect(algorithm8EffectiveHiddenPercent(95, 10)).toBe(100);
+    expect(selectAlgorithm8HiddenLayout(path, 'square', 35, 1, 108).size).toBe(23);
+    expect(selectAlgorithm8HiddenLayout(path, 'square', 35, 10, 108).size).toBe(29);
+  });
+
+  it('applies the configured longest visible and hidden run limits', () => {
+    const path = Array.from({ length: 64 }, (_, index) => {
+      const y = Math.floor(index / 8);
+      const offset = index % 8;
+      return { x: y % 2 === 0 ? offset : 7 - offset, y };
+    });
+    const hidden = selectAlgorithm8HiddenLayout(path, 'square', 35, 6, 208, {
+      maxVisibleRun: 5,
+      maxHiddenRun: 2,
+    });
+    const metrics = calculateEditorLevelMetrics({
+      path,
+      hiddenCellKeys: new Set([...hidden].map((index) => (
+        `${path[index].x},${path[index].y}`
+      ))),
+      shape: 'square',
+    });
+
+    expect(hidden.size).toBe(26);
+    expect(metrics.longestVisibleRun).toBeLessThanOrEqual(5);
+    expect(metrics.longestHiddenRun).toBeLessThanOrEqual(2);
   });
 
   it('scores experience metrics against the selected difficulty target', () => {
@@ -143,16 +188,13 @@ describe('editor algorithm 8 spatial hidden selection', () => {
     });
   });
 
-  it('keeps the first ten base selections difficulty-neutral', () => {
-    const path = Array.from({ length: 36 }, (_, index) => {
-      const y = Math.floor(index / 6);
-      const offset = index % 6;
-      return { x: y % 2 === 0 ? offset : 5 - offset, y };
-    });
-    const hidden = selectAlgorithm8HiddenLayout(path, 'square', 28, 10, 808);
-
-    expect(hidden.size).toBe(10);
-    expect(calculateAlgorithm8ExperienceMetrics(path, hidden, 'square').peakDifficulty).toBe(0);
+  it('uses the first ten percent of hidden selections as base cells', () => {
+    expect(algorithm8BaseSelectionCount(0)).toBe(0);
+    expect(algorithm8BaseSelectionCount(1)).toBe(1);
+    expect(algorithm8BaseSelectionCount(10)).toBe(1);
+    expect(algorithm8BaseSelectionCount(11)).toBe(2);
+    expect(algorithm8BaseSelectionCount(64)).toBe(7);
+    expect(algorithm8BaseSelectionCount(100)).toBe(10);
   });
 
   it('produces a clearly harder experience at difficulty ten than difficulty one', () => {
@@ -182,7 +224,7 @@ describe('editor algorithm 8 spatial hidden selection', () => {
     const hard = selectAlgorithm8HiddenLayout(path, 'square', 35, 10, 1008);
     const metrics = calculateAlgorithm8SpatialMetrics(path, hard, 'square');
 
-    expect(hard.size).toBe(22);
+    expect(hard.size).toBe(29);
     expect(metrics.largestHiddenComponentRatio)
       .toBeLessThanOrEqual(ALGORITHM8_MAX_HIDDEN_COMPONENT_RATIO);
   });
