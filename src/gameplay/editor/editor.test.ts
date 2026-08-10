@@ -29,19 +29,15 @@ const serpentinePath = (rows: number, columns: number) => Array.from(
 );
 
 describe('level editor path generation', () => {
-  it('uses algorithm 2 and the requested generation defaults for a new editor level', () => {
+  it('uses algorithm 8 and the requested generation defaults for a new editor level', () => {
     const model = new LevelEditorModel();
 
-    expect(model.algorithmSelection.id).toBe('algorithm-6');
+    expect(model.algorithmSelection.id).toBe('algorithm-8');
     expect(model.algorithmSelection.parameters).toMatchObject({
       targetCrossings: 20,
       turnProbability: 40,
-      earlyHiddenProbability: 50,
-      middleHiddenProbability: 50,
-      lateHiddenProbability: 50,
-      earlyRowColumnHiddenSkipProbability: 0,
-      middleRowColumnHiddenSkipProbability: 0,
-      lateRowColumnHiddenSkipProbability: 0,
+      hiddenPercent: 35,
+      targetDifficulty: 6,
     });
   });
 
@@ -394,7 +390,7 @@ describe('level editor path generation', () => {
 
     model.applyRecognizedLevel(level);
 
-    expect(model.algorithmSelection.id).toBe('algorithm-6');
+    expect(model.algorithmSelection.id).toBe('algorithm-8');
     expect(model.targetHiddenCount).toBeUndefined();
     expect(model.createLevel(91)).toMatchObject({
       pathSource: 'manual',

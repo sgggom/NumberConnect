@@ -7,6 +7,7 @@ import { createAlgorithm4Selection, runAlgorithm4 } from './algorithm4';
 import { createAlgorithm5Selection, runAlgorithm5 } from './algorithm5';
 import { createAlgorithm6Selection, runAlgorithm6 } from './algorithm6';
 import { createAlgorithm7Selection, runAlgorithm7 } from './algorithm7';
+import { createAlgorithm8Selection, runAlgorithm8 } from './algorithm8';
 import type {
   EditorAlgorithmContext,
   EditorAlgorithmDescriptor,
@@ -14,7 +15,7 @@ import type {
   EditorAlgorithmSelection,
 } from './types';
 
-export const DEFAULT_EDITOR_ALGORITHM_ID: EditorAlgorithmId = 'algorithm-6';
+export const DEFAULT_EDITOR_ALGORITHM_ID: EditorAlgorithmId = 'algorithm-8';
 const LEGACY_EDITOR_ALGORITHM_ID: EditorAlgorithmId = 'algorithm-1';
 
 export const EDITOR_ALGORITHMS: readonly EditorAlgorithmDescriptor[] = [
@@ -53,6 +54,11 @@ export const EDITOR_ALGORITHMS: readonly EditorAlgorithmDescriptor[] = [
     label: '算法7',
     description: '生成候选路径后，以逐步求解和玩家模拟结果为目标，反向搜索接近指定难度的隐藏布局。',
   },
+  {
+    id: 'algorithm-8',
+    label: '算法8',
+    description: '先均匀放置难度中性的基准隐藏格，再按难度用局部分岔、线索距离和邻近扩展配额生成布局。',
+  },
 ];
 
 export const createEditorAlgorithm = (id: EditorAlgorithmId): EditorAlgorithmSelection => {
@@ -71,6 +77,8 @@ export const createEditorAlgorithm = (id: EditorAlgorithmId): EditorAlgorithmSel
       return createAlgorithm6Selection();
     case 'algorithm-7':
       return createAlgorithm7Selection();
+    case 'algorithm-8':
+      return createAlgorithm8Selection();
   }
 };
 
@@ -522,6 +530,40 @@ export const normalizeEditorAlgorithm = (
       },
     };
   }
+  if (value?.id === 'algorithm-8') {
+    const defaults = createAlgorithm8Selection();
+    return {
+      id: 'algorithm-8',
+      parameters: {
+        topology: 'board-shape',
+        pathMode: 'spatial-distribution-multiple-solutions',
+        targetCrossings: normalizedInteger(
+          value.parameters?.targetCrossings,
+          defaults.parameters.targetCrossings,
+          0,
+          99,
+        ),
+        turnProbability: normalizedInteger(
+          value.parameters?.turnProbability,
+          defaults.parameters.turnProbability,
+          0,
+          100,
+        ),
+        hiddenPercent: normalizedInteger(
+          value.parameters?.hiddenPercent,
+          defaults.parameters.hiddenPercent,
+          0,
+          100,
+        ),
+        targetDifficulty: normalizedInteger(
+          value.parameters?.targetDifficulty,
+          defaults.parameters.targetDifficulty,
+          1,
+          10,
+        ),
+      },
+    };
+  }
   return createEditorAlgorithm(LEGACY_EDITOR_ALGORITHM_ID);
 };
 
@@ -583,6 +625,13 @@ export const resolveEditorAlgorithmForShape = (
             parameters: { ...selection.parameters, targetCrossings: 0 },
           }
         : selection;
+    case 'algorithm-8':
+      return shape === 'hex'
+        ? {
+            ...selection,
+            parameters: { ...selection.parameters, targetCrossings: 0 },
+          }
+        : selection;
   }
 };
 
@@ -607,6 +656,8 @@ export const runEditorAlgorithm = (
       return runAlgorithm6(context, resolved);
     case 'algorithm-7':
       return runAlgorithm7(context, resolved);
+    case 'algorithm-8':
+      return runAlgorithm8(context, resolved);
   }
 };
 

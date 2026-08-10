@@ -131,6 +131,20 @@ export interface Algorithm7Selection {
   parameters: Algorithm7Parameters;
 }
 
+export interface Algorithm8Parameters {
+  topology: 'board-shape';
+  pathMode: 'spatial-distribution-multiple-solutions';
+  targetCrossings: number;
+  turnProbability: number;
+  hiddenPercent: number;
+  targetDifficulty: number;
+}
+
+export interface Algorithm8Selection {
+  id: 'algorithm-8';
+  parameters: Algorithm8Parameters;
+}
+
 export type EditorAlgorithmSelection =
   | Algorithm1Selection
   | Algorithm2Selection
@@ -138,7 +152,8 @@ export type EditorAlgorithmSelection =
   | Algorithm4Selection
   | Algorithm5Selection
   | Algorithm6Selection
-  | Algorithm7Selection;
+  | Algorithm7Selection
+  | Algorithm8Selection;
 export type EditorAlgorithmId = EditorAlgorithmSelection['id'];
 
 export interface EditorAlgorithmDescriptor {

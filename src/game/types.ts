@@ -201,7 +201,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   soundEnabled: true,
   inputMode: 'drag',
   uiTheme: 'default',
-  touchPreviewSize: 'small',
+  touchPreviewSize: 'off',
   touchPreviewFollowsPointer: false,
 };
 

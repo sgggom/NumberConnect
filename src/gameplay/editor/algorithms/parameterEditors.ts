@@ -184,6 +184,30 @@ export const renderEditorAlgorithmParameters = (
       host.append(note);
       break;
     }
+    case 'algorithm-8': {
+      const description = document.createElement('p');
+      description.textContent = EDITOR_ALGORITHMS.find((item) => item.id === selection.id)?.description ?? '';
+      const update = (parameters: Partial<typeof selection.parameters>): void => onChange({
+        ...selection,
+        parameters: { ...selection.parameters, ...parameters },
+      });
+      const targetCrossings = shape === 'hex' ? 0 : selection.parameters.targetCrossings;
+      const crossings = numberField('最大交叉数量', targetCrossings, 0, 99, (value) => update({ targetCrossings: value }));
+      const crossingsInput = crossings.querySelector('input')!;
+      crossingsInput.disabled = shape === 'hex';
+      crossingsInput.title = shape === 'hex' ? '六边形蜂窝棋盘不会产生交叉' : '路径生成阶段允许出现的最大交叉数量';
+      host.append(
+        description,
+        crossings,
+        numberField('路径拐弯概率 %', selection.parameters.turnProbability, 0, 100, (value) => update({ turnProbability: value })),
+        numberField('隐藏占比 %', selection.parameters.hiddenPercent, 0, 100, (value) => update({ hiddenPercent: value })),
+        numberField('目标难度（1–10）', selection.parameters.targetDifficulty, 1, 10, (value) => update({ targetDifficulty: value })),
+      );
+      const note = document.createElement('small');
+      note.textContent = '前 10 个隐藏数字作为均匀分散、难度中性的基准点；其余次数按难度换算成明确的邻近扩展配额，并根据局部分岔与连续隐藏距离选格。最大隐藏连通块限制为 40%，生成过程不运行关卡模拟。';
+      host.append(note);
+      break;
+    }
     case 'algorithm-3': {
       const description = document.createElement('p');
       description.textContent = EDITOR_ALGORITHMS.find((item) => item.id === selection.id)?.description ?? '';
