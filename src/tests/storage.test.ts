@@ -86,6 +86,33 @@ describe('game settings migration', () => {
     }
   });
 
+  it('turns the legacy small default off once and preserves later explicit choices', () => {
+    const values = new Map<string, string>([
+      ['number-connect.settings.v1', JSON.stringify({ touchPreviewSize: 'small' })],
+    ]);
+    const localStorage = {
+      getItem: vi.fn((key: string) => values.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => values.set(key, value)),
+    };
+    vi.stubGlobal('window', { localStorage });
+
+    try {
+      expect(loadSettings().touchPreviewSize).toBe('off');
+      expect(localStorage.setItem).toHaveBeenCalledOnce();
+      expect(JSON.parse(localStorage.setItem.mock.calls[0][1])).toMatchObject({
+        touchPreviewSize: 'off',
+        touchPreviewDefaultOffMigrated: true,
+      });
+      values.set('number-connect.settings.v1', JSON.stringify({
+        touchPreviewSize: 'small',
+        touchPreviewDefaultOffMigrated: true,
+      }));
+      expect(loadSettings().touchPreviewSize).toBe('small');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('loads the persistent zoomed board preview mode', () => {
     const getItem = vi.fn(() => JSON.stringify({ touchPreviewSize: 'zoom' }));
     vi.stubGlobal('window', { localStorage: { getItem } });

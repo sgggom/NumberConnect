@@ -47,14 +47,28 @@ export const loadSettings = (): GameSettings => {
   if (!hasStorage()) return { ...DEFAULT_SETTINGS };
   try {
     const stored = JSON.parse(window.localStorage.getItem(SETTINGS_KEY) ?? '{}') as (
-      Partial<GameSettings> & { touchPreviewEnabled?: boolean; selectedLevelId?: number }
+      Partial<GameSettings> & {
+        touchPreviewEnabled?: boolean;
+        touchPreviewDefaultOffMigrated?: boolean;
+        selectedLevelId?: number;
+      }
     );
-    const { touchPreviewEnabled, ...currentSettings } = stored;
-    const touchPreviewSize = isTouchPreviewSize(stored.touchPreviewSize)
+    const { touchPreviewEnabled, touchPreviewDefaultOffMigrated, ...currentSettings } = stored;
+    let touchPreviewSize = isTouchPreviewSize(stored.touchPreviewSize)
       ? stored.touchPreviewSize
       : touchPreviewEnabled === false
         ? 'off'
         : DEFAULT_SETTINGS.touchPreviewSize;
+    if (touchPreviewDefaultOffMigrated !== true) {
+      if (touchPreviewSize === 'small') touchPreviewSize = 'off';
+      if (typeof window.localStorage.setItem === 'function') {
+        window.localStorage.setItem(SETTINGS_KEY, JSON.stringify({
+          ...stored,
+          touchPreviewSize,
+          touchPreviewDefaultOffMigrated: true,
+        }));
+      }
+    }
     const uiTheme = isUiTheme(stored.uiTheme) ? stored.uiTheme : DEFAULT_SETTINGS.uiTheme;
     const inputMode = isInputMode(stored.inputMode) ? stored.inputMode : DEFAULT_SETTINGS.inputMode;
     const mainGameplay = isMainGameplay(stored.mainGameplay)
