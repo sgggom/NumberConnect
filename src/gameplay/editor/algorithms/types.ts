@@ -138,6 +138,8 @@ export interface Algorithm8Parameters {
   turnProbability: number;
   hiddenPercent: number;
   targetDifficulty: number;
+  maxVisibleRun: number;
+  maxHiddenRun: number;
 }
 
 export interface Algorithm8Selection {

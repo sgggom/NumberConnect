@@ -83,6 +83,12 @@ export const loadSettings = (): GameSettings => {
     const puzzleMainLevelId = Number.isInteger(stored.puzzleMainLevelId) && Number(stored.puzzleMainLevelId) > 0
       ? Number(stored.puzzleMainLevelId)
       : legacyLevelId;
+    const mode3MainLevelId = Number.isInteger(stored.mode3MainLevelId) && Number(stored.mode3MainLevelId) > 0
+      ? Number(stored.mode3MainLevelId)
+      : legacyLevelId;
+    const mode4MainLevelId = Number.isInteger(stored.mode4MainLevelId) && Number(stored.mode4MainLevelId) > 0
+      ? Number(stored.mode4MainLevelId)
+      : legacyLevelId;
     return {
       ...DEFAULT_SETTINGS,
       ...currentSettings,
@@ -90,6 +96,8 @@ export const loadSettings = (): GameSettings => {
       mainGameplay,
       beadMainLevelId,
       puzzleMainLevelId,
+      mode3MainLevelId,
+      mode4MainLevelId,
       uiTheme,
       touchPreviewSize,
       showDifficultyScore: stored.showDifficultyScore === true,
@@ -169,6 +177,10 @@ export const loadBuiltInLevels = (): Promise<LevelData[]> => (
 
 export const loadBeadLevels = (): Promise<LevelData[]> => (
   loadBundledLevels('./levels/bead-levels.json', 'algorithm-4')
+);
+
+export const loadMode3Levels = (): Promise<LevelData[]> => (
+  loadBundledLevels('./levels/mode3-levels.json', 'algorithm-8')
 );
 
 export const getNextLevelId = (levels: LevelData[]): number => {

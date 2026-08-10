@@ -57,7 +57,7 @@ export const EDITOR_ALGORITHMS: readonly EditorAlgorithmDescriptor[] = [
   {
     id: 'algorithm-8',
     label: '算法8',
-    description: '先均匀放置难度中性的基准隐藏格，再按难度用局部分岔、线索距离和邻近扩展配额生成布局。',
+    description: '难度会额外增加同值百分点的隐藏数字，再用基准点、局部分岔、线索距离和邻近扩展配额生成布局。',
   },
 ];
 
@@ -560,6 +560,18 @@ export const normalizeEditorAlgorithm = (
           defaults.parameters.targetDifficulty,
           1,
           10,
+        ),
+        maxVisibleRun: normalizedInteger(
+          value.parameters?.maxVisibleRun,
+          defaults.parameters.maxVisibleRun,
+          1,
+          99,
+        ),
+        maxHiddenRun: normalizedInteger(
+          value.parameters?.maxHiddenRun,
+          defaults.parameters.maxHiddenRun,
+          1,
+          99,
         ),
       },
     };

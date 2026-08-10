@@ -30,11 +30,12 @@
 .editor-info-panel__header h3 { margin: 0; font-size: 1.05rem; }
 .editor-info-back-button { flex: 0 0 auto; }
 .editor-info-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-.editor-info-size, .editor-info-hidden { min-width: 0; padding: 12px 13px; display: grid; gap: 5px; border: 1px solid rgba(88,208,170,.24); border-radius: 13px; background: linear-gradient(135deg, rgba(88,208,170,.12), rgba(101,158,228,.07)); }
-.editor-info-hidden { border-color: rgba(240,184,75,.2); background: linear-gradient(135deg, rgba(240,184,75,.09), rgba(101,158,228,.055)); }
-.editor-info-size span, .editor-info-hidden span { color: var(--muted); font-size: .64rem; font-weight: 800; }
-.editor-info-size strong, .editor-info-hidden strong { overflow: hidden; color: var(--green); font-size: 1rem; font-weight: 900; letter-spacing: .02em; text-overflow: ellipsis; white-space: nowrap; }
-.editor-info-hidden strong { color: var(--gold); font-size: .78rem; }
+.editor-info-size, .editor-info-hidden, .editor-info-run { min-width: 0; padding: 12px 13px; display: grid; gap: 5px; border: 1px solid rgba(88,208,170,.24); border-radius: 13px; background: linear-gradient(135deg, rgba(88,208,170,.12), rgba(101,158,228,.07)); }
+.editor-info-hidden, .editor-info-hidden-run { border-color: rgba(240,184,75,.2); background: linear-gradient(135deg, rgba(240,184,75,.09), rgba(101,158,228,.055)); }
+.editor-info-size span, .editor-info-hidden span, .editor-info-run span { color: var(--muted); font-size: .64rem; font-weight: 800; }
+.editor-info-size strong, .editor-info-hidden strong, .editor-info-run strong { overflow: hidden; color: var(--green); font-size: 1rem; font-weight: 900; letter-spacing: .02em; text-overflow: ellipsis; white-space: nowrap; }
+.editor-info-hidden strong { font-size: .78rem; }
+.editor-info-hidden strong, .editor-info-hidden-run strong { color: var(--gold); }
 .editor-simulation-panel { min-width: 0; min-height: 0; padding: 15px; display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); gap: 10px; overflow: hidden; border: 1px solid var(--line); border-radius: 22px; background: linear-gradient(180deg, rgba(24,35,48,.98), rgba(14,24,36,.98)); }
 .editor-simulation-panel__header { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; }
 .editor-simulation-panel__header h3 { margin: 4px 0 0; font-size: 1.05rem; }
@@ -209,6 +210,10 @@
 .editor-level-item__info b { color: var(--gold); font-size: .82rem; }
 .editor-level-item__info span { overflow: hidden; color: var(--muted); font-size: .66rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .editor-level-delete { min-width: 48px; height: 32px; padding: 0 8px; border: 1px solid rgba(233,76,93,.24); border-radius: 8px; color: #ff9eaa; background: rgba(233,76,93,.08); font-size: .67rem; font-weight: 800; }
+.editor-level-context-menu { position: fixed; z-index: 10000; min-width: 126px; padding: 6px; display: grid; gap: 4px; border: 1px solid rgba(126,201,255,.26); border-radius: 10px; background: #162235; box-shadow: 0 14px 34px rgba(0,0,0,.4); }
+.editor-level-context-menu__action { min-height: 34px; padding: 0 12px; border: 0; border-radius: 7px; color: #eaf5ff; background: transparent; font-size: .72rem; font-weight: 800; text-align: left; cursor: pointer; }
+.editor-level-context-menu__action:hover:not(:disabled), .editor-level-context-menu__action:focus-visible { color: #fff; background: rgba(126,201,255,.16); outline: 0; }
+.editor-level-context-menu__action:disabled { color: rgba(206,222,238,.34); cursor: default; }
 .editor-level-empty { margin: 0; padding: 12px 4px; color: var(--muted); font-size: .72rem; line-height: 1.6; }
 .editor-screen.is-path-animating .editor-grid,
 .editor-screen.is-path-animating .editor-sidebar,

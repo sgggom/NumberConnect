@@ -122,6 +122,8 @@ export class LevelEditorController {
   private simulationWindow?: Window;
   private editorPresets: LevelEditorPreset[] = [];
   private selectedPresetId?: string;
+  private levelContextMenu?: HTMLElement;
+  private levelContextMenuCleanup?: () => void;
 
   public constructor(
     private readonly host: HTMLElement,
@@ -531,6 +533,8 @@ export class LevelEditorController {
     const hiddenTotal = this.model.solutionPath.length || this.model.activeCells.size;
     this.query('#editor-info-size').textContent = `${columns} × ${rows}`;
     this.query('#editor-info-hidden-ratio').textContent = `${hiddenPercent}% · ${metrics.hiddenCount}/${hiddenTotal}`;
+    this.query('#editor-info-longest-visible-run').textContent = `${metrics.longestVisibleRun} 格`;
+    this.query('#editor-info-longest-hidden-run').textContent = `${metrics.longestHiddenRun} 格`;
   }
 
   private simulatePlay(): void {
@@ -1805,6 +1809,7 @@ export class LevelEditorController {
   }
 
   private renderLevelList(): void {
+    this.closeLevelContextMenu();
     const levels = this.options.getLevels();
     const list = this.query<HTMLElement>('#editor-level-list');
     this.query('#editor-level-count').textContent = `${levels.length} 关`;
@@ -1825,6 +1830,7 @@ export class LevelEditorController {
       item.tabIndex = 0;
       item.setAttribute('role', 'button');
       item.setAttribute('aria-label', `应用关卡 ${level.levelId}`);
+      item.title = '右键可上移或下移关卡';
 
       const info = document.createElement('div');
       info.className = 'editor-level-item__info';
@@ -1848,7 +1854,18 @@ export class LevelEditorController {
 
       const apply = () => this.applyLevel(level);
       item.addEventListener('click', apply);
+      item.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.openLevelContextMenu(level, event.clientX, event.clientY);
+      });
       item.addEventListener('keydown', (event) => {
+        if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+          event.preventDefault();
+          const bounds = item.getBoundingClientRect();
+          this.openLevelContextMenu(level, bounds.left + 18, bounds.top + 18);
+          return;
+        }
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
           apply();
@@ -1858,6 +1875,93 @@ export class LevelEditorController {
       return item;
     });
     list.replaceChildren(...items);
+  }
+
+  private openLevelContextMenu(level: LevelData, clientX: number, clientY: number): void {
+    this.closeLevelContextMenu();
+    const levels = this.options.getLevels();
+    const index = levels.findIndex((candidate) => candidate.levelId === level.levelId);
+    if (index < 0) return;
+
+    const menu = document.createElement('div');
+    menu.className = 'editor-level-context-menu';
+    menu.setAttribute('role', 'menu');
+    menu.setAttribute('aria-label', `调整关卡 ${level.levelId} 的顺序`);
+
+    const createAction = (
+      label: string,
+      direction: -1 | 1,
+      disabled: boolean,
+    ): HTMLButtonElement => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'editor-level-context-menu__action';
+      button.textContent = label;
+      button.disabled = disabled;
+      button.setAttribute('role', 'menuitem');
+      button.addEventListener('click', () => this.moveLevel(level.levelId, direction));
+      return button;
+    };
+
+    menu.append(
+      createAction('上移关卡', -1, index === 0),
+      createAction('下移关卡', 1, index === levels.length - 1),
+    );
+    document.body.append(menu);
+    this.levelContextMenu = menu;
+
+    const margin = 8;
+    const bounds = menu.getBoundingClientRect();
+    menu.style.left = `${Math.max(margin, Math.min(clientX, window.innerWidth - bounds.width - margin))}px`;
+    menu.style.top = `${Math.max(margin, Math.min(clientY, window.innerHeight - bounds.height - margin))}px`;
+
+    const closeOnPointerDown = (event: PointerEvent): void => {
+      if (!menu.contains(event.target as Node)) this.closeLevelContextMenu();
+    };
+    const closeOnKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') this.closeLevelContextMenu();
+    };
+    const closeOnViewportChange = (): void => this.closeLevelContextMenu();
+    document.addEventListener('pointerdown', closeOnPointerDown);
+    document.addEventListener('keydown', closeOnKeyDown);
+    document.addEventListener('scroll', closeOnViewportChange, true);
+    window.addEventListener('resize', closeOnViewportChange);
+    this.levelContextMenuCleanup = () => {
+      document.removeEventListener('pointerdown', closeOnPointerDown);
+      document.removeEventListener('keydown', closeOnKeyDown);
+      document.removeEventListener('scroll', closeOnViewportChange, true);
+      window.removeEventListener('resize', closeOnViewportChange);
+    };
+  }
+
+  private closeLevelContextMenu(): void {
+    this.levelContextMenu?.remove();
+    this.levelContextMenu = undefined;
+    const cleanup = this.levelContextMenuCleanup;
+    this.levelContextMenuCleanup = undefined;
+    cleanup?.();
+  }
+
+  private moveLevel(levelId: number, direction: -1 | 1): void {
+    const levels = [...this.options.getLevels()];
+    const sourceIndex = levels.findIndex((level) => level.levelId === levelId);
+    const targetIndex = sourceIndex + direction;
+    if (sourceIndex < 0 || targetIndex < 0 || targetIndex >= levels.length) {
+      this.closeLevelContextMenu();
+      return;
+    }
+
+    const selectedLevel = levels.find((level) => level.levelId === this.selectedLevelId);
+    [levels[sourceIndex], levels[targetIndex]] = [levels[targetIndex], levels[sourceIndex]];
+    const reordered = levels.map((level, index) => ({ ...level, levelId: index + 1 }));
+    const selectedIndex = selectedLevel ? levels.indexOf(selectedLevel) : -1;
+    this.selectedLevelId = selectedIndex >= 0 ? selectedIndex + 1 : undefined;
+    this.closeLevelContextMenu();
+    this.options.onLevelsChange(reordered);
+    this.render();
+    this.setStatus(
+      `原关卡 ${levelId} 已${direction < 0 ? '上移' : '下移'}为关卡 ${targetIndex + 1}，列表编号已更新。`,
+    );
   }
 
   private applyLevel(level: LevelData): void {

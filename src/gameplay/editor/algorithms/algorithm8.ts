@@ -22,8 +22,16 @@ export interface Algorithm8ExperienceMetrics {
   peakDifficulty: number;
 }
 
+export interface Algorithm8HiddenLayoutOptions {
+  maxVisibleRun?: number;
+  maxHiddenRun?: number;
+  onProgress?: (progress: number) => void;
+}
+
 export const ALGORITHM8_MAX_HIDDEN_COMPONENT_RATIO = 0.4;
 const ALGORITHM8_PREFERRED_HIDDEN_COMPONENT_RATIO = 0.25;
+const ALGORITHM8_DEFAULT_MAX_VISIBLE_RUN = 8;
+const ALGORITHM8_DEFAULT_MAX_HIDDEN_RUN = 4;
 
 const DIFFICULTY_TARGETS = [
   { averageDifficulty: 0.02, hardStepRatio: 0.01, peakDifficulty: 0.3 },
@@ -47,6 +55,8 @@ export const createAlgorithm8Selection = (): Algorithm8Selection => ({
     turnProbability: 40,
     hiddenPercent: 35,
     targetDifficulty: 6,
+    maxVisibleRun: ALGORITHM8_DEFAULT_MAX_VISIBLE_RUN,
+    maxHiddenRun: ALGORITHM8_DEFAULT_MAX_HIDDEN_RUN,
   },
 });
 
@@ -280,6 +290,15 @@ const normalizedDifficulty = (targetDifficulty: number): number => (
   (Math.max(1, Math.min(10, Math.floor(targetDifficulty))) - 1) / 9
 );
 
+export const algorithm8EffectiveHiddenPercent = (
+  requestedPercent: number,
+  targetDifficulty: number,
+): number => {
+  const basePercent = Math.max(0, Math.min(100, requestedPercent));
+  const difficultyPercent = Math.max(1, Math.min(10, Math.floor(targetDifficulty)));
+  return Math.min(100, basePercent + difficultyPercent);
+};
+
 export const algorithm8AdjacentExpansionProbability = (targetDifficulty: number): number => (
   normalizedDifficulty(targetDifficulty) * 0.85
 );
@@ -292,6 +311,11 @@ export const algorithm8AdjacentExpansionCount = (
   return Math.round(
     normalizedCount * algorithm8AdjacentExpansionProbability(targetDifficulty),
   );
+};
+
+export const algorithm8BaseSelectionCount = (targetCount: number): number => {
+  const normalizedCount = Math.max(0, Math.floor(targetCount));
+  return Math.min(normalizedCount, Math.ceil(normalizedCount * 0.1));
 };
 
 const isScheduledAdjacentExpansion = (
@@ -431,9 +455,51 @@ const calculateProjectedSpatialMetrics = (
   };
 };
 
+interface Algorithm8RunState {
+  longestHiddenRun: number;
+  longestVisibleRun: number;
+  minimumAdditionalHiddenCount: number;
+}
+
+const calculateAlgorithm8RunState = (
+  pathCount: number,
+  hidden: ReadonlySet<number>,
+  maximumVisibleRun: number,
+): Algorithm8RunState => {
+  let hiddenRun = 0;
+  let visibleRun = 0;
+  let longestHiddenRun = 0;
+  let longestVisibleRun = 0;
+  let minimumAdditionalHiddenCount = 0;
+  const finishVisibleRun = (): void => {
+    longestVisibleRun = Math.max(longestVisibleRun, visibleRun);
+    minimumAdditionalHiddenCount += Math.floor(
+      visibleRun / (maximumVisibleRun + 1),
+    );
+    visibleRun = 0;
+  };
+
+  for (let index = 0; index < pathCount; index += 1) {
+    if (hidden.has(index)) {
+      finishVisibleRun();
+      hiddenRun += 1;
+      longestHiddenRun = Math.max(longestHiddenRun, hiddenRun);
+    } else {
+      hiddenRun = 0;
+      visibleRun += 1;
+    }
+  }
+  finishVisibleRun();
+  return {
+    longestHiddenRun,
+    longestVisibleRun,
+    minimumAdditionalHiddenCount,
+  };
+};
+
 /**
  * Selects exactly one new hidden number per pass using spatial rules only.
- * The first ten selections are neutral, distributed base cells. Remaining
+ * The first ten percent of selections are neutral, distributed base cells. Remaining
  * selections use a difficulty-derived quota for expansion beside those bases,
  * prefer local ambiguity and longer clue distances, and reject oversized
  * hidden components. A seeded choice among equal-quality cells avoids rigid
@@ -445,19 +511,30 @@ export const selectAlgorithm8HiddenLayout = (
   requestedPercent: number,
   targetDifficulty: number,
   seed: number,
-  onProgress?: (progress: number) => void,
+  options: Algorithm8HiddenLayoutOptions = {},
 ): Set<number> => {
   const availableCount = Math.max(0, path.length - 2);
-  const normalizedPercent = Math.max(0, Math.min(100, requestedPercent));
+  const normalizedPercent = algorithm8EffectiveHiddenPercent(
+    requestedPercent,
+    targetDifficulty,
+  );
   const targetCount = Math.min(
     availableCount,
     Math.max(0, Math.round(path.length * normalizedPercent / 100)),
   );
   const hidden = new Set<number>();
   const baseHidden = new Set<number>();
+  const maximumVisibleRun = Math.max(
+    1,
+    Math.floor(options.maxVisibleRun ?? ALGORITHM8_DEFAULT_MAX_VISIBLE_RUN),
+  );
+  const maximumHiddenRun = Math.max(
+    1,
+    Math.floor(options.maxHiddenRun ?? ALGORITHM8_DEFAULT_MAX_HIDDEN_RUN),
+  );
   const neighbors = buildVisualNeighborIndexes(path, shape);
   const random = createRandom(seed ^ 0x6f29d417);
-  const baseSelectionCount = Math.min(10, targetCount);
+  const baseSelectionCount = algorithm8BaseSelectionCount(targetCount);
   const expansionCount = Math.max(0, targetCount - baseSelectionCount);
   const adjacentExpansionCount = algorithm8AdjacentExpansionCount(
     expansionCount,
@@ -552,6 +629,48 @@ export const selectAlgorithm8HiddenLayout = (
       candidates = allClusterSafeCandidates;
     }
 
+    const remainingSelections = targetCount - pass - 1;
+    const runStateByCandidate = new Map(allCandidates.map((candidate) => [
+      candidate,
+      calculateAlgorithm8RunState(
+        path.length,
+        new Set(hidden).add(candidate),
+        maximumVisibleRun,
+      ),
+    ]));
+    const withinRunLimits = (source: ReadonlyArray<number>): number[] => source.filter(
+      (candidate) => {
+        const runState = runStateByCandidate.get(candidate) as Algorithm8RunState;
+        return runState.longestHiddenRun <= maximumHiddenRun
+          && runState.minimumAdditionalHiddenCount <= remainingSelections;
+      },
+    );
+    const withinHiddenLimit = (source: ReadonlyArray<number>): number[] => source.filter(
+      (candidate) => (
+        (runStateByCandidate.get(candidate)?.longestHiddenRun ?? Number.POSITIVE_INFINITY)
+          <= maximumHiddenRun
+      ),
+    );
+    const preferredRunSafeCandidates = withinRunLimits(candidates);
+    const clusterRunSafeCandidates = withinRunLimits(allClusterSafeCandidates);
+    const allRunSafeCandidates = withinRunLimits(allCandidates);
+    const preferredHiddenSafeCandidates = withinHiddenLimit(candidates);
+    const clusterHiddenSafeCandidates = withinHiddenLimit(allClusterSafeCandidates);
+    const allHiddenSafeCandidates = withinHiddenLimit(allCandidates);
+    if (preferredRunSafeCandidates.length > 0) {
+      candidates = preferredRunSafeCandidates;
+    } else if (clusterRunSafeCandidates.length > 0) {
+      candidates = clusterRunSafeCandidates;
+    } else if (allRunSafeCandidates.length > 0) {
+      candidates = allRunSafeCandidates;
+    } else if (preferredHiddenSafeCandidates.length > 0) {
+      candidates = preferredHiddenSafeCandidates;
+    } else if (clusterHiddenSafeCandidates.length > 0) {
+      candidates = clusterHiddenSafeCandidates;
+    } else if (allHiddenSafeCandidates.length > 0) {
+      candidates = allHiddenSafeCandidates;
+    }
+
     const evaluatedCandidates = candidates.map((candidate) => {
       const projected = new Set(hidden).add(candidate);
       const directHiddenCount = neighbors[candidate]
@@ -580,11 +699,23 @@ export const selectAlgorithm8HiddenLayout = (
       const baseLoad = adjacentBaseLoads.length === 0
         ? 0
         : Math.min(...adjacentBaseLoads);
+      const runState = runStateByCandidate.get(candidate) as Algorithm8RunState;
+      const runLoss = (
+        Math.max(0, runState.longestHiddenRun - maximumHiddenRun) * 50
+        + Math.max(
+          0,
+          runState.minimumAdditionalHiddenCount - remainingSelections,
+        ) * 50
+        + (remainingSelections === 0
+          ? Math.max(0, runState.longestVisibleRun - maximumVisibleRun) * 5
+          : 0)
+      );
       const baseLoss = (
             spatialLoss * 1.2
             + directHiddenCount * 8
             + secondRingHiddenCount(candidate, hidden, neighbors) * 1.5
             - distance * 0.8
+            + runLoss
       );
       return {
         candidate,
@@ -594,6 +725,7 @@ export const selectAlgorithm8HiddenLayout = (
         directHiddenCount,
         distance,
         experienceValue: calculateAlgorithm8ExperienceValue(experienceMetrics),
+        runLoss,
         secondRingCount: secondRingHiddenCount(candidate, hidden, neighbors),
         spatialLoss,
       };
@@ -618,6 +750,7 @@ export const selectAlgorithm8HiddenLayout = (
             + evaluation.secondRingCount * 0.15
             + evaluation.baseLoad * 1.2
             - evaluation.distance * 0.05
+            + evaluation.runLoss
           );
       return { candidate: evaluation.candidate, loss };
     }).sort((left, right) => left.loss - right.loss);
@@ -645,10 +778,10 @@ export const selectAlgorithm8HiddenLayout = (
       hidden.add(selected);
       if (isBaseSelection) baseHidden.add(selected);
     }
-    onProgress?.((pass + 1) / Math.max(1, targetCount));
+    options.onProgress?.((pass + 1) / Math.max(1, targetCount));
   }
 
-  if (targetCount === 0) onProgress?.(1);
+  if (targetCount === 0) options.onProgress?.(1);
   return hidden;
 };
 
@@ -681,9 +814,13 @@ export const runAlgorithm8 = (
     selection.parameters.hiddenPercent,
     selection.parameters.targetDifficulty,
     seed,
-    (progress) => context.onProgress?.(
-      pathProgressWeight + progress * (1 - pathProgressWeight),
-    ),
+    {
+      maxVisibleRun: selection.parameters.maxVisibleRun,
+      maxHiddenRun: selection.parameters.maxHiddenRun,
+      onProgress: (progress) => context.onProgress?.(
+        pathProgressWeight + progress * (1 - pathProgressWeight),
+      ),
+    },
   );
   context.onProgress?.(1);
   return {
