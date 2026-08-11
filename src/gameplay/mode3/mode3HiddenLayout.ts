@@ -3,6 +3,7 @@ import {
   selectAlgorithm8HiddenLayout,
 } from '../editor/algorithms/algorithm8';
 import type { EditorShape } from '../editor/types';
+import { selectMode4RandomDispersedHiddenLayout } from './mode4RandomHiddenLayout';
 
 export interface AdaptiveHiddenLayoutConfig {
   hiddenPercentRange: readonly [minimum: number, maximum: number];
@@ -20,15 +21,15 @@ export const MODE3_DIFFICULTY_CONFIG: AdaptiveHiddenLayoutConfig = {
 /** 玩法4的索引0到9分别对应动态难度1到10。 */
 export const MODE4_DIFFICULTY_CONFIGS: readonly AdaptiveHiddenLayoutConfig[] = [
   { hiddenPercentRange: [10, 15], maxVisibleRun: 5, maxHiddenRun: 2 },
-  { hiddenPercentRange: [13, 18], maxVisibleRun: 5, maxHiddenRun: 2 },
-  { hiddenPercentRange: [16, 21], maxVisibleRun: 4, maxHiddenRun: 2 },
-  { hiddenPercentRange: [19, 24], maxVisibleRun: 4, maxHiddenRun: 2 },
-  { hiddenPercentRange: [22, 27], maxVisibleRun: 3, maxHiddenRun: 3 },
-  { hiddenPercentRange: [25, 30], maxVisibleRun: 3, maxHiddenRun: 3 },
-  { hiddenPercentRange: [28, 33], maxVisibleRun: 2, maxHiddenRun: 4 },
-  { hiddenPercentRange: [31, 36], maxVisibleRun: 2, maxHiddenRun: 4 },
-  { hiddenPercentRange: [34, 39], maxVisibleRun: 2, maxHiddenRun: 5 },
-  { hiddenPercentRange: [37, 42], maxVisibleRun: 2, maxHiddenRun: 5 },
+  { hiddenPercentRange: [15, 20], maxVisibleRun: 5, maxHiddenRun: 2 },
+  { hiddenPercentRange: [20, 25], maxVisibleRun: 4, maxHiddenRun: 2 },
+  { hiddenPercentRange: [25, 30], maxVisibleRun: 4, maxHiddenRun: 2 },
+  { hiddenPercentRange: [30, 35], maxVisibleRun: 3, maxHiddenRun: 3 },
+  { hiddenPercentRange: [35, 40], maxVisibleRun: 3, maxHiddenRun: 3 },
+  { hiddenPercentRange: [40, 45], maxVisibleRun: 2, maxHiddenRun: 4 },
+  { hiddenPercentRange: [45, 50], maxVisibleRun: 2, maxHiddenRun: 4 },
+  { hiddenPercentRange: [50, 55], maxVisibleRun: 2, maxHiddenRun: 5 },
+  { hiddenPercentRange: [55, 60], maxVisibleRun: 2, maxHiddenRun: 5 },
 ] as const;
 
 const normalizeDifficulty = (difficulty: number): number => (
@@ -53,6 +54,15 @@ export const mode3HiddenSeed = (level: LevelData, difficulty: number): number =>
   ^ Math.imul(Math.floor(difficulty) + 1, 83492791)
   ^ level.solutionPath.length
   ^ 0x3a8f05c1
+) | 0;
+
+/** 玩法4随机序列只由关卡决定，不包含难度；档位差异只能来自配置值。 */
+export const mode4RandomHiddenSeed = (level: LevelData): number => (
+  Math.imul(level.levelId + 1, 104729)
+  ^ Math.imul(level.rows + 1, 73856093)
+  ^ Math.imul(level.columns + 1, 19349663)
+  ^ level.solutionPath.length
+  ^ 0x53c9e4ab
 ) | 0;
 
 const hiddenPercentSeed = (level: LevelData): number => (
@@ -88,29 +98,25 @@ export const mode4EffectiveHiddenPercent = (
   resolveMode4DifficultyConfig(difficulty).hiddenPercentRange,
 );
 
-const createAdaptiveHiddenCells = (
+const createMode3Algorithm8HiddenCells = (
   level: LevelData,
   difficulty: number,
-  config: AdaptiveHiddenLayoutConfig,
 ): Set<string> => {
   const normalizedTargetDifficulty = normalizeDifficulty(difficulty);
-  const effectiveHiddenPercent = hiddenPercentForLevel(level, config.hiddenPercentRange);
+  const effectiveHiddenPercent = mode3EffectiveHiddenPercent(level);
 
-  // 算法8内部会自动执行“隐藏占比 + 目标难度”。这里先减去目标难度，
-  // 确保最终隐藏占比严格落在当前玩法配置的区间内。
-  const requestedHiddenPercent = Math.max(
-    0,
-    effectiveHiddenPercent - normalizedTargetDifficulty,
-  );
+  // 玩法3的配置区间就是最终隐藏占比。关闭算法8编辑器默认的“+目标难度%”，
+  // 让目标难度只调整隐藏位置结构，不再改变隐藏总量。
   const hiddenIndices = selectAlgorithm8HiddenLayout(
     level.solutionPath,
     mode3EditorShape(level.boardShape),
-    requestedHiddenPercent,
+    effectiveHiddenPercent,
     normalizedTargetDifficulty,
     mode3HiddenSeed(level, normalizedTargetDifficulty),
     {
-      maxVisibleRun: config.maxVisibleRun,
-      maxHiddenRun: config.maxHiddenRun,
+      maxVisibleRun: MODE3_DIFFICULTY_CONFIG.maxVisibleRun,
+      maxHiddenRun: MODE3_DIFFICULTY_CONFIG.maxHiddenRun,
+      addTargetDifficultyPercent: false,
     },
   );
   return new Set([...hiddenIndices].map((index) => cellKey(level.solutionPath[index])));
@@ -123,14 +129,28 @@ const createAdaptiveHiddenCells = (
 export const createMode3HiddenCells = (
   level: LevelData,
   difficulty: number,
-): Set<string> => createAdaptiveHiddenCells(level, difficulty, MODE3_DIFFICULTY_CONFIG);
+): Set<string> => createMode3Algorithm8HiddenCells(level, difficulty);
 
-/** 玩法4在玩法3算法流程上，额外按当前动态难度切换整套配置。 */
+/**
+ * 玩法4不使用算法8难度评分。当前档位只负责选择配置，隐藏位置由同一套
+ * 关卡固定随机序列分散生成；数字1～4最多隐藏1个。
+ */
 export const createMode4HiddenCells = (
   level: LevelData,
   difficulty: number,
-): Set<string> => createAdaptiveHiddenCells(
-  level,
-  difficulty,
-  resolveMode4DifficultyConfig(difficulty),
-);
+): Set<string> => {
+  const config = resolveMode4DifficultyConfig(difficulty);
+  const effectiveHiddenPercent = hiddenPercentForLevel(level, config.hiddenPercentRange);
+  const hiddenIndices = selectMode4RandomDispersedHiddenLayout(
+    level.solutionPath,
+    effectiveHiddenPercent,
+    mode4RandomHiddenSeed(level),
+    {
+      maxVisibleRun: config.maxVisibleRun,
+      maxHiddenRun: config.maxHiddenRun,
+      firstNumberWindow: 4,
+      maxHiddenInFirstWindow: 1,
+    },
+  );
+  return new Set([...hiddenIndices].map((index) => cellKey(level.solutionPath[index])));
+};

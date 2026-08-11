@@ -4,6 +4,7 @@ import {
   loadBuiltInLevels,
   loadLevelCollection,
   loadMode3Levels,
+  loadMode5Levels,
   loadSettings,
   saveLevelCollection,
 } from '../game/storage';
@@ -43,10 +44,12 @@ describe('game settings migration', () => {
         maxHiddenRun: DEFAULT_SETTINGS.maxHiddenRun,
         targetCrossings: DEFAULT_SETTINGS.targetCrossings,
         mainGameplay: 'beads',
+        mainGameplayDifficulty: 'dynamic',
         beadMainLevelId: 4,
         puzzleMainLevelId: 4,
         mode3MainLevelId: 4,
         mode4MainLevelId: 4,
+        mode5MainLevelId: 4,
         showNextNumber: false,
         showDifficultyScore: false,
         inputMode: DEFAULT_SETTINGS.inputMode,
@@ -143,24 +146,48 @@ describe('game settings migration', () => {
     }
   });
 
-  it('keeps the four main gameplay selections and level progress independent', () => {
+  it('keeps the five main gameplay selections and level progress independent', () => {
     const getItem = vi.fn(() => JSON.stringify({
-      mainGameplay: 'mode4',
+      mainGameplay: 'mode5',
+      mainGameplayDifficulty: 8,
       beadMainLevelId: 3,
       puzzleMainLevelId: 8,
       mode3MainLevelId: 5,
       mode4MainLevelId: 7,
+      mode5MainLevelId: 9,
     }));
     vi.stubGlobal('window', { localStorage: { getItem } });
 
     try {
       expect(loadSettings()).toMatchObject({
-        mainGameplay: 'mode4',
+        mainGameplay: 'mode5',
+        mainGameplayDifficulty: 8,
         beadMainLevelId: 3,
         puzzleMainLevelId: 8,
         mode3MainLevelId: 5,
         mode4MainLevelId: 7,
+        mode5MainLevelId: 9,
       });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('loads dynamic or fixed main gameplay difficulty and rejects invalid values', () => {
+    const getItem = vi.fn()
+      .mockReturnValueOnce(JSON.stringify({ mainGameplayDifficulty: 'dynamic' }))
+      .mockReturnValueOnce(JSON.stringify({ mainGameplayDifficulty: 1 }))
+      .mockReturnValueOnce(JSON.stringify({ mainGameplayDifficulty: 10 }))
+      .mockReturnValueOnce(JSON.stringify({ mainGameplayDifficulty: '6' }))
+      .mockReturnValueOnce(JSON.stringify({ mainGameplayDifficulty: 11 }));
+    vi.stubGlobal('window', { localStorage: { getItem } });
+
+    try {
+      expect(loadSettings().mainGameplayDifficulty).toBe('dynamic');
+      expect(loadSettings().mainGameplayDifficulty).toBe(1);
+      expect(loadSettings().mainGameplayDifficulty).toBe(10);
+      expect(loadSettings().mainGameplayDifficulty).toBe('dynamic');
+      expect(loadSettings().mainGameplayDifficulty).toBe('dynamic');
     } finally {
       vi.unstubAllGlobals();
     }
@@ -206,7 +233,7 @@ describe('level collection migration', () => {
     }
   });
 
-  it('loads separate official level pools for the campaign, bead gameplay, and gameplay 3', async () => {
+  it('loads separate official level pools for the campaign, bead gameplay, gameplay 3, and gameplay 5', async () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,
       json: async () => [{ data: [[1]] }],
@@ -232,9 +259,16 @@ describe('level collection migration', () => {
         algorithm: { id: 'algorithm-8' },
         custom: false,
       }]);
+      await expect(loadMode5Levels()).resolves.toMatchObject([{
+        levelId: 1,
+        pathSource: 'generated',
+        algorithm: { id: 'mode5-random-dispersed' },
+        custom: false,
+      }]);
       expect(fetchMock).toHaveBeenNthCalledWith(1, './levels/levels.json');
       expect(fetchMock).toHaveBeenNthCalledWith(2, './levels/bead-levels.json');
       expect(fetchMock).toHaveBeenNthCalledWith(3, './levels/mode3-levels.json');
+      expect(fetchMock).toHaveBeenNthCalledWith(4, './levels/mode5-levels.json');
     } finally {
       vi.unstubAllGlobals();
     }

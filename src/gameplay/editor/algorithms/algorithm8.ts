@@ -25,6 +25,8 @@ export interface Algorithm8ExperienceMetrics {
 export interface Algorithm8HiddenLayoutOptions {
   maxVisibleRun?: number;
   maxHiddenRun?: number;
+  /** 默认保持编辑器算法8原规则；玩法3传 false，直接使用配置表的最终占比。 */
+  addTargetDifficultyPercent?: boolean;
   onProgress?: (progress: number) => void;
 }
 
@@ -514,10 +516,9 @@ export const selectAlgorithm8HiddenLayout = (
   options: Algorithm8HiddenLayoutOptions = {},
 ): Set<number> => {
   const availableCount = Math.max(0, path.length - 2);
-  const normalizedPercent = algorithm8EffectiveHiddenPercent(
-    requestedPercent,
-    targetDifficulty,
-  );
+  const normalizedPercent = options.addTargetDifficultyPercent === false
+    ? Math.max(0, Math.min(100, requestedPercent))
+    : algorithm8EffectiveHiddenPercent(requestedPercent, targetDifficulty);
   const targetCount = Math.min(
     availableCount,
     Math.max(0, Math.round(path.length * normalizedPercent / 100)),

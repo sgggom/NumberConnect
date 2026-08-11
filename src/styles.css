@@ -1811,7 +1811,10 @@ html[data-theme="night"] .primary-tab-button.is-active::before { background: var
 .setting-segmented input:checked + span { color: #fff; background: #3978b8; box-shadow: 0 4px 10px rgba(57,120,184,.22); }
 .setting-segmented input:focus-visible + span { outline: 3px solid rgba(107,182,255,.65); outline-offset: 1px; }
 .setting-theme-control { width: 132px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.setting-main-gameplay-control { width: 252px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.setting-main-gameplay-control { width: 252px; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.setting-row--main-difficulty { transition: opacity .16s ease; }
+.setting-row--main-difficulty.is-disabled { opacity: .52; }
+.setting-main-difficulty-control { width: 132px; font: inherit; font-size: .76rem; font-weight: 800; }
 .setting-input-mode-control { width: 184px; grid-template-columns: 1fr 1.55fr 1fr; }
 .setting-row--button { width: 100%; padding: 0; color: inherit; text-align: left; background: transparent; border-right: 0; border-bottom: 0; border-left: 0; cursor: pointer; font: inherit; }
 .setting-row--button strong { color: #2f987b; font-size: .8rem; transition: color .16s ease; }
@@ -1821,7 +1824,9 @@ html[data-theme="night"] .primary-tab-button.is-active::before { background: var
 .setting-row--danger strong { color: #d94f62; }
 .setting-row--danger:hover b,
 .setting-row--danger:hover strong { color: #b82f45; }
-.settings-card select { min-height: 42px; padding: 0 36px 0 12px; border: 1px solid rgba(74,101,130,.18); border-radius: 12px; color: var(--ink); background: #f1f5f9; }
+.settings-card select { min-height: 42px; padding: 0 36px 0 12px; border: 1px solid rgba(74,101,130,.18); border-radius: 12px; color: var(--ink); background: #f1f5f9; cursor: pointer; }
+.settings-card select:focus-visible { outline: 3px solid rgba(107,182,255,.65); outline-offset: 2px; }
+.settings-card select:disabled { cursor: not-allowed; }
 input[type="range"] { width: 100%; accent-color: var(--green); }
 .switch { appearance: none; width: 48px; height: 28px; position: relative; border: 1px solid rgba(74,101,130,.12); border-radius: 999px; background: #cbd5df; cursor: pointer; transition: background .18s ease, opacity .18s ease; }
 .switch::after { content: ""; position: absolute; top: 4px; left: 4px; width: 20px; height: 20px; border-radius: 50%; background: white; transition: transform .18s ease; }
