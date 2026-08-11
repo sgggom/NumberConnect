@@ -30,6 +30,7 @@ import {
   loadBuiltInLevels,
   loadLevelCollection,
   loadMode3Levels,
+  loadMode5Levels,
   loadSettings,
   saveLevelCollection,
   saveSettings,
@@ -39,6 +40,7 @@ import {
   cellKey,
   isInputMode,
   isMainGameplay,
+  isMainGameplayDifficulty,
   isTouchPreviewSize,
   isUiTheme,
   usesClickInput,
@@ -52,6 +54,7 @@ import {
   type InputMode,
   type LevelData,
   type MainGameplay,
+  type MainGameplayDifficulty,
   type TouchPreviewSize,
   type UiTheme,
 } from './game/types';
@@ -125,6 +128,12 @@ import {
   type DynamicDifficultyDecision,
   type DynamicDifficultyGameResult,
 } from './gameplay/mode3';
+import {
+  createMode5HiddenCells,
+  loadMode5DynamicDifficultyState,
+  recordMode5DynamicDifficultyGame,
+  saveMode5DynamicDifficultyState,
+} from './gameplay/mode5';
 
 const UI_DESIGN_WIDTH = 750;
 const UI_DESIGN_HEIGHT = 1334;
@@ -283,7 +292,16 @@ const roundedRoutePath = (points: RoutePoint[], radius = 20): string => {
 
 type ResultContext = 'normal' | 'collection' | 'daily' | 'endless-stage' | 'life-depleted' | 'editor-playtest';
 type PlayContext = 'normal' | 'collection' | 'daily' | 'editor-playtest' | 'bead';
-type AdaptiveMainGameplay = Extract<MainGameplay, 'mode3' | 'mode4'>;
+type AdaptiveMainGameplay = Extract<MainGameplay, 'mode3' | 'mode4' | 'mode5'>;
+
+const isAdaptiveMainGameplay = (gameplay: MainGameplay): gameplay is AdaptiveMainGameplay => (
+  gameplay === 'mode3' || gameplay === 'mode4' || gameplay === 'mode5'
+);
+
+const adaptiveGameplayName = (gameplay: AdaptiveMainGameplay): string => {
+  if (gameplay === 'mode5') return '玩法5';
+  return gameplay === 'mode4' ? '玩法4' : '玩法3';
+};
 
 interface ClientPoint {
   x: number;
@@ -384,6 +402,8 @@ class NumberConnectApp {
   private readonly touchPreviewSizeControl = query<HTMLElement>('#touch-preview-size');
   private readonly inputModeControl = query<HTMLElement>('#settings-input-mode');
   private readonly mainGameplayControl = query<HTMLElement>('#settings-main-gameplay');
+  private readonly mainGameplayDifficultyRow = query<HTMLElement>('#settings-main-difficulty-row');
+  private readonly mainGameplayDifficultyControl = query<HTMLSelectElement>('#settings-main-difficulty');
   private readonly uiThemeControl = query<HTMLElement>('#settings-theme');
   private readonly resultOverlay = query<HTMLElement>('#result-overlay');
   private readonly resultTitle = query<HTMLElement>('#result-title');
@@ -456,6 +476,7 @@ class NumberConnectApp {
   private builtInLevels: LevelData[] = [];
   private beadLevels: LevelData[] = [];
   private mode3Levels: LevelData[] = [];
+  private mode5Levels: LevelData[] = [];
   private levels: LevelData[] = [];
   private settings: GameSettings = loadSettings();
   private activeMainGameplay: MainGameplay = this.settings.mainGameplay;
@@ -465,7 +486,9 @@ class NumberConnectApp {
   private editorPlaytestErrorCount = 0;
   private mode3DifficultyState = loadDynamicDifficultyState();
   private mode4DifficultyState = loadMode4DynamicDifficultyState();
+  private mode5DifficultyState = loadMode5DynamicDifficultyState();
   private currentAdaptiveDifficulty = this.mode3DifficultyState.currentDifficulty;
+  private currentAdaptiveUsesDynamicDifficulty = true;
   private currentAdaptiveAttemptErrors = 0;
   private currentAdaptiveAttemptRecorded = true;
   private currentAdaptiveAttemptEligible = false;
@@ -606,10 +629,11 @@ class NumberConnectApp {
   }
 
   public async initialize(): Promise<void> {
-    const [builtInLevels, beadLevels, mode3Levels, beadPatterns] = await Promise.all([
+    const [builtInLevels, beadLevels, mode3Levels, mode5Levels, beadPatterns] = await Promise.all([
       loadBuiltInLevels(),
       loadBeadLevels(),
       loadMode3Levels(),
+      loadMode5Levels(),
       loadBeadPatterns(),
       this.boardScene.whenReady(),
     ]);
@@ -617,6 +641,7 @@ class NumberConnectApp {
     this.builtInLevels = builtInLevels;
     this.beadLevels = beadLevels;
     this.mode3Levels = mode3Levels;
+    this.mode5Levels = mode5Levels;
     this.beadPatterns = beadPatterns;
     this.beadPattern = beadSequence.pattern;
     this.beadProgress = beadSequence.progress;
@@ -1590,7 +1615,19 @@ class NumberConnectApp {
     });
   }
 
+  private selectedMainGameplayDifficulty(): MainGameplayDifficulty {
+    const value = this.mainGameplayDifficultyControl.value;
+    if (value === 'dynamic') return 'dynamic';
+    const difficulty = Number(value);
+    return isMainGameplayDifficulty(difficulty) ? difficulty : 'dynamic';
+  }
+
+  private setMainGameplayDifficultyControl(difficulty: MainGameplayDifficulty): void {
+    this.mainGameplayDifficultyControl.value = String(difficulty);
+  }
+
   private mainGameplayLevels(gameplay: MainGameplay = this.settings.mainGameplay): LevelData[] {
+    if (gameplay === 'mode5') return this.mode5Levels;
     return gameplay === 'mode3' || gameplay === 'mode4' ? this.mode3Levels : this.levels;
   }
 
@@ -1598,14 +1635,16 @@ class NumberConnectApp {
     if (gameplay === 'beads') return this.settings.beadMainLevelId;
     if (gameplay === 'puzzle') return this.settings.puzzleMainLevelId;
     if (gameplay === 'mode3') return this.settings.mode3MainLevelId;
-    return this.settings.mode4MainLevelId;
+    if (gameplay === 'mode4') return this.settings.mode4MainLevelId;
+    return this.settings.mode5MainLevelId;
   }
 
   private setMainGameplayLevelId(levelId: number, gameplay: MainGameplay): void {
     if (gameplay === 'beads') this.settings.beadMainLevelId = levelId;
     else if (gameplay === 'puzzle') this.settings.puzzleMainLevelId = levelId;
     else if (gameplay === 'mode3') this.settings.mode3MainLevelId = levelId;
-    else this.settings.mode4MainLevelId = levelId;
+    else if (gameplay === 'mode4') this.settings.mode4MainLevelId = levelId;
+    else this.settings.mode5MainLevelId = levelId;
   }
 
   private playPuzzlePatternForLevel(levelId = this.settings.puzzleMainLevelId): PlayPuzzlePattern {
@@ -1682,6 +1721,9 @@ class NumberConnectApp {
     }
     if (!this.mode3Levels.some((level) => level.levelId === this.settings.mode4MainLevelId)) {
       this.settings.mode4MainLevelId = this.mode3Levels[0]?.levelId ?? 1;
+    }
+    if (!this.mode5Levels.some((level) => level.levelId === this.settings.mode5MainLevelId)) {
+      this.settings.mode5MainLevelId = this.mode5Levels[0]?.levelId ?? 1;
     }
     if (
       !Number.isInteger(this.settings.puzzleMainLevelId)
@@ -1993,13 +2035,23 @@ class NumberConnectApp {
 
   private activeAdaptiveGameplay(): AdaptiveMainGameplay | undefined {
     if (this.playContext !== 'normal' || this.mode !== 'normal') return undefined;
-    return this.activeMainGameplay === 'mode3' || this.activeMainGameplay === 'mode4'
+    return isAdaptiveMainGameplay(this.activeMainGameplay)
       ? this.activeMainGameplay
       : undefined;
   }
 
   private isAdaptiveGameplaySession(): boolean {
     return this.activeAdaptiveGameplay() !== undefined;
+  }
+
+  private adaptiveDifficultyFor(gameplay: AdaptiveMainGameplay): number {
+    if (this.settings.mainGameplayDifficulty !== 'dynamic') {
+      return this.settings.mainGameplayDifficulty;
+    }
+    if (gameplay === 'mode5') return this.mode5DifficultyState.currentDifficulty;
+    return gameplay === 'mode4'
+      ? this.mode4DifficultyState.currentDifficulty
+      : this.mode3DifficultyState.currentDifficulty;
   }
 
   private makeSession(level: LevelData, profile?: EndlessStageSettings): BoardSessionInput {
@@ -2034,6 +2086,8 @@ class NumberConnectApp {
         ? createMode3HiddenCells(level, this.currentAdaptiveDifficulty)
         : adaptiveGameplay === 'mode4'
           ? createMode4HiddenCells(level, this.currentAdaptiveDifficulty)
+          : adaptiveGameplay === 'mode5'
+            ? createMode5HiddenCells(level, this.currentAdaptiveDifficulty)
         : level.hiddenCells === undefined
           ? selectHiddenCells(level.solutionPath, hiddenPercent, maxHiddenRun, maxVisibleRun, seed)
           : new Set(level.hiddenCells.map(cellKey)),
@@ -2089,14 +2143,14 @@ class NumberConnectApp {
     this.currentLevel = level;
     const adaptiveGameplay = this.activeAdaptiveGameplay();
     if (adaptiveGameplay) {
-      this.currentAdaptiveDifficulty = adaptiveGameplay === 'mode4'
-        ? this.mode4DifficultyState.currentDifficulty
-        : this.mode3DifficultyState.currentDifficulty;
+      this.currentAdaptiveUsesDynamicDifficulty = this.settings.mainGameplayDifficulty === 'dynamic';
+      this.currentAdaptiveDifficulty = this.adaptiveDifficultyFor(adaptiveGameplay);
       this.currentAdaptiveAttemptErrors = 0;
       this.currentAdaptiveAttemptRecorded = false;
-      this.currentAdaptiveAttemptEligible = true;
+      this.currentAdaptiveAttemptEligible = this.currentAdaptiveUsesDynamicDifficulty;
       this.currentAdaptiveLifeDepleted = false;
     } else {
+      this.currentAdaptiveUsesDynamicDifficulty = false;
       this.currentAdaptiveAttemptRecorded = true;
       this.currentAdaptiveAttemptEligible = false;
       this.currentAdaptiveLifeDepleted = false;
@@ -2227,9 +2281,12 @@ class NumberConnectApp {
       this.levelLabel.textContent = `拼图 · 关卡 ${this.settings.puzzleMainLevelId} · 阶段 ${currentStage}/${totalStages}`;
       return;
     }
-    if (this.activeMainGameplay === 'mode3' || this.activeMainGameplay === 'mode4') {
-      const gameplayName = this.activeMainGameplay === 'mode4' ? '玩法4' : '玩法3';
-      this.levelLabel.textContent = `${gameplayName} · 难度 ${this.currentAdaptiveDifficulty} · ${level.custom ? '自制关卡' : '关卡'} ${level.levelId}`;
+    if (isAdaptiveMainGameplay(this.activeMainGameplay)) {
+      const gameplayName = adaptiveGameplayName(this.activeMainGameplay);
+      const difficultyLabel = this.currentAdaptiveUsesDynamicDifficulty
+        ? `${this.currentAdaptiveDifficulty}（动态）`
+        : String(this.currentAdaptiveDifficulty);
+      this.levelLabel.textContent = `${gameplayName} · 难度 ${difficultyLabel} · ${level.custom ? '自制关卡' : '关卡'} ${level.levelId}`;
       return;
     }
     this.levelLabel.textContent = `拼豆 · ${level.custom ? '自制关卡' : '关卡'} ${level.levelId}`;
@@ -2698,18 +2755,28 @@ class NumberConnectApp {
     ) return undefined;
 
     this.currentAdaptiveAttemptRecorded = true;
-    if (!this.currentAdaptiveAttemptEligible) return undefined;
+    if (!this.currentAdaptiveUsesDynamicDifficulty || !this.currentAdaptiveAttemptEligible) {
+      return undefined;
+    }
 
-    const currentState = gameplay === 'mode4'
-      ? this.mode4DifficultyState
-      : this.mode3DifficultyState;
-    const decision = recordDynamicDifficultyGame(currentState, {
+    const currentState = gameplay === 'mode5'
+      ? this.mode5DifficultyState
+      : gameplay === 'mode4'
+        ? this.mode4DifficultyState
+        : this.mode3DifficultyState;
+    const record = {
       errors: this.currentAdaptiveAttemptErrors,
       result,
       levelId: this.currentLevel.levelId,
       finishedAtUtc: new Date().toISOString(),
-    });
-    if (gameplay === 'mode4') {
+    };
+    const decision = gameplay === 'mode5'
+      ? recordMode5DynamicDifficultyGame(currentState, record)
+      : recordDynamicDifficultyGame(currentState, record);
+    if (gameplay === 'mode5') {
+      this.mode5DifficultyState = decision.state;
+      saveMode5DynamicDifficultyState(this.mode5DifficultyState);
+    } else if (gameplay === 'mode4') {
       this.mode4DifficultyState = decision.state;
       saveMode4DynamicDifficultyState(this.mode4DifficultyState);
     } else {
@@ -2721,9 +2788,15 @@ class NumberConnectApp {
 
   private showAdaptiveResult(decision: DynamicDifficultyDecision | undefined): void {
     this.showNormalResult();
-    const gameplayName = this.activeMainGameplay === 'mode4' ? '玩法4' : '玩法3';
+    const gameplayName = isAdaptiveMainGameplay(this.activeMainGameplay)
+      ? adaptiveGameplayName(this.activeMainGameplay)
+      : '玩法';
     this.resultTitle.textContent = `${gameplayName}完成！`;
     const attempt = `本局错误 ${this.currentAdaptiveAttemptErrors} 次。`;
+    if (!this.currentAdaptiveUsesDynamicDifficulty) {
+      this.resultMessage.textContent = `${attempt} 当前使用固定难度 ${this.currentAdaptiveDifficulty}，本局不计入动态难度。`;
+      return;
+    }
     if (!decision) {
       this.resultMessage.textContent = `${attempt} 本局使用过答案或快速完成，不计入动态难度。`;
       return;
@@ -3607,6 +3680,7 @@ class NumberConnectApp {
 
   private populateSettingsForm(): void {
     this.setMainGameplayControl(this.settings.mainGameplay);
+    this.setMainGameplayDifficultyControl(this.settings.mainGameplayDifficulty);
     this.setInputModeControl(this.settings.inputMode);
     query<HTMLInputElement>('#settings-next').checked = this.settings.showNextNumber;
     query<HTMLInputElement>('#settings-difficulty-score').checked = this.settings.showDifficultyScore;
@@ -3633,6 +3707,8 @@ class NumberConnectApp {
           ? '玩法3关卡'
           : gameplay === 'mode4'
             ? '玩法4关卡'
+            : gameplay === 'mode5'
+              ? '玩法5关卡'
             : level.custom ? '自制关卡' : '关卡',
       }));
     const options = levelOptions.map((level) => {
@@ -3671,6 +3747,11 @@ class NumberConnectApp {
 
   private refreshSettingsControls(): void {
     const previewSize = this.selectedTouchPreviewSize();
+    const mainGameplay = this.selectedMainGameplay();
+    const supportsDifficulty = isAdaptiveMainGameplay(mainGameplay);
+    this.mainGameplayDifficultyControl.disabled = !supportsDifficulty;
+    this.mainGameplayDifficultyRow.classList.toggle('is-disabled', !supportsDifficulty);
+    this.mainGameplayDifficultyRow.setAttribute('aria-disabled', String(!supportsDifficulty));
     query<HTMLInputElement>('#settings-touch-preview-follow').disabled = (
       previewSize === 'off' || previewSize === 'zoom'
     );
@@ -3679,7 +3760,34 @@ class NumberConnectApp {
 
   private applySettingsChange(): void {
     const previousMainGameplay = this.settings.mainGameplay;
-    this.settings.mainGameplay = this.selectedMainGameplay();
+    const previousMainGameplayDifficulty = this.settings.mainGameplayDifficulty;
+    const nextMainGameplay = this.selectedMainGameplay();
+    const nextMainGameplayDifficulty = this.selectedMainGameplayDifficulty();
+    const mainGameplayChanged = previousMainGameplay !== nextMainGameplay;
+    const mainGameplayDifficultyChanged = (
+      previousMainGameplayDifficulty !== nextMainGameplayDifficulty
+    );
+    const isNormalPlay = this.settingsContext === 'play'
+      && this.playContext === 'normal'
+      && this.mode === 'normal';
+    const shouldRegenerateBoard = isNormalPlay && (
+      mainGameplayChanged
+      || (
+        mainGameplayDifficultyChanged
+        && isAdaptiveMainGameplay(this.activeMainGameplay)
+      )
+    );
+
+    if (
+      shouldRegenerateBoard
+      && this.isAdaptiveGameplaySession()
+      && this.currentAdaptiveLifeDepleted
+    ) {
+      this.recordAdaptiveAttempt('life-depleted');
+    }
+
+    this.settings.mainGameplay = nextMainGameplay;
+    this.settings.mainGameplayDifficulty = nextMainGameplayDifficulty;
     this.settings.inputMode = this.selectedInputMode();
     this.settings.showNextNumber = query<HTMLInputElement>('#settings-next').checked;
     this.settings.showDifficultyScore = query<HTMLInputElement>('#settings-difficulty-score').checked;
@@ -3702,16 +3810,9 @@ class NumberConnectApp {
       boardZoomEnabled: this.isTouchPreviewZoomMode(),
     });
 
-    if (
-      previousMainGameplay !== this.settings.mainGameplay
-      && this.settingsContext === 'play'
-      && this.playContext === 'normal'
-      && this.mode === 'normal'
-    ) {
-      if (this.isAdaptiveGameplaySession() && this.currentAdaptiveLifeDepleted) {
-        this.recordAdaptiveAttempt('life-depleted');
-      }
+    if (shouldRegenerateBoard) {
       this.activeMainGameplay = this.settings.mainGameplay;
+      this.resultOverlay.hidden = true;
       this.lives = 3;
       this.renderLives();
       this.setCurrentBoard(this.createNormalLevel());

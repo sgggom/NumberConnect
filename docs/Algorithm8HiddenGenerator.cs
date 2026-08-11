@@ -22,6 +22,8 @@ public sealed class Algorithm8HiddenLayoutOptions
 {
     public int MaxVisibleRun { get; init; } = 8;
     public int MaxHiddenRun { get; init; } = 4;
+    // 默认兼容编辑器算法8；玩法3设为 false，直接使用配置表中的最终占比。
+    public bool AddTargetDifficultyPercent { get; init; } = true;
     public Action<double>? OnProgress { get; init; }
 }
 
@@ -119,7 +121,9 @@ public static class Algorithm8HiddenGenerator
         options ??= new Algorithm8HiddenLayoutOptions();
 
         var availableCount = Math.Max(0, path.Count - 2);
-        var effectivePercent = EffectiveHiddenPercent(requestedPercent, targetDifficulty);
+        var effectivePercent = options.AddTargetDifficultyPercent
+            ? EffectiveHiddenPercent(requestedPercent, targetDifficulty)
+            : Math.Clamp(requestedPercent, 0, 100);
         var targetCount = Math.Min(
             availableCount,
             Math.Max(0, JsRoundNonNegative(path.Count * effectivePercent / 100.0)));

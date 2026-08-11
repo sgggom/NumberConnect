@@ -3,6 +3,7 @@ import {
   DEFAULT_SETTINGS,
   isInputMode,
   isMainGameplay,
+  isMainGameplayDifficulty,
   isTouchPreviewSize,
   isUiTheme,
   type GameSettings,
@@ -74,6 +75,9 @@ export const loadSettings = (): GameSettings => {
     const mainGameplay = isMainGameplay(stored.mainGameplay)
       ? stored.mainGameplay
       : DEFAULT_SETTINGS.mainGameplay;
+    const mainGameplayDifficulty = isMainGameplayDifficulty(stored.mainGameplayDifficulty)
+      ? stored.mainGameplayDifficulty
+      : DEFAULT_SETTINGS.mainGameplayDifficulty;
     const legacyLevelId = Number.isInteger(stored.selectedLevelId) && Number(stored.selectedLevelId) > 0
       ? Number(stored.selectedLevelId)
       : 1;
@@ -89,15 +93,20 @@ export const loadSettings = (): GameSettings => {
     const mode4MainLevelId = Number.isInteger(stored.mode4MainLevelId) && Number(stored.mode4MainLevelId) > 0
       ? Number(stored.mode4MainLevelId)
       : legacyLevelId;
+    const mode5MainLevelId = Number.isInteger(stored.mode5MainLevelId) && Number(stored.mode5MainLevelId) > 0
+      ? Number(stored.mode5MainLevelId)
+      : legacyLevelId;
     return {
       ...DEFAULT_SETTINGS,
       ...currentSettings,
       inputMode,
       mainGameplay,
+      mainGameplayDifficulty,
       beadMainLevelId,
       puzzleMainLevelId,
       mode3MainLevelId,
       mode4MainLevelId,
+      mode5MainLevelId,
       uiTheme,
       touchPreviewSize,
       showDifficultyScore: stored.showDifficultyScore === true,
@@ -181,6 +190,11 @@ export const loadBeadLevels = (): Promise<LevelData[]> => (
 
 export const loadMode3Levels = (): Promise<LevelData[]> => (
   loadBundledLevels('./levels/mode3-levels.json', 'algorithm-8')
+);
+
+/** 玩法5读取独立资源文件，后续调整阵型不会影响玩法3/4。 */
+export const loadMode5Levels = (): Promise<LevelData[]> => (
+  loadBundledLevels('./levels/mode5-levels.json', 'mode5-random-dispersed')
 );
 
 export const getNextLevelId = (levels: LevelData[]): number => {

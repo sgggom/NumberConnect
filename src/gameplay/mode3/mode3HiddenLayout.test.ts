@@ -10,6 +10,7 @@ import {
   mode3EffectiveHiddenPercent,
   mode3EditorShape,
   mode4EffectiveHiddenPercent,
+  mode4RandomHiddenSeed,
   resolveMode4DifficultyConfig,
 } from './mode3HiddenLayout';
 
@@ -95,15 +96,15 @@ describe('玩法4动态配置', () => {
   it('逐级匹配产品给定的10档参数', () => {
     expect(MODE4_DIFFICULTY_CONFIGS).toEqual([
       { hiddenPercentRange: [10, 15], maxVisibleRun: 5, maxHiddenRun: 2 },
-      { hiddenPercentRange: [13, 18], maxVisibleRun: 5, maxHiddenRun: 2 },
-      { hiddenPercentRange: [16, 21], maxVisibleRun: 4, maxHiddenRun: 2 },
-      { hiddenPercentRange: [19, 24], maxVisibleRun: 4, maxHiddenRun: 2 },
-      { hiddenPercentRange: [22, 27], maxVisibleRun: 3, maxHiddenRun: 3 },
-      { hiddenPercentRange: [25, 30], maxVisibleRun: 3, maxHiddenRun: 3 },
-      { hiddenPercentRange: [28, 33], maxVisibleRun: 2, maxHiddenRun: 4 },
-      { hiddenPercentRange: [31, 36], maxVisibleRun: 2, maxHiddenRun: 4 },
-      { hiddenPercentRange: [34, 39], maxVisibleRun: 2, maxHiddenRun: 5 },
-      { hiddenPercentRange: [37, 42], maxVisibleRun: 2, maxHiddenRun: 5 },
+      { hiddenPercentRange: [15, 20], maxVisibleRun: 5, maxHiddenRun: 2 },
+      { hiddenPercentRange: [20, 25], maxVisibleRun: 4, maxHiddenRun: 2 },
+      { hiddenPercentRange: [25, 30], maxVisibleRun: 4, maxHiddenRun: 2 },
+      { hiddenPercentRange: [30, 35], maxVisibleRun: 3, maxHiddenRun: 3 },
+      { hiddenPercentRange: [35, 40], maxVisibleRun: 3, maxHiddenRun: 3 },
+      { hiddenPercentRange: [40, 45], maxVisibleRun: 2, maxHiddenRun: 4 },
+      { hiddenPercentRange: [45, 50], maxVisibleRun: 2, maxHiddenRun: 4 },
+      { hiddenPercentRange: [50, 55], maxVisibleRun: 2, maxHiddenRun: 5 },
+      { hiddenPercentRange: [55, 60], maxVisibleRun: 2, maxHiddenRun: 5 },
     ]);
     expect(resolveMode4DifficultyConfig(0)).toBe(MODE4_DIFFICULTY_CONFIGS[0]);
     expect(resolveMode4DifficultyConfig(99)).toBe(MODE4_DIFFICULTY_CONFIGS[9]);
@@ -118,11 +119,32 @@ describe('玩法4动态配置', () => {
 
     expect(easyPercent).toBeGreaterThanOrEqual(10);
     expect(easyPercent).toBeLessThanOrEqual(15);
-    expect(hardPercent).toBeGreaterThanOrEqual(37);
-    expect(hardPercent).toBeLessThanOrEqual(42);
+    expect(hardPercent).toBeGreaterThanOrEqual(55);
+    expect(hardPercent).toBeLessThanOrEqual(60);
     expect(easy.size).toBe(Math.round(level.solutionPath.length * easyPercent / 100));
     expect(hard.size).toBe(Math.round(level.solutionPath.length * hardPercent / 100));
     expect(hard.size).toBeGreaterThan(easy.size);
     expect(createMode4HiddenCells(level, 10)).toEqual(hard);
+  });
+
+  it('全部关卡和档位都只按配置取数量，且前4个数字最多隐藏1个', () => {
+    const levels = decodeCompactLevelCollection(mode3LevelsJson, false);
+
+    levels.forEach((level) => {
+      expect(mode4RandomHiddenSeed(level)).toBe(mode4RandomHiddenSeed(level));
+      for (let difficulty = 1; difficulty <= 10; difficulty += 1) {
+        const hidden = createMode4HiddenCells(level, difficulty);
+        const percent = mode4EffectiveHiddenPercent(level, difficulty);
+        const firstFourHiddenCount = level.solutionPath
+          .slice(0, 4)
+          .filter((cell) => hidden.has(cellKey(cell)))
+          .length;
+
+        expect(hidden.size).toBe(Math.round(level.solutionPath.length * percent / 100));
+        expect(firstFourHiddenCount).toBeLessThanOrEqual(1);
+        expect(hidden.has(cellKey(level.solutionPath[0]))).toBe(false);
+        expect(hidden.has(cellKey(level.solutionPath.at(-1)!))).toBe(false);
+      }
+    });
   });
 });

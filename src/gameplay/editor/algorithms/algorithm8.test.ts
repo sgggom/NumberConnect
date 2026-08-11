@@ -132,6 +132,24 @@ describe('editor algorithm 8 spatial hidden selection', () => {
     expect(selectAlgorithm8HiddenLayout(path, 'square', 35, 10, 108).size).toBe(29);
   });
 
+  it('can keep the requested percentage final while difficulty only shapes the layout', () => {
+    const path = Array.from({ length: 64 }, (_, index) => {
+      const y = Math.floor(index / 8);
+      const offset = index % 8;
+      return { x: y % 2 === 0 ? offset : 7 - offset, y };
+    });
+
+    const easy = selectAlgorithm8HiddenLayout(path, 'square', 35, 1, 118, {
+      addTargetDifficultyPercent: false,
+    });
+    const hard = selectAlgorithm8HiddenLayout(path, 'square', 35, 10, 118, {
+      addTargetDifficultyPercent: false,
+    });
+
+    expect(easy.size).toBe(22);
+    expect(hard.size).toBe(22);
+  });
+
   it('applies the configured longest visible and hidden run limits', () => {
     const path = Array.from({ length: 64 }, (_, index) => {
       const y = Math.floor(index / 8);
