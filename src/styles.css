@@ -1590,6 +1590,10 @@ html[data-theme="night"] .primary-tab-button.is-active::before { background: var
 .life-heart-slot { width: 1.08em; position: relative; display: inline-grid; place-items: center; }
 .life-heart { position: absolute; inset: 0; display: grid; place-items: center; color: #e60012; pointer-events: none; }
 .life-heart--lost { z-index: 1; animation: life-heart-lost 1000ms linear both; will-change: transform, opacity; }
+.life-heart--lost::before { content: '♥'; position: absolute; inset: 0; display: grid; place-items: center; animation: life-heart-whole 1000ms linear both; }
+.life-heart-piece { position: absolute; inset: 0; display: grid; place-items: center; transform-origin: 50% 100%; will-change: transform; }
+.life-heart-piece--left { clip-path: polygon(0 0,48% 0,42% 24%,50% 39%,41% 54%,49% 70%,44% 100%,0 100%); animation: life-heart-crack-left 1000ms linear both; }
+.life-heart-piece--right { clip-path: polygon(55% 0,100% 0,100% 100%,51% 100%,57% 70%,49% 54%,58% 39%,50% 24%); animation: life-heart-crack-right 1000ms linear both; }
 .life-heart--gained { z-index: 2; transform-origin: center; animation: life-heart-gained 880ms var(--heart-delay, 0ms) cubic-bezier(.34,1.56,.64,1) both; filter: drop-shadow(0 1px 2px rgba(230,0,18,.28)); will-change: transform, opacity; }
 .life-heart-particles { position: absolute; inset: 50%; z-index: 3; pointer-events: none; }
 .life-heart-particles > i { width: 3px; height: 3px; position: absolute; left: -1.5px; top: -1.5px; display: block; border-radius: 50%; background: #ffd452; box-shadow: 0 0 4px rgba(255,190,42,.92); opacity: 0; transform: rotate(var(--particle-angle)) translateX(0) scale(.4); animation: life-heart-particle 560ms calc(var(--heart-delay, 0ms) + 125ms) cubic-bezier(.18,.72,.3,1) both; will-change: transform, opacity; }
@@ -1601,6 +1605,23 @@ html[data-theme="night"] .primary-tab-button.is-active::before { background: var
   21% { transform: translateX(-2px); }
   28% { opacity: 1; transform: translate(0, 0); }
   100% { opacity: 0; transform: translateY(22px); }
+}
+
+@keyframes life-heart-whole {
+  0%, 27.9% { opacity: 1; }
+  28%, 100% { opacity: 0; }
+}
+
+@keyframes life-heart-crack-left {
+  0%, 27.9% { opacity: 0; transform: rotate(0deg); }
+  28% { opacity: 1; transform: rotate(0deg); }
+  40%, 100% { opacity: 1; transform: rotate(-12deg); }
+}
+
+@keyframes life-heart-crack-right {
+  0%, 27.9% { opacity: 0; transform: rotate(0deg); }
+  28% { opacity: 1; transform: rotate(0deg); }
+  40%, 100% { opacity: 1; transform: rotate(12deg); }
 }
 
 @keyframes life-heart-gained {
