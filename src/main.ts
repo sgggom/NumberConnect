@@ -2631,7 +2631,7 @@ class NumberConnectApp {
     this.renderPowerUps();
   }
 
-  private renderLives(): void {
+  private renderLives(animation?: { lost?: boolean; gainedFrom?: number }): void {
     if (this.playContext === 'editor-playtest') {
       this.livesLabel.hidden = false;
       this.livesLabel.textContent = `错误 × ${this.editorPlaytestErrorCount}`;
@@ -2643,7 +2643,49 @@ class NumberConnectApp {
       this.recordEndlessProgress();
     }
     this.livesLabel.hidden = false;
-    this.livesLabel.textContent = formatLives(this.lives);
+    const lives = Math.max(0, Math.floor(this.lives));
+    if (lives > 3) {
+      this.livesLabel.textContent = formatLives(lives);
+    } else {
+      const heartSlots = Array.from({ length: 3 }, (_, index) => {
+        const slot = document.createElement('span');
+        slot.className = 'life-heart-slot';
+        const isGainedHeart = animation?.gainedFrom !== undefined
+          && index >= Math.max(0, animation.gainedFrom)
+          && index < lives;
+        slot.textContent = index < lives && !isGainedHeart ? '♥' : '♡';
+
+        if (animation?.lost && index === lives) {
+          const lostHeart = document.createElement('span');
+          lostHeart.className = 'life-heart life-heart--lost';
+          lostHeart.setAttribute('aria-hidden', 'true');
+          lostHeart.textContent = '♥';
+          slot.append(lostHeart);
+        }
+        if (isGainedHeart) {
+          const gainedHeart = document.createElement('span');
+          gainedHeart.className = 'life-heart life-heart--gained';
+          gainedHeart.setAttribute('aria-hidden', 'true');
+          gainedHeart.style.setProperty('--heart-delay', `${(index - animation.gainedFrom!) * 110}ms`);
+          gainedHeart.textContent = '♥';
+          slot.append(gainedHeart);
+
+          const particles = document.createElement('span');
+          particles.className = 'life-heart-particles';
+          particles.setAttribute('aria-hidden', 'true');
+          particles.style.setProperty('--heart-delay', `${(index - animation.gainedFrom!) * 110}ms`);
+          for (let particleIndex = 0; particleIndex < 8; particleIndex += 1) {
+            const particle = document.createElement('i');
+            particle.style.setProperty('--particle-angle', `${particleIndex * 45}deg`);
+            particle.style.setProperty('--particle-distance', `${10 + (particleIndex % 2) * 3}px`);
+            particles.append(particle);
+          }
+          slot.append(particles);
+        }
+        return slot;
+      });
+      this.livesLabel.replaceChildren(...heartSlots);
+    }
     this.livesLabel.setAttribute('aria-label', `生命值 ${this.lives}`);
   }
 
@@ -2662,11 +2704,7 @@ class NumberConnectApp {
   private renderEndlessHub(): void {
     this.endlessCurrentStage.textContent = String(this.stage);
     const endlessLives = Math.max(0, Math.floor(this.endlessLives));
-    this.endlessCurrentLives.textContent = endlessLives > 3
-      ? `♥ × ${endlessLives}`
-      : endlessLives > 0
-        ? '♥'.repeat(endlessLives)
-        : '♥ × 0';
+    this.endlessCurrentLives.textContent = formatLives(endlessLives);
     this.endlessCurrentLives.setAttribute('aria-label', `当前生命 ${endlessLives}`);
     this.endlessBestStage.textContent = String(this.endlessHighScore);
     const label = this.endlessStartButton.querySelector<HTMLElement>('strong');
@@ -2686,7 +2724,7 @@ class NumberConnectApp {
       this.currentAdaptiveAttemptErrors += 1;
     }
     this.lives -= 1;
-    this.renderLives();
+    this.renderLives({ lost: true });
     if (this.lives === 0) this.handleLifeDepleted();
   }
 
@@ -2701,7 +2739,7 @@ class NumberConnectApp {
     this.resultMessage.textContent = this.mode === 'endless' ? `阶段 ${this.stage} · ${progress}` : progress;
     this.resultReward.hidden = true;
     this.restartButton.textContent = '重新开始';
-    this.nextButton.textContent = '观看视频获取 1♥';
+    this.nextButton.textContent = '观看视频复活并恢复 3♥';
     this.nextButton.hidden = false;
     this.resultLobbyButton.textContent = this.mode === 'endless'
       ? '返回无尽模式'
@@ -3390,8 +3428,9 @@ class NumberConnectApp {
     }
     if (this.mode === 'endless') {
       await this.boardScene.showCompletion();
+      const previousLives = this.lives;
       this.lives += 1;
-      this.renderLives();
+      this.renderLives({ gainedFrom: previousLives });
       this.showEndlessStageResult();
       return;
     }
@@ -3427,8 +3466,9 @@ class NumberConnectApp {
     this.setResultActionsDisabled(true);
 
     if (watchedVideo) {
+      const previousLives = this.lives;
       this.lives += 1;
-      this.renderLives();
+      this.renderLives({ gainedFrom: previousLives });
       this.videoViews.push(createVideoView('endless-stage-complete', this.stage));
       this.events.emit('video.rewarded', { placement: 'endless-stage-complete', stage: this.stage });
       saveVideoViews(this.videoViews);
@@ -3483,8 +3523,9 @@ class NumberConnectApp {
   }
 
   private continueAfterFailureVideo(): void {
-    this.lives = 1;
-    this.renderLives();
+    const previousLives = this.lives;
+    this.lives = 3;
+    this.renderLives({ gainedFrom: previousLives });
     const placement = this.mode === 'endless' ? 'endless-life-depleted' : 'normal-life-depleted';
     this.videoViews.push(createVideoView(placement, this.mode === 'endless' ? this.stage : undefined));
     this.events.emit('video.rewarded', { placement, stage: this.mode === 'endless' ? this.stage : undefined });

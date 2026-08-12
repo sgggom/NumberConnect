@@ -106,7 +106,7 @@ const COLORS = {
   consecutiveHint: 0x57d88b,
   powerUpTarget: 0xf0a23a,
   powerUpReveal: 0x55c7ef,
-  wrong: 0xf5b4bb,
+  wrongRipple: 0xe60012,
 };
 
 const hexagonPoints = (radius: number): Phaser.Geom.Point[] => Array.from({ length: 6 }, (_, index) => {
@@ -309,6 +309,7 @@ export class BoardScene extends Phaser.Scene {
   private drawingPointerId?: number;
   private drawingNativePointerId?: number;
   private wrongFeedbackActive = false;
+  private wrongCellIndex?: number;
   private locked = true;
   private transitioning = false;
   private solutionRevealed = false;
@@ -390,6 +391,7 @@ export class BoardScene extends Phaser.Scene {
     this.drawingNativePointerId = undefined;
     this.pointerLineTarget = undefined;
     this.wrongFeedbackActive = false;
+    this.wrongCellIndex = undefined;
     this.cellSelectionHandler = undefined;
     this.transitioning = false;
     this.boardViewportScroll = { x: 0.5, y: 0.5 };
@@ -755,6 +757,7 @@ export class BoardScene extends Phaser.Scene {
     this.drawingNativePointerId = undefined;
     this.pointerLineTarget = undefined;
     this.wrongFeedbackActive = false;
+    this.wrongCellIndex = undefined;
     this.cellSelectionHandler = undefined;
     const newView = this.buildView(session, distance);
     this.view = newView;
@@ -1634,16 +1637,20 @@ export class BoardScene extends Phaser.Scene {
       const cellColor = artworkEnabled && connected
         ? cellView.color
         : this.view!.ballColor;
+      const isWrongCell = cellView.index === this.wrongCellIndex;
       cellView.label.setText(String(this.connection?.displayNumber(cellView.index) ?? cellView.index + 1));
       cellView.liquidRing.setFillStyle(cellColor, selected ? 1 : 0);
-      cellView.circle.setFillStyle(cellColor, concealed ? 0 : 1);
+      cellView.circle.setFillStyle(
+        cellColor,
+        isWrongCell || concealed ? 0 : 1,
+      );
       cellView.hollowRing.setStrokeStyle(
         hiddenCellRingWidth(this.view!.radius),
-        cellColor,
+        isWrongCell ? COLORS.wrongRipple : cellColor,
         1,
       );
-      cellView.hollowRing.setVisible(concealed);
-      cellView.label.setVisible(numberVisible);
+      cellView.hollowRing.setVisible(isWrongCell || concealed);
+      cellView.label.setVisible(numberVisible && !isWrongCell);
       cellView.label.setAlpha(1);
       cellView.label.setColor(
         artworkEnabled && connected
@@ -1669,7 +1676,7 @@ export class BoardScene extends Phaser.Scene {
           Math.max(1.5, this.view!.numberFontSize * 0.065),
         );
       }
-      this.setQuestionMarkVisible(cellView, showQuestion);
+      this.setQuestionMarkVisible(cellView, showQuestion && !isWrongCell);
       const hint = cellView.index === nextHint?.index;
       const clickCurrent = cellView.index === currentClickIndex;
       const hintColor = nextHint?.consecutive ? COLORS.consecutiveHint : COLORS.hint;
@@ -2143,17 +2150,23 @@ export class BoardScene extends Phaser.Scene {
       if (this.wrongFeedbackActive) return;
       this.wrongFeedbackActive = true;
       this.flashWrong(action.index);
+      this.playCellRipple(action.index, COLORS.wrongRipple);
       this.playSound('wrong');
       this.session.onWrong(this.connectionFailureMessage(action.reason));
       return;
     }
 
     this.wrongFeedbackActive = false;
+    if (action.type === 'started' || !action.added) {
+      this.refreshView();
+      return;
+    }
+    this.wrongCellIndex = undefined;
     this.refreshView();
-    if (action.type === 'started' || !action.added) return;
 
     if (playFeedback) {
       this.playConnectedCellBounce(action.index);
+      this.playCellRipple(action.index);
       this.playSound(`combo-${Math.min(8, action.progress - 1)}`);
     }
     this.session.onProgress(action.progress, this.session.level.solutionPath.length);
@@ -2190,6 +2203,37 @@ export class BoardScene extends Phaser.Scene {
       ease: 'Back.easeInOut',
       onUpdate: () => this.redrawLiquidConnections(),
       onComplete: () => this.redrawLiquidConnections(),
+    });
+  }
+
+  private playCellRipple(index: number, color?: number): void {
+    if (
+      !this.view
+      || !this.session
+      || window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    ) return;
+    const pathCell = this.session.level.solutionPath[index];
+    const cell = pathCell ? this.view.cells.get(cellKey(pathCell)) : undefined;
+    if (!cell) return;
+
+    const rippleColor = color ?? (this.view.artworkEnabled ? cell.color : this.view.ballColor);
+    const rippleStrokeWidth = this.view.radius * 0.3;
+    const rippleMaxRadius = this.view.radius * 1.6;
+    const rippleMaxScale = rippleMaxRadius / (this.view.radius + rippleStrokeWidth * 0.5);
+    const ripple = this.add.circle(cell.x, cell.y, this.view.radius, rippleColor, 0)
+      .setStrokeStyle(rippleStrokeWidth, rippleColor, 1)
+      .setAlpha(0.5)
+      .setScale(0.82);
+    this.view.root.add(ripple);
+
+    this.tweens.add({
+      targets: ripple,
+      scaleX: rippleMaxScale,
+      scaleY: rippleMaxScale,
+      alpha: 0,
+      duration: 480,
+      ease: 'Sine.easeOut',
+      onComplete: () => ripple.destroy(),
     });
   }
 
@@ -2244,8 +2288,8 @@ export class BoardScene extends Phaser.Scene {
     if (!this.view || !this.session) return;
     const cell = this.view.cells.get(cellKey(this.session.level.solutionPath[index]));
     if (!cell) return;
-    cell.circle.setFillStyle(COLORS.wrong, 1);
-    this.time.delayedCall(360, () => this.refreshView());
+    this.wrongCellIndex = index;
+    this.refreshView();
   }
 
   private playSound(key: string): void {
