@@ -2656,6 +2656,7 @@ class NumberConnectApp {
         slot.textContent = index < lives && !isGainedHeart ? '♥' : '♡';
 
         if (animation?.lost && index === lives) {
+          slot.classList.add('life-heart-slot--losing');
           const lostHeart = document.createElement('span');
           lostHeart.className = 'life-heart life-heart--lost';
           lostHeart.setAttribute('aria-hidden', 'true');
