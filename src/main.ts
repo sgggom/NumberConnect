@@ -2659,7 +2659,13 @@ class NumberConnectApp {
           const lostHeart = document.createElement('span');
           lostHeart.className = 'life-heart life-heart--lost';
           lostHeart.setAttribute('aria-hidden', 'true');
-          lostHeart.textContent = '♥';
+          const leftHalf = document.createElement('span');
+          leftHalf.className = 'life-heart-piece life-heart-piece--left';
+          leftHalf.textContent = '♥';
+          const rightHalf = document.createElement('span');
+          rightHalf.className = 'life-heart-piece life-heart-piece--right';
+          rightHalf.textContent = '♥';
+          lostHeart.append(leftHalf, rightHalf);
           slot.append(lostHeart);
         }
         if (isGainedHeart) {
