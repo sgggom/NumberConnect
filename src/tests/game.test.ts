@@ -69,11 +69,12 @@ describe('endless difficulty', () => {
 });
 
 describe('endless lives', () => {
-  it('shows up to three hearts and switches to a multiplier above three', () => {
+  it('shows lost lives as hollow hearts and switches to a multiplier above three', () => {
     expect(formatLives(3)).toBe('♥♥♥');
-    expect(formatLives(2)).toBe('♥♥');
+    expect(formatLives(2)).toBe('♥♥♡');
+    expect(formatLives(1)).toBe('♥♡♡');
     expect(formatLives(4)).toBe('♥X4');
-    expect(formatLives(0)).toBe('♥X0');
+    expect(formatLives(0)).toBe('♡♡♡');
   });
 });
 
