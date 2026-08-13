@@ -3464,12 +3464,12 @@ class NumberConnectApp {
       this.completeCollectionLevel();
       this.showCollectionResult();
     } else if (this.isAdaptiveGameplaySession()) {
+      const completedMode5Progress = this.activeMainGameplay === 'mode5' && this.currentLevel
+        ? this.mode5LevelProgress(this.currentLevel.levelId)
+        : undefined;
       await this.boardScene.showCompletion();
       const decision = this.recordAdaptiveAttempt('completed');
-      if (
-        this.activeMainGameplay === 'mode5'
-        && !this.mode5LevelProgress(this.currentLevel?.levelId).isFinalStage
-      ) {
+      if (completedMode5Progress && !completedMode5Progress.isFinalStage) {
         this.nextLevel();
       } else {
         this.showAdaptiveResult(decision);
