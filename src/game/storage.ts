@@ -12,7 +12,7 @@ import {
 import { decodeCompactLevelCollection } from './levelDataFormat';
 
 const SETTINGS_KEY = 'number-connect.settings.v1';
-const LEVEL_COLLECTION_KEY = 'number-connect.level-collection.v4';
+const LEVEL_COLLECTION_KEY = 'number-connect.level-collection.v5';
 
 const hasStorage = (): boolean => typeof window !== 'undefined' && 'localStorage' in window;
 
@@ -181,7 +181,7 @@ const loadBundledLevels = async (
 };
 
 export const loadBuiltInLevels = (): Promise<LevelData[]> => (
-  loadBundledLevels('./levels/levels.json', 'algorithm-5')
+  loadBundledLevels('./levels/mode5-levels.json', 'algorithm-8')
 );
 
 export const loadBeadLevels = (): Promise<LevelData[]> => (

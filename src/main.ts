@@ -27,10 +27,8 @@ import {
 import {
   getNextLevelId,
   loadBeadLevels,
-  loadBuiltInLevels,
   loadLevelCollection,
   loadMode3Levels,
-  loadMode5Levels,
   loadSettings,
   saveLevelCollection,
   saveSettings,
@@ -129,10 +127,15 @@ import {
   type DynamicDifficultyGameResult,
 } from './gameplay/mode3';
 import {
-  createMode5HiddenCells,
+  createMode5StageHiddenCells,
   loadMode5DynamicDifficultyState,
+  loadMode5Workbook,
+  mode5LevelCount,
+  mode5LevelProgressForId,
+  mode5LevelStartIndex,
   recordMode5DynamicDifficultyGame,
   saveMode5DynamicDifficultyState,
+  type Mode5CampaignLevel,
 } from './gameplay/mode5';
 
 const UI_DESIGN_WIDTH = 750;
@@ -477,6 +480,7 @@ class NumberConnectApp {
   private beadLevels: LevelData[] = [];
   private mode3Levels: LevelData[] = [];
   private mode5Levels: LevelData[] = [];
+  private mode5Campaign: Mode5CampaignLevel[] = [];
   private levels: LevelData[] = [];
   private settings: GameSettings = loadSettings();
   private activeMainGameplay: MainGameplay = this.settings.mainGameplay;
@@ -629,19 +633,19 @@ class NumberConnectApp {
   }
 
   public async initialize(): Promise<void> {
-    const [builtInLevels, beadLevels, mode3Levels, mode5Levels, beadPatterns] = await Promise.all([
-      loadBuiltInLevels(),
+    const [mode5Workbook, beadLevels, mode3Levels, beadPatterns] = await Promise.all([
+      loadMode5Workbook(),
       loadBeadLevels(),
       loadMode3Levels(),
-      loadMode5Levels(),
       loadBeadPatterns(),
       this.boardScene.whenReady(),
     ]);
     const beadSequence = loadBeadSequence(beadPatterns);
-    this.builtInLevels = builtInLevels;
+    this.builtInLevels = mode5Workbook.levels;
     this.beadLevels = beadLevels;
     this.mode3Levels = mode3Levels;
-    this.mode5Levels = mode5Levels;
+    this.mode5Levels = mode5Workbook.levels;
+    this.mode5Campaign = mode5Workbook.campaign;
     this.beadPatterns = beadPatterns;
     this.beadPattern = beadSequence.pattern;
     this.beadProgress = beadSequence.progress;
@@ -1647,6 +1651,10 @@ class NumberConnectApp {
     else this.settings.mode5MainLevelId = levelId;
   }
 
+  private mode5LevelProgress(levelId = this.settings.mode5MainLevelId) {
+    return mode5LevelProgressForId(this.mode5Campaign, levelId);
+  }
+
   private playPuzzlePatternForLevel(levelId = this.settings.puzzleMainLevelId): PlayPuzzlePattern {
     const index = Math.max(0, Math.min(PLAY_PUZZLE_PATTERNS.length - 1, Math.floor(levelId) - 1));
     return PLAY_PUZZLE_PATTERNS[index] ?? PLAY_PUZZLE_PATTERNS[0];
@@ -2087,7 +2095,11 @@ class NumberConnectApp {
         : adaptiveGameplay === 'mode4'
           ? createMode4HiddenCells(level, this.currentAdaptiveDifficulty)
           : adaptiveGameplay === 'mode5'
-            ? createMode5HiddenCells(level, this.currentAdaptiveDifficulty)
+            ? createMode5StageHiddenCells(
+                level,
+                this.currentAdaptiveDifficulty,
+                this.mode5LevelProgress(level.levelId).level === 1,
+              )
         : level.hiddenCells === undefined
           ? selectHiddenCells(level.solutionPath, hiddenPercent, maxHiddenRun, maxVisibleRun, seed)
           : new Set(level.hiddenCells.map(cellKey)),
@@ -2286,7 +2298,12 @@ class NumberConnectApp {
       const difficultyLabel = this.currentAdaptiveUsesDynamicDifficulty
         ? `${this.currentAdaptiveDifficulty}（动态）`
         : String(this.currentAdaptiveDifficulty);
-      this.levelLabel.textContent = `${gameplayName} · 难度 ${difficultyLabel} · ${level.custom ? '自制关卡' : '关卡'} ${level.levelId}`;
+      if (this.activeMainGameplay === 'mode5' && !level.custom) {
+        const progress = this.mode5LevelProgress(level.levelId);
+        this.levelLabel.textContent = `${gameplayName} · 难度 ${difficultyLabel} · 关卡 ${progress.level} · 阶段 ${progress.stage}/${progress.totalStages}`;
+      } else {
+        this.levelLabel.textContent = `${gameplayName} · 难度 ${difficultyLabel} · ${level.custom ? '自制关卡' : '关卡'} ${level.levelId}`;
+      }
       return;
     }
     this.levelLabel.textContent = `拼豆 · ${level.custom ? '自制关卡' : '关卡'} ${level.levelId}`;
@@ -3449,7 +3466,14 @@ class NumberConnectApp {
     } else if (this.isAdaptiveGameplaySession()) {
       await this.boardScene.showCompletion();
       const decision = this.recordAdaptiveAttempt('completed');
-      this.showAdaptiveResult(decision);
+      if (
+        this.activeMainGameplay === 'mode5'
+        && !this.mode5LevelProgress(this.currentLevel?.levelId).isFinalStage
+      ) {
+        this.nextLevel();
+      } else {
+        this.showAdaptiveResult(decision);
+      }
     } else if (this.activeMainGameplay === 'puzzle') {
       const patternComplete = await this.showPlayPuzzleCompletion();
       if (!patternComplete) {
@@ -3747,28 +3771,42 @@ class NumberConnectApp {
     const levelOptions = gameplay === 'puzzle'
       ? PLAY_PUZZLE_PATTERNS.map((pattern, index) => ({
         levelId: index + 1,
+        displayId: index + 1,
         label: pattern.name,
+        selected: index + 1 === this.mainGameplayLevelId(gameplay),
       }))
+      : gameplay === 'mode5'
+        ? Array.from({ length: mode5LevelCount(this.mode5Campaign) }, (_, index) => index + 1).flatMap((level) => {
+          const stageLevel = this.mode5Levels[mode5LevelStartIndex(this.mode5Campaign, level)];
+          if (!stageLevel) return [];
+          const progress = this.mode5LevelProgress(stageLevel.levelId);
+          return [{
+            levelId: stageLevel.levelId,
+            displayId: level,
+            label: `玩法5关卡 · ${progress.totalStages}个阶段`,
+            selected: this.mode5LevelProgress().level === level,
+          }];
+        })
       : this.mainGameplayLevels(gameplay).map((level) => ({
-        levelId: level.levelId,
-        label: gameplay === 'mode3'
-          ? '玩法3关卡'
-          : gameplay === 'mode4'
-            ? '玩法4关卡'
-            : gameplay === 'mode5'
-              ? '玩法5关卡'
-            : level.custom ? '自制关卡' : '关卡',
-      }));
+          levelId: level.levelId,
+          displayId: level.levelId,
+          label: gameplay === 'mode3'
+            ? '玩法3关卡'
+            : gameplay === 'mode4'
+              ? '玩法4关卡'
+              : level.custom ? '自制关卡' : '关卡',
+          selected: level.levelId === this.mainGameplayLevelId(gameplay),
+        }));
     const options = levelOptions.map((level) => {
       const option = document.createElement('button');
-      const selected = level.levelId === this.mainGameplayLevelId(gameplay);
+      const selected = level.selected;
       option.type = 'button';
       option.className = 'level-picker-option';
       option.dataset.levelId = String(level.levelId);
       option.setAttribute('role', 'listitem');
       option.classList.toggle('is-selected', selected);
       if (selected) option.setAttribute('aria-current', 'true');
-      option.innerHTML = `<strong>${level.levelId}</strong><small>${level.label}</small>`;
+      option.innerHTML = `<strong>${level.displayId}</strong><small>${level.label}</small>`;
       option.addEventListener('click', () => this.selectLevelFromPicker(level.levelId));
       return option;
     });
@@ -3786,7 +3824,9 @@ class NumberConnectApp {
   private renderDefaultLobbyLevelNumber(): void {
     const hasLevels = this.mainGameplayLevels().length > 0;
     query<HTMLElement>('#default-level-number').textContent = hasLevels
-      ? String(this.mainGameplayLevelId())
+      ? String(this.settings.mainGameplay === 'mode5'
+        ? this.mode5LevelProgress().level
+        : this.mainGameplayLevelId())
       : '—';
     query<HTMLButtonElement>('#default-start-button').disabled = !hasLevels;
     query<HTMLButtonElement>('#start-button').disabled = !hasLevels;

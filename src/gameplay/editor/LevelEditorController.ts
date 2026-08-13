@@ -51,6 +51,7 @@ import {
   type EditorAlgorithmId,
 } from './algorithms';
 import type { EditorCell, EditorShape, ManualEditMode } from './types';
+import { reorderLevelCollection } from './reorderLevelCollection';
 
 interface LevelEditorControllerOptions {
   getLevels: () => LevelData[];
@@ -1830,7 +1831,7 @@ export class LevelEditorController {
       item.tabIndex = 0;
       item.setAttribute('role', 'button');
       item.setAttribute('aria-label', `应用关卡 ${level.levelId}`);
-      item.title = '右键可上移或下移关卡';
+      item.title = '右键可调整关卡顺序';
 
       const info = document.createElement('div');
       info.className = 'editor-level-item__info';
@@ -1888,25 +1889,13 @@ export class LevelEditorController {
     menu.setAttribute('role', 'menu');
     menu.setAttribute('aria-label', `调整关卡 ${level.levelId} 的顺序`);
 
-    const createAction = (
-      label: string,
-      direction: -1 | 1,
-      disabled: boolean,
-    ): HTMLButtonElement => {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'editor-level-context-menu__action';
-      button.textContent = label;
-      button.disabled = disabled;
-      button.setAttribute('role', 'menuitem');
-      button.addEventListener('click', () => this.moveLevel(level.levelId, direction));
-      return button;
-    };
-
-    menu.append(
-      createAction('上移关卡', -1, index === 0),
-      createAction('下移关卡', 1, index === levels.length - 1),
-    );
+    const reorder = document.createElement('button');
+    reorder.type = 'button';
+    reorder.className = 'editor-level-context-menu__action';
+    reorder.textContent = '调整关卡顺序';
+    reorder.setAttribute('role', 'menuitem');
+    reorder.addEventListener('click', () => this.promptLevelPosition(level.levelId));
+    menu.append(reorder);
     document.body.append(menu);
     this.levelContextMenu = menu;
 
@@ -1942,25 +1931,42 @@ export class LevelEditorController {
     cleanup?.();
   }
 
-  private moveLevel(levelId: number, direction: -1 | 1): void {
+  private promptLevelPosition(levelId: number): void {
     const levels = [...this.options.getLevels()];
     const sourceIndex = levels.findIndex((level) => level.levelId === levelId);
-    const targetIndex = sourceIndex + direction;
-    if (sourceIndex < 0 || targetIndex < 0 || targetIndex >= levels.length) {
-      this.closeLevelContextMenu();
+    this.closeLevelContextMenu();
+    if (sourceIndex < 0) return;
+
+    const input = window.prompt(
+      `请输入关卡 ${levelId} 的目标序号（1–${levels.length}）：`,
+      String(sourceIndex + 1),
+    );
+    if (input === null) return;
+    const normalizedInput = input.trim();
+    const targetPosition = Number(normalizedInput);
+    if (!/^\d+$/.test(normalizedInput) || !Number.isInteger(targetPosition)) {
+      this.setStatus(`请输入 1–${levels.length} 之间的整数关卡序号。`, true);
+      return;
+    }
+    if (targetPosition < 1 || targetPosition > levels.length) {
+      this.setStatus(`目标关卡序号必须在 1–${levels.length} 之间。`, true);
+      return;
+    }
+    if (targetPosition === sourceIndex + 1) {
+      this.setStatus(`关卡 ${levelId} 已位于序号 ${targetPosition}。`);
       return;
     }
 
     const selectedLevel = levels.find((level) => level.levelId === this.selectedLevelId);
-    [levels[sourceIndex], levels[targetIndex]] = [levels[targetIndex], levels[sourceIndex]];
-    const reordered = levels.map((level, index) => ({ ...level, levelId: index + 1 }));
-    const selectedIndex = selectedLevel ? levels.indexOf(selectedLevel) : -1;
+    const reordered = reorderLevelCollection(levels, levelId, targetPosition);
+    const selectedIndex = selectedLevel
+      ? reordered.findIndex((level) => level.activeCells === selectedLevel.activeCells)
+      : -1;
     this.selectedLevelId = selectedIndex >= 0 ? selectedIndex + 1 : undefined;
-    this.closeLevelContextMenu();
     this.options.onLevelsChange(reordered);
     this.render();
     this.setStatus(
-      `原关卡 ${levelId} 已${direction < 0 ? '上移' : '下移'}为关卡 ${targetIndex + 1}，列表编号已更新。`,
+      `原关卡 ${levelId} 已移动到序号 ${targetPosition}，其他关卡已顺延并重新编号。`,
     );
   }
 

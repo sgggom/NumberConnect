@@ -99,3 +99,14 @@ export const createMode5HiddenCells = (
   );
   return new Set([...hiddenIndices].map((index) => cellKey(level.solutionPath[index])));
 };
+
+/** 第一大关直接采用配表正负数定义的显隐；后续大关才交给算法8。 */
+export const createMode5StageHiddenCells = (
+  level: LevelData,
+  difficulty: number,
+  useConfiguredBoard: boolean,
+): Set<string> => (
+  useConfiguredBoard
+    ? new Set((level.hiddenCells ?? []).map(cellKey))
+    : createMode5HiddenCells(level, difficulty)
+);

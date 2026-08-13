@@ -4,6 +4,7 @@ import { mode4RandomHiddenSeed } from '../mode3/mode3HiddenLayout';
 import {
   MODE5_DIFFICULTY_CONFIGS,
   createMode5HiddenCells,
+  createMode5StageHiddenCells,
   mode5Algorithm8Seed,
   mode5EffectiveHiddenPercent,
   resolveMode5DifficultyConfig,
@@ -66,6 +67,15 @@ describe('玩法5独立隐藏布局', () => {
       );
       expect(firstFourHidden.length).toBeLessThanOrEqual(1);
     }
+  });
+
+  it('首关直接读取棋盘隐藏数据且不受难度影响', () => {
+    const level = makeLevel();
+    level.hiddenCells = [level.solutionPath[1], level.solutionPath[6]];
+    const expected = new Set(level.hiddenCells.map(cellKey));
+
+    expect(createMode5StageHiddenCells(level, 1, true)).toEqual(expected);
+    expect(createMode5StageHiddenCells(level, 10, true)).toEqual(expected);
   });
 
   it('拥有独立于玩法4的种子与占比入口', () => {

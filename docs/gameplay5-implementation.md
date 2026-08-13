@@ -6,8 +6,9 @@
 
 - 难度支持 `动态` 和固定 `1–10`。
 - 动态难度初始为1，统计最近5局错误。
-- 默认使用算法8生成隐藏布局，并使用玩法5自己的配置、种子和动态难度。
+- 第一大关直接读取 Excel 阵型中的正负数棋盘数据，不调用算法；第二大关起使用算法8生成隐藏布局，并使用玩法5自己的配置、种子和动态难度。
 - 起点数字1和终点固定显示，数字1～4最多隐藏1个。
+- 第1大关包含顺序关卡1～2两个小阶段；此后每4个顺序关卡组成一个大关。
 - 当前10档隐藏占比及连续段参数与玩法4一致。
 
 这只是玩法5的初始版本。玩法5没有直接调用玩法4生成器，后续可以单独修改。
@@ -17,10 +18,12 @@
 | 内容 | 玩法5独立位置 |
 |---|---|
 | 主玩法枚举和独立关卡进度 | `src/game/types.ts` 中的 `mode5`、`mode5MainLevelId` |
-| 关卡路径资源 | `public/levels/mode5-levels.json` |
+| 关卡与阵型资源 | `excel/关卡表.xlsx` 的“关卡”“阵型”sheet |
 | 10档参数和关卡种子 | `src/gameplay/mode5/mode5HiddenLayout.ts` |
 | 算法8选点入口 | `src/gameplay/mode5/mode5HiddenLayout.ts` |
 | 动态难度公式和状态 | `src/gameplay/mode5/dynamicDifficulty.ts` |
+| 大关/小阶段映射 | `src/gameplay/mode5/mode5Campaign.ts` |
+| 编辑器初始关卡列表 | 同样读取 `excel/关卡表.xlsx`，旧本地列表通过存储版本升级清除 |
 | 动态存档键 | `number-connect.mode5-dynamic-difficulty.v1` |
 | 运行时路由 | `src/main.ts` |
 
@@ -48,13 +51,13 @@
 ```mermaid
 flowchart TD
     A["选择玩法5"] --> B["读取 mode5MainLevelId"]
-    B --> C["加载 mode5-levels.json"]
+    B --> C["加载关卡表.xlsx并解析关卡/阵型映射"]
     C --> D{"难度选择"}
     D -- "动态" --> E["读取玩法5独立动态状态"]
     D -- "固定1–10" --> F["直接使用固定档位"]
     E --> G["读取玩法5独立配置"]
     F --> G
-    G --> H["算法8（玩法5独立配置与种子）"]
+    G --> H["第一大关读取棋盘显隐；第二大关起使用算法8"]
     H --> I["生成棋盘"]
     I --> J{"动态且有效对局？"}
     J -- "是" --> K["仅更新玩法5最近5局"]
@@ -66,7 +69,7 @@ flowchart TD
 - 改玩法5隐藏占比或连续段：修改 `mode5HiddenLayout.ts`。
 - 改玩法5算法8接入或选点策略：修改 `mode5HiddenLayout.ts`。
 - 改玩法5升降阈值、窗口或冷却：修改 `mode5/dynamicDifficulty.ts`。
-- 改玩法5阵型：修改 `mode5-levels.json`。
+- 改玩法5大关、阶段或阵型：修改 `excel/关卡表.xlsx`。
 - 不要为了修改玩法5去改玩法3/4目录中的实现。
 
 每次修改后至少运行玩法5单元测试、完整 `npm test` 和 `npm run build`。
