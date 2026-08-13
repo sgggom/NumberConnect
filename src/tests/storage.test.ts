@@ -195,10 +195,10 @@ describe('game settings migration', () => {
 });
 
 describe('level collection migration', () => {
-  it('ignores the obsolete v3 collection and starts from the new bundled levels', () => {
+  it('ignores the obsolete v4 collection and starts from the gameplay 5 bundled levels', () => {
     const bundled = [makeLevel(1)];
     const getItem = vi.fn((key: string) => (
-      key === 'number-connect.level-collection.v3'
+      key === 'number-connect.level-collection.v4'
         ? JSON.stringify([makeLevel(9, true)])
         : null
     ));
@@ -206,17 +206,17 @@ describe('level collection migration', () => {
 
     try {
       expect(loadLevelCollection(bundled)).toEqual(bundled);
-      expect(getItem).toHaveBeenCalledWith('number-connect.level-collection.v4');
-      expect(getItem).not.toHaveBeenCalledWith('number-connect.level-collection.v3');
+      expect(getItem).toHaveBeenCalledWith('number-connect.level-collection.v5');
+      expect(getItem).not.toHaveBeenCalledWith('number-connect.level-collection.v4');
     } finally {
       vi.unstubAllGlobals();
     }
   });
 
-  it('loads and saves editor changes with the v4 collection key', () => {
+  it('loads and saves editor changes with the v5 collection key', () => {
     const stored = [makeLevel(7, true)];
     const getItem = vi.fn((key: string) => (
-      key === 'number-connect.level-collection.v4' ? JSON.stringify(stored) : null
+      key === 'number-connect.level-collection.v5' ? JSON.stringify(stored) : null
     ));
     const setItem = vi.fn();
     vi.stubGlobal('window', { localStorage: { getItem, setItem } });
@@ -225,7 +225,7 @@ describe('level collection migration', () => {
       expect(loadLevelCollection([makeLevel(1)])).toEqual(stored);
       saveLevelCollection(stored);
       expect(setItem).toHaveBeenCalledWith(
-        'number-connect.level-collection.v4',
+        'number-connect.level-collection.v5',
         JSON.stringify(stored),
       );
     } finally {
@@ -244,7 +244,7 @@ describe('level collection migration', () => {
       await expect(loadBuiltInLevels()).resolves.toMatchObject([{
         levelId: 1,
         pathSource: 'generated',
-        algorithm: { id: 'algorithm-5' },
+        algorithm: { id: 'algorithm-8' },
         custom: false,
       }]);
       await expect(loadBeadLevels()).resolves.toMatchObject([{
@@ -265,7 +265,7 @@ describe('level collection migration', () => {
         algorithm: { id: 'algorithm-8' },
         custom: false,
       }]);
-      expect(fetchMock).toHaveBeenNthCalledWith(1, './levels/levels.json');
+      expect(fetchMock).toHaveBeenNthCalledWith(1, './levels/mode5-levels.json');
       expect(fetchMock).toHaveBeenNthCalledWith(2, './levels/bead-levels.json');
       expect(fetchMock).toHaveBeenNthCalledWith(3, './levels/mode3-levels.json');
       expect(fetchMock).toHaveBeenNthCalledWith(4, './levels/mode5-levels.json');
