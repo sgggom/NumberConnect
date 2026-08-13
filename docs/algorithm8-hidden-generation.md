@@ -118,7 +118,7 @@ return hidden
 - `seed`：确定性随机种子。
 - `maxVisibleRun`：最长连续显示，默认 8。
 - `maxHiddenRun`：最长连续隐藏，默认 4。
-- `addTargetDifficultyPercent`：是否把目标难度作为额外隐藏百分点，默认 `true`；玩法3传 `false`。玩法4已不调用算法8。
+- `addTargetDifficultyPercent`：是否把目标难度作为额外隐藏百分点，默认 `true`；玩法3和玩法5传 `false`。玩法4不调用算法8。
 
 输出是 `path` 下标集合。首尾数字固定显示，因此下标 `0` 与 `path.Count - 1` 永远不会进入结果。
 

@@ -262,7 +262,7 @@ describe('level collection migration', () => {
       await expect(loadMode5Levels()).resolves.toMatchObject([{
         levelId: 1,
         pathSource: 'generated',
-        algorithm: { id: 'mode5-random-dispersed' },
+        algorithm: { id: 'algorithm-8' },
         custom: false,
       }]);
       expect(fetchMock).toHaveBeenNthCalledWith(1, './levels/levels.json');
