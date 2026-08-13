@@ -1,5 +1,5 @@
 export const MODE5_DYNAMIC_DIFFICULTY_STORAGE_KEY = 'number-connect.mode5-dynamic-difficulty.v1';
-export const MODE5_DYNAMIC_DIFFICULTY_DEFAULT = 6;
+export const MODE5_DYNAMIC_DIFFICULTY_DEFAULT = 1;
 export const MODE5_DYNAMIC_DIFFICULTY_MIN = 1;
 export const MODE5_DYNAMIC_DIFFICULTY_MAX = 10;
 export const MODE5_DYNAMIC_DIFFICULTY_WINDOW_SIZE = 5;

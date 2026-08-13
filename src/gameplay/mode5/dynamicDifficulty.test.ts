@@ -8,6 +8,14 @@ import {
 } from './dynamicDifficulty';
 
 describe('玩法5独立动态难度状态', () => {
+  it('默认从难度1开始', () => {
+    expect(createMode5DynamicDifficultyState().currentDifficulty).toBe(1);
+    expect(loadMode5DynamicDifficultyState({
+      getItem: vi.fn(() => null),
+      setItem: vi.fn(),
+    }).currentDifficulty).toBe(1);
+  });
+
   it('只从玩法5存档键读取和保存', () => {
     const values = new Map<string, string>([[
       MODE5_DYNAMIC_DIFFICULTY_STORAGE_KEY,

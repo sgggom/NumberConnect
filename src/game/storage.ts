@@ -194,7 +194,7 @@ export const loadMode3Levels = (): Promise<LevelData[]> => (
 
 /** 玩法5读取独立资源文件，后续调整阵型不会影响玩法3/4。 */
 export const loadMode5Levels = (): Promise<LevelData[]> => (
-  loadBundledLevels('./levels/mode5-levels.json', 'mode5-random-dispersed')
+  loadBundledLevels('./levels/mode5-levels.json', 'algorithm-8')
 );
 
 export const getNextLevelId = (levels: LevelData[]): number => {

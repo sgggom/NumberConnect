@@ -1,5 +1,6 @@
-import { cellKey, type LevelData } from '../../game/types';
-import { selectMode5RandomDispersedHiddenLayout } from './mode5RandomHiddenLayout';
+import { BoardShape, cellKey, type LevelData } from '../../game/types';
+import { selectAlgorithm8HiddenLayout } from '../editor/algorithms/algorithm8';
+import type { EditorShape } from '../editor/types';
 
 export interface Mode5HiddenLayoutConfig {
   hiddenPercentRange: readonly [minimum: number, maximum: number];
@@ -9,16 +10,16 @@ export interface Mode5HiddenLayoutConfig {
 
 /** 玩法5独立配置表；当前以玩法4参数作为初始版本。 */
 export const MODE5_DIFFICULTY_CONFIGS: readonly Mode5HiddenLayoutConfig[] = [
-  { hiddenPercentRange: [10, 15], maxVisibleRun: 5, maxHiddenRun: 2 },
-  { hiddenPercentRange: [15, 20], maxVisibleRun: 5, maxHiddenRun: 2 },
-  { hiddenPercentRange: [20, 25], maxVisibleRun: 4, maxHiddenRun: 2 },
-  { hiddenPercentRange: [25, 30], maxVisibleRun: 4, maxHiddenRun: 2 },
-  { hiddenPercentRange: [30, 35], maxVisibleRun: 3, maxHiddenRun: 3 },
-  { hiddenPercentRange: [35, 40], maxVisibleRun: 3, maxHiddenRun: 3 },
-  { hiddenPercentRange: [40, 45], maxVisibleRun: 2, maxHiddenRun: 4 },
-  { hiddenPercentRange: [45, 50], maxVisibleRun: 2, maxHiddenRun: 4 },
-  { hiddenPercentRange: [50, 55], maxVisibleRun: 2, maxHiddenRun: 5 },
-  { hiddenPercentRange: [55, 60], maxVisibleRun: 2, maxHiddenRun: 5 },
+  { hiddenPercentRange: [20, 26], maxVisibleRun: 4, maxHiddenRun: 2 },
+  { hiddenPercentRange: [26, 32], maxVisibleRun: 4, maxHiddenRun: 2 },
+  { hiddenPercentRange: [32, 37], maxVisibleRun: 4, maxHiddenRun: 2 },
+  { hiddenPercentRange: [37, 42], maxVisibleRun: 3, maxHiddenRun: 2 },
+  { hiddenPercentRange: [42, 46], maxVisibleRun: 3, maxHiddenRun: 2 },
+  { hiddenPercentRange: [46, 50], maxVisibleRun: 3, maxHiddenRun: 3 },
+  { hiddenPercentRange: [50, 53], maxVisibleRun: 3, maxHiddenRun: 3 },
+  { hiddenPercentRange: [53, 56], maxVisibleRun: 2, maxHiddenRun: 3 },
+  { hiddenPercentRange: [56, 58], maxVisibleRun: 2, maxHiddenRun: 3 },
+  { hiddenPercentRange: [58, 60], maxVisibleRun: 2, maxHiddenRun: 3 },
 ] as const;
 
 const normalizeMode5Difficulty = (difficulty: number): number => (
@@ -29,14 +30,25 @@ export const resolveMode5DifficultyConfig = (
   difficulty: number,
 ): Mode5HiddenLayoutConfig => MODE5_DIFFICULTY_CONFIGS[normalizeMode5Difficulty(difficulty) - 1];
 
-/** 随机种子与玩法3/4分离，玩法5可以独立修改生成结果。 */
-export const mode5RandomHiddenSeed = (level: LevelData): number => (
+/** 算法8种子与玩法3/4分离，玩法5可以独立修改生成结果。 */
+export const mode5Algorithm8Seed = (level: LevelData, difficulty: number): number => (
   Math.imul(level.levelId + 1, 130363)
   ^ Math.imul(level.rows + 1, 92837111)
   ^ Math.imul(level.columns + 1, 689287499)
+  ^ Math.imul(normalizeMode5Difficulty(difficulty) + 1, 433494437)
   ^ level.solutionPath.length
   ^ 0x27d4eb2f
 ) | 0;
+
+/** @deprecated 使用 mode5Algorithm8Seed；保留旧导出以兼容现有调用。 */
+export const mode5RandomHiddenSeed = (level: LevelData): number => mode5Algorithm8Seed(level, 1);
+
+const mode5EditorShape = (shape: BoardShape): EditorShape => {
+  if (shape === BoardShape.Hex) return 'hex';
+  if (shape === BoardShape.Diamond) return 'diamond';
+  if (shape === BoardShape.Rectangle) return 'rectangle';
+  return 'square';
+};
 
 const mode5HiddenPercentSeed = (level: LevelData): number => (
   Math.imul(level.levelId + 1, 1597334677)
@@ -67,17 +79,22 @@ export const createMode5HiddenCells = (
   level: LevelData,
   difficulty: number,
 ): Set<string> => {
+  const normalizedDifficulty = normalizeMode5Difficulty(difficulty);
   const config = resolveMode5DifficultyConfig(difficulty);
   const hiddenPercent = mode5HiddenPercentForLevel(level, config.hiddenPercentRange);
-  const hiddenIndices = selectMode5RandomDispersedHiddenLayout(
+  const hiddenIndices = selectAlgorithm8HiddenLayout(
     level.solutionPath,
+    mode5EditorShape(level.boardShape),
     hiddenPercent,
-    mode5RandomHiddenSeed(level),
+    normalizedDifficulty,
+    mode5Algorithm8Seed(level, normalizedDifficulty),
     {
       maxVisibleRun: config.maxVisibleRun,
       maxHiddenRun: config.maxHiddenRun,
       firstNumberWindow: 4,
       maxHiddenInFirstWindow: 1,
+      // 配置表给出的占比就是最终占比；难度只控制算法8的布局结构。
+      addTargetDifficultyPercent: false,
     },
   );
   return new Set([...hiddenIndices].map((index) => cellKey(level.solutionPath[index])));

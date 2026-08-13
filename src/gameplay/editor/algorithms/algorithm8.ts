@@ -25,7 +25,9 @@ export interface Algorithm8ExperienceMetrics {
 export interface Algorithm8HiddenLayoutOptions {
   maxVisibleRun?: number;
   maxHiddenRun?: number;
-  /** 默认保持编辑器算法8原规则；玩法3传 false，直接使用配置表的最终占比。 */
+  firstNumberWindow?: number;
+  maxHiddenInFirstWindow?: number;
+  /** 默认保持编辑器算法8原规则；玩法3/5传 false，直接使用配置表的最终占比。 */
   addTargetDifficultyPercent?: boolean;
   onProgress?: (progress: number) => void;
 }
@@ -516,11 +518,26 @@ export const selectAlgorithm8HiddenLayout = (
   options: Algorithm8HiddenLayoutOptions = {},
 ): Set<number> => {
   const availableCount = Math.max(0, path.length - 2);
+  const firstNumberWindow = Math.max(
+    1,
+    Math.min(path.length, Math.floor(options.firstNumberWindow ?? 1)),
+  );
+  const firstWindowCandidateCount = Math.max(0, Math.min(
+    availableCount,
+    firstNumberWindow - 1,
+  ));
+  const maxHiddenInFirstWindow = Math.max(0, Math.min(
+    firstWindowCandidateCount,
+    Math.floor(options.maxHiddenInFirstWindow ?? firstWindowCandidateCount),
+  ));
+  const maximumSelectableCount = availableCount
+    - firstWindowCandidateCount
+    + maxHiddenInFirstWindow;
   const normalizedPercent = options.addTargetDifficultyPercent === false
     ? Math.max(0, Math.min(100, requestedPercent))
     : algorithm8EffectiveHiddenPercent(requestedPercent, targetDifficulty);
   const targetCount = Math.min(
-    availableCount,
+    maximumSelectableCount,
     Math.max(0, Math.round(path.length * normalizedPercent / 100)),
   );
   const hidden = new Set<number>();
@@ -546,10 +563,19 @@ export const selectAlgorithm8HiddenLayout = (
   ), 0) / 2;
 
   for (let pass = 0; pass < targetCount; pass += 1) {
+    const hiddenInFirstWindow = [...hidden].filter(
+      (index) => index < firstNumberWindow,
+    ).length;
     const allCandidates = Array.from(
       { length: availableCount },
       (_, offset) => offset + 1,
-    ).filter((index) => !hidden.has(index));
+    ).filter((index) => (
+      !hidden.has(index)
+      && (
+        index >= firstNumberWindow
+        || hiddenInFirstWindow < maxHiddenInFirstWindow
+      )
+    ));
 
     const progress = (pass + 1) / Math.max(1, targetCount);
     const isBaseSelection = pass < baseSelectionCount;
