@@ -2018,7 +2018,9 @@ class NumberConnectApp {
         puzzlePieceCount(this.playPuzzlePattern) - 1,
         this.playPuzzleProgress.revealed,
       ));
-      const puzzleBoards = this.levels.filter(
+      // Puzzle stages are product configuration. Never let an older editor cache
+      // replace their configured path or hidden-cell layout.
+      const puzzleBoards = this.builtInLevels.filter(
         (level) => level.activeCells.length === level.rows * level.columns,
       );
       const boardIndex = puzzleBoards.length > 0

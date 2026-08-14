@@ -148,13 +148,18 @@ export const loadLevelCollection = (bundledLevels: LevelData[]): LevelData[] => 
   if (!hasStorage()) return bundledLevels.map((level) => ({ ...level }));
   const storedValue = window.localStorage.getItem(LEVEL_COLLECTION_KEY);
   if (storedValue !== null) {
-    return parseLevelArray(storedValue).sort((left, right) => left.levelId - right.levelId);
+    const customLevels = parseLevelArray(storedValue).filter((level) => level.custom === true);
+    return [
+      ...bundledLevels.map((level) => ({ ...level })),
+      ...customLevels,
+    ].sort((left, right) => left.levelId - right.levelId);
   }
   return bundledLevels.map((level) => ({ ...level }));
 };
 
 export const saveLevelCollection = (levels: LevelData[]): void => {
   const normalized = [...levels]
+    .filter((level) => level.custom === true)
     .sort((left, right) => left.levelId - right.levelId)
     .map((level) => ({ ...level }));
   if (hasStorage()) window.localStorage.setItem(LEVEL_COLLECTION_KEY, JSON.stringify(normalized));
