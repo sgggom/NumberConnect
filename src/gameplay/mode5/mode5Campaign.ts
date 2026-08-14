@@ -25,6 +25,15 @@ export const mode5LevelStartIndex = (
   );
 };
 
+export const mode5StageLevelId = (
+  campaign: ReadonlyArray<Mode5CampaignLevel>,
+  level: number,
+  stage: number,
+): number | undefined => {
+  if (!Number.isInteger(stage) || stage < 1) return undefined;
+  return campaign.find((entry) => entry.id === level)?.stageLevelIds[stage - 1];
+};
+
 export const mode5LevelProgressForId = (
   campaign: ReadonlyArray<Mode5CampaignLevel>,
   levelId: number,

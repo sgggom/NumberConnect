@@ -134,6 +134,7 @@ import {
   mode5LevelCount,
   mode5LevelProgressForId,
   mode5LevelStartIndex,
+  mode5StageLevelId,
   recordMode5DynamicDifficultyGame,
   saveMode5DynamicDifficultyState,
   type Mode5CampaignLevel,
@@ -2021,15 +2022,22 @@ class NumberConnectApp {
         puzzlePieceCount(this.playPuzzlePattern) - 1,
         this.playPuzzleProgress.revealed,
       ));
-      // The workbook defines the stage order, while an editor level with the
-      // same id replaces that formation (including its configured hidden cells).
-      const puzzleBoards = this.levels.filter(
+      // Published puzzle formations come from the workbook. Editor-local levels
+      // must not override the configured campaign mapping.
+      const puzzleBoards = this.mode5Levels.filter(
         (level) => level.activeCells.length === level.rows * level.columns,
       );
-      const boardIndex = puzzleBoards.length > 0
+      const configuredLevelId = mode5StageLevelId(
+        this.mode5Campaign,
+        this.settings.puzzleMainLevelId,
+        stageIndex + 1,
+      );
+      const fallbackBoardIndex = puzzleBoards.length > 0
         ? (patternIndex * puzzlePieceCount(this.playPuzzlePattern) + stageIndex) % puzzleBoards.length
         : -1;
-      const stageLevel = puzzleBoards[boardIndex];
+      const stageLevel = configuredLevelId === undefined
+        ? puzzleBoards[fallbackBoardIndex]
+        : this.mode5Levels.find((level) => level.levelId === configuredLevelId);
       if (!stageLevel) throw new Error('没有可用的拼图阶段。');
       return stageLevel;
     }

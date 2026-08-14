@@ -4,18 +4,16 @@ import readExcelFileNode from 'read-excel-file/node';
 import { parseMode5WorkbookSheets } from './mode5Workbook';
 
 describe('玩法5 Excel 关卡配表', () => {
-  it('读取当前关卡表中的7个大关和26个阶段', async () => {
+  it('读取当前关卡表中的5个大关和20个阶段', async () => {
     const result = parseMode5WorkbookSheets(await readExcelFileNode('excel/关卡表.xlsx'));
-    expect(result.campaign).toHaveLength(7);
-    expect(result.levels).toHaveLength(26);
+    expect(result.campaign).toHaveLength(5);
+    expect(result.levels).toHaveLength(20);
     expect(result.campaign.map((level) => level.formationIds)).toEqual([
-      [1, 2],
-      [3, 4, 5, 6],
-      [7, 8, 9, 10],
-      [11, 12, 13, 14],
-      [15, 16, 17, 18],
-      [19, 20, 21, 22],
-      [23, 24, 25, 26],
+      [1, 2, 3, 4],
+      [5, 6, 7, 8],
+      [9, 10, 11, 12],
+      [13, 14, 15, 16],
+      [17, 18, 19, 20],
     ]);
     expect(result.levels[0].algorithm).toBeUndefined();
     expect(result.levels[1].algorithm).toBeUndefined();
@@ -24,7 +22,8 @@ describe('玩法5 Excel 关卡配表', () => {
       result.levels[1].solutionPath[1],
       result.levels[1].solutionPath[6],
     ]);
-    expect(result.levels[2].algorithm?.id).toBe('algorithm-8');
+    expect(result.levels[3].algorithm).toBeUndefined();
+    expect(result.levels[4].algorithm?.id).toBe('algorithm-8');
   });
 
   it('按关卡 sheet 的顺序解析阶段并查找阵型数据', () => {
