@@ -3,6 +3,7 @@ import { COLLECTION_ARTWORK_NAMES } from '../gameplay/collection/collectionArtwo
 import {
   buildBoardNeighborhoodPreview,
   calculateHeldCellScore,
+  stepRewardEmojiForDifficulty,
 } from './boardNeighborhood';
 import {
   boardArtworkSourceRect,
@@ -34,6 +35,7 @@ import {
   cellKey,
   usesClickInput,
   type BoardArtworkInput,
+  type BoardHoldScore,
   type BoardSessionInput,
   type Cell,
 } from './types';
@@ -63,6 +65,11 @@ interface ArtworkColorTileView {
   column: number;
   row: number;
   rectangle: Phaser.GameObjects.Rectangle;
+}
+
+interface StepRewardFeedback {
+  index: number;
+  emoji: string;
 }
 
 interface BoardView {
@@ -227,6 +234,7 @@ export class BoardScene extends Phaser.Scene {
   private neighborhoodPreviewIndex?: number;
   private pointerLineTarget?: { x: number; y: number };
   private raisedConnectedCellIndex?: number;
+  private pendingStepReward?: StepRewardFeedback;
   private paused = true;
   private entranceAnimating = false;
   private entranceAnimationToken = 0;
@@ -302,6 +310,7 @@ export class BoardScene extends Phaser.Scene {
     this.drawingNativePointerId = undefined;
     this.pointerLineTarget = undefined;
     this.raisedConnectedCellIndex = undefined;
+    this.pendingStepReward = undefined;
     this.wrongFeedbackActive = false;
     this.wrongCellIndexes.clear();
     this.cellSelectionHandler = undefined;
@@ -360,6 +369,7 @@ export class BoardScene extends Phaser.Scene {
 
     this.wrongFeedbackActive = false;
     this.wrongCellIndexes.clear();
+    this.pendingStepReward = undefined;
     this.stopHintPulse();
     this.hideDragQuestions();
     this.clearNeighborhoodPreview();
@@ -384,6 +394,7 @@ export class BoardScene extends Phaser.Scene {
     this.finishPointerInteraction();
     this.clearNeighborhoodPreview();
     this.stopHintPulse();
+    this.pendingStepReward = undefined;
     this.paused = false;
     this.locked = false;
     this.connection = this.createConnectionProgress(this.session);
@@ -685,6 +696,7 @@ export class BoardScene extends Phaser.Scene {
     this.drawingNativePointerId = undefined;
     this.pointerLineTarget = undefined;
     this.raisedConnectedCellIndex = undefined;
+    this.pendingStepReward = undefined;
     this.wrongFeedbackActive = false;
     this.wrongCellIndexes.clear();
     this.cellSelectionHandler = undefined;
@@ -1966,9 +1978,10 @@ export class BoardScene extends Phaser.Scene {
     if (this.session && usesClickInput(this.session.inputMode)) {
       this.wrongFeedbackActive = false;
       this.showHeldCellChoiceScore(index);
+      const stepReward = this.stepRewardFeedback(this.connection.currentClickIndex, index);
       const actions = this.connection.clickForward(index);
       actions.forEach((action, actionIndex) => {
-        this.handleConnectionAction(action, actionIndex === actions.length - 1);
+        this.handleConnectionAction(action, actionIndex === actions.length - 1, stepReward);
       });
       if (
         this.session.inputMode === 'auto-click'
@@ -2034,9 +2047,10 @@ export class BoardScene extends Phaser.Scene {
         closest.cell,
         !this.solutionRevealed && !this.connection.isVisible(closest.index),
       );
+      const stepReward = this.stepRewardFeedback(this.connection.activeIndex, closest.index);
       const action = this.connection.extend(closest.index);
       if (shouldHandleDragAction(closestJudgmentMode, action.type === 'wrong')) {
-        this.handleConnectionAction(action);
+        this.handleConnectionAction(action, true, stepReward);
       }
     }
     const previewIndex = closest?.index ?? this.neighborhoodPreviewIndex;
@@ -2094,9 +2108,10 @@ export class BoardScene extends Phaser.Scene {
         || this.entranceAnimating
       ) return;
 
+      const stepReward = this.stepRewardFeedback(this.connection.currentClickIndex, nextIndex);
       const actions = this.connection.clickForward(nextIndex);
       actions.forEach((action, actionIndex) => {
-        this.handleConnectionAction(action, actionIndex === actions.length - 1);
+        this.handleConnectionAction(action, actionIndex === actions.length - 1, stepReward);
       });
       if (actions.some((action) => action.type === 'advanced' && action.index === nextIndex)) {
         this.scheduleAutoClickStep();
@@ -2201,7 +2216,25 @@ export class BoardScene extends Phaser.Scene {
       return;
     }
 
-    const score = calculateHeldCellScore(
+    const score = this.heldCellChoiceScore(index);
+    if (!score) {
+      this.hideHeldCellChoiceScore();
+      return;
+    }
+    this.view.choiceScore
+      .setText(String(score.badgeScore))
+      .setPosition(
+        heldCellView.x - this.view.radius * 0.72,
+        heldCellView.y - this.view.radius * 0.72,
+      )
+      .setVisible(true);
+    this.session.onHoldScore?.(score);
+  }
+
+  private heldCellChoiceScore(index: number): BoardHoldScore | undefined {
+    if (!this.session || !this.connection) return undefined;
+    if (!this.session.level.solutionPath[index]) return undefined;
+    return calculateHeldCellScore(
       this.session.level,
       index,
       (candidateIndex) => {
@@ -2224,14 +2257,19 @@ export class BoardScene extends Phaser.Scene {
         this.connection?.canCompleteAfterStep(index, candidateIndex) !== true
       ),
     );
-    this.view.choiceScore
-      .setText(String(score.badgeScore))
-      .setPosition(
-        heldCellView.x - this.view.radius * 0.72,
-        heldCellView.y - this.view.radius * 0.72,
-      )
-      .setVisible(true);
-    this.session.onHoldScore?.(score);
+  }
+
+  private stepRewardFeedback(fromIndex: number | undefined, toIndex: number): StepRewardFeedback | undefined {
+    if (!this.session || !this.connection || fromIndex === undefined) return undefined;
+    const target = this.session.level.solutionPath[toIndex];
+    if (
+      !target
+      || !this.session.hiddenCells.has(cellKey(target))
+      || this.connection.isVisible(toIndex)
+    ) return undefined;
+    const score = this.heldCellChoiceScore(fromIndex);
+    const emoji = score ? stepRewardEmojiForDifficulty(score.badgeScore) : undefined;
+    return emoji ? { index: toIndex, emoji } : undefined;
   }
 
   private hideHeldCellChoiceScore(): void {
@@ -2263,7 +2301,11 @@ export class BoardScene extends Phaser.Scene {
     pointerLine.strokePath();
   }
 
-  private handleConnectionAction(action: ConnectionAction, playFeedback = true): void {
+  private handleConnectionAction(
+    action: ConnectionAction,
+    playFeedback = true,
+    stepReward?: StepRewardFeedback,
+  ): void {
     if (!this.session || !this.view || action.type === 'ignored') return;
     if (action.type === 'wrong') {
       if (this.wrongFeedbackActive) return;
@@ -2288,6 +2330,9 @@ export class BoardScene extends Phaser.Scene {
     }
     this.wrongCellIndexes.clear();
     this.refreshView();
+    const rewardToPlay = this.pendingStepReward;
+    this.pendingStepReward = stepReward?.index === action.index ? stepReward : undefined;
+    if (playFeedback && rewardToPlay) this.playStepRewardFeedback(rewardToPlay);
 
     const completionSession = this.session;
     let completionWaitsForLanding = false;
@@ -2312,6 +2357,71 @@ export class BoardScene extends Phaser.Scene {
       this.clearNeighborhoodPreview();
       if (!completionWaitsForLanding) completionSession.onComplete();
     }
+  }
+
+  private playStepRewardFeedback(feedback: StepRewardFeedback): void {
+    if (!this.view || !this.session) return;
+    const pathCell = this.session.level.solutionPath[feedback.index];
+    const cell = pathCell ? this.view.cells.get(cellKey(pathCell)) : undefined;
+    if (!cell) return;
+
+    const isThumb = feedback.emoji === '👍';
+    const originX = isThumb ? 0.12 : 0.88;
+    const originY = 0.88;
+    const tapAngle = isThumb ? 17 : -17;
+    const radius = this.view.radius;
+
+    const reward = this.add.text(cell.x, cell.y, feedback.emoji, {
+      fontFamily: 'Segoe UI Emoji, Apple Color Emoji, sans-serif',
+      fontSize: `${Math.max(36, radius * 2.1)}px`,
+      align: 'center',
+    }).setOrigin(originX, originY).setAlpha(0).setScale(0.42);
+    reward.setPosition(
+      cell.x + (originX - 0.5) * reward.width,
+      cell.y + (originY - 0.5) * reward.height,
+    );
+    const restingY = reward.y - radius * 0.72;
+    this.view.root.add(reward);
+
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      reward.setAlpha(1).setScale(1);
+      this.time.delayedCall(420, () => reward.destroy());
+      return;
+    }
+
+    this.tweens.add({
+      targets: reward,
+      alpha: 1,
+      scaleX: 1,
+      scaleY: 1,
+      y: restingY,
+      duration: 260,
+      ease: 'Back.easeOut',
+      onComplete: () => {
+        this.tweens.add({
+          targets: reward,
+          angle: tapAngle,
+          duration: 120,
+          ease: 'Sine.easeInOut',
+          yoyo: true,
+          repeat: 1,
+          repeatDelay: 70,
+          onComplete: () => {
+            this.tweens.add({
+              targets: reward,
+              alpha: 0,
+              scaleX: 0.88,
+              scaleY: 0.88,
+              y: restingY - radius * 0.53,
+              delay: 120,
+              duration: 300,
+              ease: 'Quad.easeIn',
+              onComplete: () => reward.destroy(),
+            });
+          },
+        });
+      },
+    });
   }
 
   private playConnectedCellBounce(index: number, onPeak?: () => void): boolean {

@@ -22,6 +22,12 @@ export const scoreDigitCount = (score: number): number => {
   return normalizedScore === 0 ? 0 : String(normalizedScore).length;
 };
 
+export const stepRewardEmojiForDifficulty = (difficultyScore: number): string | undefined => {
+  if (difficultyScore === 1) return '👍';
+  if (difficultyScore === 2) return '👏';
+  return undefined;
+};
+
 export interface DifficultyScoreBreakdown {
   feasibleChoiceCount: number;
   extraScore: number;

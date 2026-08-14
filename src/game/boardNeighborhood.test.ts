@@ -4,6 +4,7 @@ import {
   calculateHeldCellScore,
   countAvailableNeighborhoodChoices,
   scoreDigitCount,
+  stepRewardEmojiForDifficulty,
 } from './boardNeighborhood';
 import { BoardShape, type Cell } from './types';
 
@@ -161,6 +162,13 @@ describe('available neighborhood choices', () => {
 });
 
 describe('held cell score', () => {
+  it('maps solved step difficulty 1 and 2 to reward emoji', () => {
+    expect(stepRewardEmojiForDifficulty(0)).toBeUndefined();
+    expect(stepRewardEmojiForDifficulty(1)).toBe('👍');
+    expect(stepRewardEmojiForDifficulty(2)).toBe('👏');
+    expect(stepRewardEmojiForDifficulty(2.2)).toBeUndefined();
+  });
+
   it('converts the raw score into its digit count', () => {
     expect([0, 1, 9, 10, 99, 100].map(scoreDigitCount)).toEqual([0, 1, 1, 2, 2, 3]);
   });
