@@ -186,7 +186,7 @@ export interface BoardSessionInput {
   boardZoomEnabled: boolean;
   mode: GameMode;
   onProgress: (current: number, total: number) => void;
-  onWrong: (message: string) => void;
+  onWrong: (message: string, shouldLoseLife: boolean) => void;
   onComplete: () => void;
   onNeighborhoodPreview?: (preview: BoardNeighborhoodPreview | null) => void;
   onHoldScore?: (score: BoardHoldScore | null) => void;

@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#fff4e3" />
     <meta name="description" content="Number Connect — 一笔连接所有数字的浏览器益智游戏" />
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
-    <title>Number Connect</title>
+    <title>Number Connect · Puzzle</title>
   </head>
   <body>
     <main id="app" class="app-shell" data-primary-tab="lobby">
@@ -51,6 +51,9 @@
         <div class="lobby-theme-panel lobby-theme-panel--default">
           <button id="default-lobby-settings-button" class="default-settings-button" type="button" aria-label="打开设置">
             <img src="./theme-default/settings.png" alt="" />
+          </button>
+          <button id="default-gallery-button" class="default-gallery-button" type="button" aria-label="打开图鉴">
+            <img src="./theme-default/dock-icons/dock-favorites.png" alt="" />
           </button>
 
           <div class="default-feature-grid" aria-label="特色玩法">
@@ -114,7 +117,7 @@
           <button id="start-button" class="menu-button menu-button--primary">
             <span class="menu-icon">▶</span><span><strong>开始游戏</strong><small>从关卡列表继续</small></span>
           </button>
-          <button id="endless-button" class="menu-button menu-button--endless">
+          <button id="endless-button" class="menu-button menu-button--endless" hidden>
             <span class="menu-icon">∞</span><span><strong>无尽模式</strong><small>查看阶段、生命与历史记录</small></span>
           </button>
           <button id="challenge-button" class="menu-button menu-button--editor">
@@ -133,7 +136,7 @@
         <div class="play-top-zone">
           <header class="game-header">
             <div class="game-heading">
-              <button id="play-level-button" class="play-level-button" type="button" aria-haspopup="dialog" aria-controls="level-picker-dialog"><span id="play-level-label">关卡 1</span></button>
+              <button id="play-level-button" class="play-level-button" type="button" aria-haspopup="dialog" aria-controls="level-picker-dialog"><span id="play-level-label">Level 1-1</span></button>
               <span id="play-lives" class="life-counter" role="status" aria-live="polite" aria-label="生命值 3" hidden>♥♥♥</span>
               <p id="hold-score-formula" class="hold-score-formula is-inactive" role="status" aria-live="polite" aria-hidden="true">
                 <span class="hold-score-summary">
@@ -177,7 +180,6 @@
         <div id="game-host" class="game-host" aria-label="数字连接棋盘">
           <div id="play-puzzle-progress" class="play-puzzle-progress" role="progressbar" aria-label="拼图完成进度" aria-valuemin="0" aria-valuemax="4" aria-valuenow="0" hidden>
             <i id="play-puzzle-progress-fill"></i>
-            <span id="play-puzzle-progress-text">0 / 4</span>
           </div>
         </div>
         <footer id="power-up-bar" class="power-up-bar" aria-label="关卡道具">
@@ -253,7 +255,7 @@
 
       <section id="daily-screen" class="screen daily-screen" hidden aria-labelledby="daily-screen-title">
         <header class="daily-screen-header">
-          <button id="daily-today-button" class="daily-today-button" type="button">今天</button>
+          <button id="daily-back-button" class="icon-button" type="button" aria-label="返回大厅">←</button>
           <div>
             <h2 id="daily-screen-title">每日挑战</h2>
           </div>
@@ -261,6 +263,7 @@
         </header>
 
         <div class="daily-screen-stage">
+          <button id="daily-today-button" class="daily-today-button" type="button">回到今天</button>
           <section class="daily-flat-hero" aria-label="本月挑战进度">
             <div class="daily-trophy" aria-hidden="true">
               <svg viewBox="0 0 240 170" role="presentation">
@@ -312,7 +315,8 @@
 
       <section id="favorites-screen" class="screen favorites-screen" hidden aria-labelledby="favorites-screen-title">
         <header class="hub-screen-header favorites-screen-header">
-          <div><h2 id="favorites-screen-title">收藏</h2></div>
+          <button id="favorites-back-button" class="icon-button" type="button" aria-label="返回大厅">←</button>
+          <div><h2 id="favorites-screen-title">图鉴</h2></div>
         </header>
         <div class="favorites-stage">
           <div class="favorites-tabs" role="tablist" aria-label="收藏类型">
@@ -361,20 +365,6 @@
         <span id="primary-action-label">第 1 关</span>
       </button>
 
-      <nav id="primary-tab-bar" class="primary-tab-bar" aria-label="主页面导航">
-        <button id="tab-lobby-button" class="primary-tab-button is-active" type="button" data-tab="lobby" aria-current="page">
-          <img src="./theme-default/dock-icons/dock-home.png" alt="" aria-hidden="true" draggable="false" /><span>大厅</span><i aria-hidden="true"></i>
-        </button>
-        <button id="tab-challenge-button" class="primary-tab-button" type="button" data-tab="challenge">
-          <img src="./theme-default/dock-icons/dock-challenge.png" alt="" aria-hidden="true" draggable="false" /><span>挑战</span><i aria-hidden="true"></i>
-        </button>
-        <button id="tab-endless-button" class="primary-tab-button" type="button" data-tab="endless">
-          <img src="./theme-default/dock-icons/dock-endless.png" alt="" aria-hidden="true" draggable="false" /><span>无尽</span><i aria-hidden="true"></i>
-        </button>
-        <button id="tab-favorites-button" class="primary-tab-button" type="button" data-tab="favorites">
-          <img src="./theme-default/dock-icons/dock-favorites.png" alt="" aria-hidden="true" draggable="false" /><span>收藏</span><i aria-hidden="true"></i>
-        </button>
-      </nav>
     </main>
 
     <dialog id="bead-gallery-dialog" class="bead-gallery-dialog" aria-labelledby="bead-gallery-title">
@@ -414,7 +404,7 @@
       <form method="dialog" class="settings-card">
         <header><div><h2>游戏设置</h2></div><button id="settings-close-button" class="icon-button" value="cancel" aria-label="关闭">×</button></header>
         <div class="settings-list">
-          <div class="setting-row setting-row--main-gameplay"><span><b>主玩法</b><small>玩法5为独立实验玩法，便于单独调整</small></span><div id="settings-main-gameplay" class="setting-segmented setting-main-gameplay-control" role="radiogroup" aria-label="主玩法"><label><input type="radio" name="main-gameplay" value="beads" checked /><span>拼豆</span></label><label><input type="radio" name="main-gameplay" value="puzzle" /><span>拼图</span></label><label><input type="radio" name="main-gameplay" value="mode3" /><span>玩法3</span></label><label><input type="radio" name="main-gameplay" value="mode4" /><span>玩法4</span></label><label><input type="radio" name="main-gameplay" value="mode5" /><span>玩法5</span></label></div></div>
+          <div class="setting-row setting-row--main-gameplay"><span><b>主玩法</b><small>当前精简版仅保留拼图玩法</small></span><div id="settings-main-gameplay" class="setting-segmented setting-main-gameplay-control" role="radiogroup" aria-label="主玩法"><label><input type="radio" name="main-gameplay" value="puzzle" checked /><span>拼图</span></label></div></div>
           <label id="settings-main-difficulty-row" class="setting-row setting-row--main-difficulty"><span><b>难度</b><small>动态按最近5局调整；固定档位会立即重新生成关卡</small></span><select id="settings-main-difficulty" class="setting-main-difficulty-control" aria-label="主玩法难度"><option value="dynamic">动态</option><option value="1">难度 1</option><option value="2">难度 2</option><option value="3">难度 3</option><option value="4">难度 4</option><option value="5">难度 5</option><option value="6">难度 6</option><option value="7">难度 7</option><option value="8">难度 8</option><option value="9">难度 9</option><option value="10">难度 10</option></select></label>
           <div class="setting-row setting-row--input-mode"><span><b>操作方式</b><small>逐格点击、自动连接连续显示数字，或拖动连线</small></span><div id="settings-input-mode" class="setting-segmented setting-input-mode-control" role="radiogroup" aria-label="操作方式"><label><input type="radio" name="input-mode" value="click" /><span>点击</span></label><label><input type="radio" name="input-mode" value="auto-click" /><span>自动点击</span></label><label><input type="radio" name="input-mode" value="drag" checked /><span>拖动</span></label></div></div>
           <label class="setting-row"><span><b>下一个数字提示</b><small>高亮下一处可见数字</small></span><input id="settings-next" class="switch" type="checkbox" checked /></label>

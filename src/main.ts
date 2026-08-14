@@ -170,6 +170,7 @@ const COLLECTION_MIN_LEVELS = 7;
 const COLLECTION_PROGRESS_KEY = 'number-connect.collection-route.v1';
 const DAILY_COMPLETION_KEY = 'number-connect.daily-completed.v1';
 const ENDLESS_RUN_KEY = 'number-connect.endless-run.v1';
+const NORMAL_LIFE_LIMIT = 3;
 
 const applyUiTheme = (theme: UiTheme): void => {
   document.documentElement.dataset.theme = theme;
@@ -374,7 +375,6 @@ class NumberConnectApp {
   private readonly playPuzzleRotationHandle = query<HTMLElement>('#play-puzzle-rotation-handle');
   private readonly playPuzzleProgressBar = query<HTMLElement>('#play-puzzle-progress');
   private readonly playPuzzleProgressFill = query<HTMLElement>('#play-puzzle-progress-fill');
-  private readonly playPuzzleProgressText = query<HTMLElement>('#play-puzzle-progress-text');
   private readonly playPuzzleFinale = query<HTMLElement>('#play-puzzle-finale');
   private readonly playPuzzleFinaleArt = query<HTMLElement>('#play-puzzle-finale-art');
   private readonly playPuzzleFinaleButton = query<HTMLButtonElement>('#play-puzzle-finale-button');
@@ -482,7 +482,7 @@ class NumberConnectApp {
   private mode5Levels: LevelData[] = [];
   private mode5Campaign: Mode5CampaignLevel[] = [];
   private levels: LevelData[] = [];
-  private settings: GameSettings = loadSettings();
+  private settings: GameSettings = { ...loadSettings(), mainGameplay: 'puzzle' };
   private activeMainGameplay: MainGameplay = this.settings.mainGameplay;
   private mode: GameMode = 'normal';
   private stage = initialEndlessRunState.stage;
@@ -540,6 +540,8 @@ class NumberConnectApp {
   };
   private playPuzzleFinaleBusy = false;
   private playPuzzleCornerPressTimer?: number;
+  private playPuzzleProgressGlowTimer?: number;
+  private lastPlayPuzzleProgressCompleted?: number;
   private readonly playPuzzlePieceFloatTimers = new Set<number>();
   private beadJar: BeadJarItem[] = [];
   private beadRewardAnimating = false;
@@ -670,6 +672,9 @@ class NumberConnectApp {
     this.renderFavoritesScreen();
     this.renderTouchPreviewState();
     this.renderInputMode();
+    // The Phaser canvas exists beneath the DOM screens from startup onward.
+    // Keep its input disabled until an actual gameplay screen is entered.
+    this.boardScene.setPaused(this.currentScreen !== 'play');
   }
 
   private uiVisualScale(): number {
@@ -701,7 +706,7 @@ class NumberConnectApp {
       if (event.detail === 0) void this.placeNextBeadFromJar();
     });
     this.beadJarButton.addEventListener('contextmenu', (event) => event.preventDefault());
-    this.beadGalleryButton.addEventListener('click', () => this.openBeadGallery());
+    this.beadGalleryButton.addEventListener('click', () => this.openFavorites('beads'));
     query('#bead-gallery-close').addEventListener('click', () => this.beadGalleryDialog.close());
     query('#bead-gallery-detail-back').addEventListener('click', () => this.showBeadGalleryList());
     this.beadGalleryDialog.addEventListener('click', (event) => {
@@ -713,12 +718,11 @@ class NumberConnectApp {
     query('#default-start-button').addEventListener('click', () => void this.startNormalMode());
     query('#default-bead-mode-button').addEventListener('click', () => this.openBeadMode());
     query('#default-daily-challenge-button').addEventListener('click', () => this.openDailyChallenge());
+    query('#default-gallery-button').addEventListener('click', () => this.openFavorites());
     query('#default-editor-button').addEventListener('click', () => this.openEditor());
     query('#default-lobby-settings-button').addEventListener('click', () => this.openSettings('lobby'));
-    query('#tab-lobby-button').addEventListener('click', () => this.backToLobby());
-    query('#tab-challenge-button').addEventListener('click', () => this.openDailyChallenge());
-    query('#tab-endless-button').addEventListener('click', () => this.openEndlessHub());
-    query('#tab-favorites-button').addEventListener('click', () => this.openFavorites());
+    query('#daily-back-button').addEventListener('click', () => this.backToLobby());
+    query('#favorites-back-button').addEventListener('click', () => this.backToLobby());
     query('#daily-previous-month').addEventListener('click', () => this.shiftDailyCalendarMonth(-1));
     this.dailyNextMonthButton.addEventListener('click', () => this.shiftDailyCalendarMonth(1));
     query('#daily-today-button').addEventListener('click', () => {
@@ -1743,6 +1747,7 @@ class NumberConnectApp {
   private showScreen(name: ScreenName): void {
     const previousScreen = this.currentScreen;
     this.cancelPrimaryActionTransition();
+    if (name !== 'play') this.boardScene.setPaused(true);
     this.currentScreen = name;
     this.screenRouter.show(name);
     this.transitionPrimaryAction(previousScreen, name);
@@ -2134,11 +2139,11 @@ class NumberConnectApp {
           this.events.emit('level.progressed', { ...eventContext, current, total });
         }
       },
-      onWrong: (message) => {
+      onWrong: (message, shouldLoseLife) => {
         if (this.playContext !== 'editor-playtest') {
           this.events.emit('level.wrong-move', { ...eventContext, current: this.currentProgress, message });
         }
-        this.handleWrong();
+        if (shouldLoseLife) this.handleWrong();
       },
       onComplete: () => {
         if (this.playContext !== 'editor-playtest') {
@@ -2253,10 +2258,24 @@ class NumberConnectApp {
   private renderPlayPuzzleProgress(): void {
     const total = puzzlePieceCount(this.playPuzzlePattern);
     const completed = Math.min(total, this.playPuzzleProgress.revealed);
+    const progressGrew = this.lastPlayPuzzleProgressCompleted !== undefined
+      && completed > this.lastPlayPuzzleProgressCompleted;
+    this.lastPlayPuzzleProgressCompleted = completed;
     this.playPuzzleProgressBar.setAttribute('aria-valuemax', String(total));
     this.playPuzzleProgressBar.setAttribute('aria-valuenow', String(completed));
     this.playPuzzleProgressFill.style.width = `${completed / Math.max(1, total) * 100}%`;
-    this.playPuzzleProgressText.textContent = `${completed} / ${total}`;
+    if (progressGrew) {
+      if (this.playPuzzleProgressGlowTimer !== undefined) {
+        window.clearTimeout(this.playPuzzleProgressGlowTimer);
+      }
+      this.playPuzzleProgressBar.classList.remove('is-growing');
+      void this.playPuzzleProgressBar.offsetWidth;
+      this.playPuzzleProgressBar.classList.add('is-growing');
+      this.playPuzzleProgressGlowTimer = window.setTimeout(() => {
+        this.playPuzzleProgressBar.classList.remove('is-growing');
+        this.playPuzzleProgressGlowTimer = undefined;
+      }, 520);
+    }
   }
 
   private updateGameHeading(level: LevelData): void {
@@ -2290,7 +2309,7 @@ class NumberConnectApp {
     if (this.activeMainGameplay === 'puzzle') {
       const totalStages = puzzlePieceCount(this.playPuzzlePattern);
       const currentStage = Math.min(totalStages, this.playPuzzleProgress.revealed + 1);
-      this.levelLabel.textContent = `拼图 · 关卡 ${this.settings.puzzleMainLevelId} · 阶段 ${currentStage}/${totalStages}`;
+      this.levelLabel.textContent = `Level ${this.settings.puzzleMainLevelId}-${currentStage}`;
       return;
     }
     if (isAdaptiveMainGameplay(this.activeMainGameplay)) {
@@ -2670,7 +2689,9 @@ class NumberConnectApp {
         const isGainedHeart = animation?.gainedFrom !== undefined
           && index >= Math.max(0, animation.gainedFrom)
           && index < lives;
-        slot.textContent = index < lives && !isGainedHeart ? '♥' : '♡';
+        const hasFilledBase = index < lives && !isGainedHeart;
+        slot.classList.add(hasFilledBase ? 'life-heart-slot--filled' : 'life-heart-slot--empty');
+        slot.textContent = '';
 
         if (animation?.lost && index === lives) {
           slot.classList.add('life-heart-slot--losing');
@@ -2750,6 +2771,12 @@ class NumberConnectApp {
     this.lives -= 1;
     this.renderLives({ lost: true });
     if (this.lives === 0) this.handleLifeDepleted();
+  }
+
+  private gainNormalLife(): void {
+    const previousLives = this.lives;
+    this.lives = Math.min(NORMAL_LIFE_LIMIT, this.lives + 1);
+    if (this.lives > previousLives) this.renderLives({ gainedFrom: previousLives });
   }
 
   private handleLifeDepleted(): void {
@@ -3004,6 +3031,7 @@ class NumberConnectApp {
       this.playPuzzleProgress,
     );
     savePlayPuzzleProgress(this.playPuzzleProgress);
+    this.gainNormalLife();
     renderPlayPuzzleShowcase(
       this.playPuzzleShowcaseArt,
       this.playPuzzlePattern,
@@ -3590,8 +3618,6 @@ class NumberConnectApp {
 
   private nextPuzzleStage(): void {
     this.resultOverlay.hidden = true;
-    this.lives = 3;
-    this.renderLives();
     this.setCurrentBoard(this.createNormalLevel());
   }
 
@@ -4027,7 +4053,8 @@ class NumberConnectApp {
     this.renderEndlessHub();
   }
 
-  private openFavorites(): void {
+  private openFavorites(tab: 'album' | 'beads' = 'album'): void {
+    this.favoritesTab = tab;
     this.boardScene.setPaused(true);
     this.showScreen('favorites');
     this.renderFavoritesScreen();

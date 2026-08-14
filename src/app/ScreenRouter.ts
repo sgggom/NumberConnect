@@ -25,7 +25,6 @@ export class ScreenRouter {
     endless: query<HTMLElement>('#endless-screen'),
     favorites: query<HTMLElement>('#favorites-screen'),
   };
-  private readonly primaryTabBar = query<HTMLElement>('#primary-tab-bar');
   private currentScreen: ScreenName = 'lobby';
   private tabTransitionToken = 0;
   private tabTransitionAnimations: Animation[] = [];
@@ -51,13 +50,6 @@ export class ScreenRouter {
       this.showOnly(name);
     }
 
-    this.primaryTabBar.hidden = activeTab === undefined;
-    this.primaryTabBar.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach((button) => {
-      const active = button.dataset.tab === activeTab;
-      button.classList.toggle('is-active', active);
-      if (active) button.setAttribute('aria-current', 'page');
-      else button.removeAttribute('aria-current');
-    });
   }
 
   private animatePrimaryTabChange(
