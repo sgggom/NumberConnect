@@ -1,21 +1,14 @@
-# Number Connect Web
+# Number Connect Core Puzzle
 
-Unity 版 Number Connect 的浏览器移植版，使用 Phaser、TypeScript 和 Vite。
+从 Number Connect Web 迁移出的独立 Phaser、TypeScript、Vite 项目，产品入口仅保留以下模块：
 
-在线体验：https://sgggom.github.io/NumberConnect/
+- 大厅
+- 拼图主玩法
+- 算法 8 关卡编辑器
+- 每日挑战
+- 拼豆玩法与拼豆图鉴
 
-## 已移植功能
-
-- 5 个内置图案关卡与完成图案展示
-- 从数字 1 开始、按从小到大的连续顺序拖动连接，并支持隐藏数字、下一数字提示和错误反馈
-- 连击、错误和胜利音效
-- 普通模式与无尽模式
-- 无尽阶段难度成长和棋盘上下切换动画
-- 正方形、菱形、长方形程序棋盘
-- 隐藏比例、最长显示/隐藏、目标交叉数等设置
-- 可绘制、验证、保存并游玩的关卡编辑器
-- 设置和自制关卡通过 `localStorage` 保存在浏览器中
-- 桌面与移动端响应式布局
+算法 8 仍复用原项目的底层路径生成器；这些内部模块不作为编辑器算法选项暴露。无尽模式、收藏主导航和玩法 3/4/5 均不在当前产品入口中。
 
 ## 本地运行
 
@@ -24,20 +17,7 @@ npm install
 npm run dev
 ```
 
-打开终端显示的本地地址，默认是 `http://localhost:4173/`。
-
-## 拼豆数据格式
-
-`public/bead-patterns/patterns.json` 保存图案名称、尺寸、数据文件和预览图。每个图案 JSON 只包含 `data` 二维数组：行下标为 `y`，列下标为 `x`，颜色使用 `#RRGGBB`，空格使用 `null`。
-
-```json
-{
-  "data": [
-    [null, "#FF8A00", null],
-    ["#FF8A00", "#FFD666", "#FF8A00"]
-  ]
-}
-```
+Vite 默认会输出本地访问地址。
 
 ## 验证与构建
 
@@ -47,3 +27,7 @@ npm run build
 ```
 
 生产文件生成在 `dist/`。
+
+## 拼豆数据
+
+`public/bead-patterns/patterns.json` 保存图案索引；各图案 JSON 使用 `data` 二维数组，颜色为 `#RRGGBB`，空格为 `null`。

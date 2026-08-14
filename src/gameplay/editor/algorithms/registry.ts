@@ -20,41 +20,6 @@ const LEGACY_EDITOR_ALGORITHM_ID: EditorAlgorithmId = 'algorithm-1';
 
 export const EDITOR_ALGORITHMS: readonly EditorAlgorithmDescriptor[] = [
   {
-    id: 'algorithm-1',
-    label: '算法1',
-    description: '按当前棋盘的相邻规则生成一笔路径，交叉数量不会超过设置的上限。',
-  },
-  {
-    id: 'algorithm-2',
-    label: '算法2',
-    description: '在不死局且交叉不超过上限的前提下随机选择方向和完整路径，允许同一组显示数字对应多条完整解。',
-  },
-  {
-    id: 'algorithm-3',
-    label: '算法3',
-    description: '沿用算法2的路径生成，按直线、拐弯和交叉位置的独立概率选择隐藏数字，并允许多条完整解。',
-  },
-  {
-    id: 'algorithm-4',
-    label: '算法4',
-    description: '沿用算法2的路径生成，生成完整路径后按前、中、后三阶段的独立概率依次选择隐藏数字。',
-  },
-  {
-    id: 'algorithm-5',
-    label: '算法5',
-    description: '沿用算法4的路径与阶段隐藏规则，同行或同列已隐藏数字越多，候选数字的隐藏跳过概率越高。',
-  },
-  {
-    id: 'algorithm-6',
-    label: '算法6',
-    description: '复制算法5的路径生成、阶段隐藏与同行同列隐藏跳过规则。',
-  },
-  {
-    id: 'algorithm-7',
-    label: '算法7',
-    description: '生成候选路径后，以逐步求解和玩家模拟结果为目标，反向搜索接近指定难度的隐藏布局。',
-  },
-  {
     id: 'algorithm-8',
     label: '算法8',
     description: '难度会额外增加同值百分点的隐藏数字，再用基准点、局部分岔、线索距离和邻近扩展配额生成布局。',
@@ -674,4 +639,4 @@ export const runEditorAlgorithm = (
 };
 
 export const editorAlgorithmLabel = (id?: string): string =>
-  EDITOR_ALGORITHMS.find((algorithm) => algorithm.id === id)?.label ?? '算法1';
+  /^algorithm-[1-8]$/.test(id ?? '') ? `算法${id?.slice(-1)}` : '算法8';

@@ -88,7 +88,7 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
           </div>
           <div class="editor-level-actions">
             <button id="editor-level-add" class="button button--primary button--small" disabled>添加当前</button>
-            <button id="editor-level-batch" class="button button--secondary button--small" type="button" title="读取算法 4 配置 Excel，每行按生成次数批量追加关卡">批量生成</button>
+            <button id="editor-level-batch" class="button button--secondary button--small" type="button" title="精简版仅保留算法 8" hidden>批量生成</button>
             <button id="editor-level-import" class="button button--secondary button--small">读取 JSON</button>
             <button id="editor-level-export" class="button button--secondary button--small" title="按关卡 ID 导出仅包含 data 的 JSON 文本" disabled>导出 TXT</button>
             <button id="editor-level-clear" class="button button--secondary button--small" type="button" title="清空关卡列表" disabled>清空列表</button>
@@ -119,13 +119,6 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
           </div>
           <label class="editor-algorithm-select" aria-label="算法">
             <select id="editor-algorithm">
-              <option value="algorithm-1">算法1</option>
-              <option value="algorithm-2">算法2</option>
-              <option value="algorithm-3">算法3</option>
-              <option value="algorithm-4">算法4</option>
-              <option value="algorithm-5">算法5</option>
-              <option value="algorithm-6">算法6</option>
-              <option value="algorithm-7">算法7</option>
               <option value="algorithm-8" selected>算法8</option>
             </select>
           </label>
