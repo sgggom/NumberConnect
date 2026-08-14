@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   loadBeadLevels,
   loadBuiltInLevels,
+  loadEditorLevelCollection,
   loadLevelCollection,
   loadMode3Levels,
   loadMode5Levels,
@@ -213,13 +214,15 @@ describe('level collection migration', () => {
     }
   });
 
-  it('keeps bundled configuration authoritative and preserves custom editor levels', () => {
+  it('uses custom levels to replace matching bundled formations without reviving stale copies', () => {
     const bundled = [
       { ...makeLevel(1), hiddenCells: [{ x: 0, y: 0 }] },
+      makeLevel(2),
     ];
     const staleBundledCopy = makeLevel(1);
-    const customLevel = makeLevel(7, true);
-    const stored = [staleBundledCopy, customLevel];
+    const replacementLevel = { ...makeLevel(2, true), hiddenCells: [{ x: 1, y: 0 }] };
+    const appendedLevel = makeLevel(7, true);
+    const stored = [staleBundledCopy, replacementLevel, appendedLevel];
     const getItem = vi.fn((key: string) => (
       key === 'number-connect.level-collection.v5' ? JSON.stringify(stored) : null
     ));
@@ -227,11 +230,12 @@ describe('level collection migration', () => {
     vi.stubGlobal('window', { localStorage: { getItem, setItem } });
 
     try {
-      expect(loadLevelCollection(bundled)).toEqual([bundled[0], customLevel]);
+      expect(loadLevelCollection(bundled)).toEqual([bundled[0], replacementLevel, appendedLevel]);
+      expect(loadEditorLevelCollection()).toEqual([replacementLevel, appendedLevel]);
       saveLevelCollection(stored);
       expect(setItem).toHaveBeenCalledWith(
         'number-connect.level-collection.v5',
-        JSON.stringify([customLevel]),
+        JSON.stringify([replacementLevel, appendedLevel]),
       );
     } finally {
       vi.unstubAllGlobals();

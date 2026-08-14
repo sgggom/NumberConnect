@@ -26,6 +26,7 @@ import {
 } from './game/powerUps';
 import {
   getNextLevelId,
+  loadEditorLevelCollection,
   loadBeadLevels,
   loadLevelCollection,
   loadMode3Levels,
@@ -482,6 +483,7 @@ class NumberConnectApp {
   private mode5Levels: LevelData[] = [];
   private mode5Campaign: Mode5CampaignLevel[] = [];
   private levels: LevelData[] = [];
+  private editorLevels: LevelData[] = [];
   private settings: GameSettings = { ...loadSettings(), mainGameplay: 'puzzle' };
   private activeMainGameplay: MainGameplay = this.settings.mainGameplay;
   private mode: GameMode = 'normal';
@@ -614,8 +616,8 @@ class NumberConnectApp {
       scene: [this.boardScene],
     });
     this.editor = new LevelEditorController(query<HTMLElement>('#editor-screen'), {
-      getLevels: () => this.levels,
-      getNextLevelId: () => getNextLevelId(this.levels),
+      getLevels: () => this.editorLevels,
+      getNextLevelId: () => getNextLevelId(this.editorLevels),
       onLevelsChange: (levels) => {
         saveLevelCollection(levels);
         this.refreshLevels();
@@ -1724,6 +1726,7 @@ class NumberConnectApp {
   }
 
   private refreshLevels(): void {
+    this.editorLevels = loadEditorLevelCollection();
     this.levels = loadLevelCollection(this.builtInLevels);
     if (!this.levels.some((level) => level.levelId === this.settings.beadMainLevelId)) {
       this.settings.beadMainLevelId = this.levels[0]?.levelId ?? 1;
@@ -2018,9 +2021,9 @@ class NumberConnectApp {
         puzzlePieceCount(this.playPuzzlePattern) - 1,
         this.playPuzzleProgress.revealed,
       ));
-      // Puzzle stages are product configuration. Never let an older editor cache
-      // replace their configured path or hidden-cell layout.
-      const puzzleBoards = this.builtInLevels.filter(
+      // The workbook defines the stage order, while an editor level with the
+      // same id replaces that formation (including its configured hidden cells).
+      const puzzleBoards = this.levels.filter(
         (level) => level.activeCells.length === level.rows * level.columns,
       );
       const boardIndex = puzzleBoards.length > 0

@@ -304,9 +304,19 @@ export class LevelEditorController {
       this.lastManualPathHitKey = undefined;
     });
     window.addEventListener('keydown', (event) => {
-      if (this.host.hidden || this.isPathBusy() || (!event.ctrlKey && !event.metaKey) || event.shiftKey || event.key.toLowerCase() !== 'z') return;
+      if (this.host.hidden || this.isPathBusy() || this.host.querySelector('dialog[open]')) return;
       const target = event.target;
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || (target instanceof HTMLElement && target.isContentEditable)) return;
+      if (target instanceof HTMLElement && target.getAttribute('role') === 'separator') return;
+      if (!event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+        if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+          if (this.options.getLevels().length === 0) return;
+          event.preventDefault();
+          this.switchLevelByKeyboard(event.key === 'ArrowUp' ? -1 : 1);
+        }
+        return;
+      }
+      if ((!event.ctrlKey && !event.metaKey) || event.shiftKey || event.key.toLowerCase() !== 'z') return;
       if (!this.model.canUndoDeletion) return;
       event.preventDefault();
       this.undoLastDeletion();
@@ -474,8 +484,7 @@ export class LevelEditorController {
     this.query<HTMLButtonElement>('#editor-clear-button').disabled = pathBusy;
     this.query<HTMLButtonElement>('#editor-generate-path-button').disabled = this.model.manualEditMode !== 'off' || pathBusy;
     this.query<HTMLButtonElement>('#editor-calculate-hidden-button').disabled = (
-      this.model.manualEditMode !== 'off'
-      || !this.model.hasGeneratedPath
+      !this.model.hasGeneratedPath
       || this.model.algorithmSelection.id === 'algorithm-1'
       || pathBusy
     );
@@ -1675,11 +1684,12 @@ export class LevelEditorController {
       this.setStatus('当前算法无法为这条路径计算隐藏布局。', true);
       return;
     }
+    if (this.model.manualEditMode === 'path') this.model.setManualEditMode('hidden');
     this.render();
     const targetSummary = this.model.targetHiddenCount === undefined
       ? ''
       : `/${this.model.targetHiddenCount}`;
-    this.setStatus(`隐藏计算完成：隐藏 ${this.model.hiddenCellKeys.size}${targetSummary} 格；完整路径保持不变。`);
+    this.setStatus(`隐藏计算完成：隐藏 ${this.model.hiddenCellKeys.size}${targetSummary} 格；完整路径保持不变，可继续手动调整隐藏格。`);
   }
 
   private updatePathCalculationProgress(progress: number): void {
@@ -1827,6 +1837,7 @@ export class LevelEditorController {
     const items = levels.map((level) => {
       const item = document.createElement('div');
       item.className = 'editor-level-item';
+      item.dataset.editorLevelId = String(level.levelId);
       item.classList.toggle('is-selected', level.levelId === this.selectedLevelId);
       item.tabIndex = 0;
       item.setAttribute('role', 'button');
@@ -1976,6 +1987,22 @@ export class LevelEditorController {
     this.persistPreferences();
     this.render();
     this.setStatus(`已应用关卡 ${level.levelId} 到棋盘。`);
+  }
+
+  private switchLevelByKeyboard(direction: -1 | 1): void {
+    const levels = this.options.getLevels();
+    if (levels.length === 0) return;
+    const currentIndex = levels.findIndex((level) => level.levelId === this.selectedLevelId);
+    const nextIndex = currentIndex < 0
+      ? direction > 0 ? 0 : levels.length - 1
+      : Math.max(0, Math.min(levels.length - 1, currentIndex + direction));
+    const nextLevel = levels[nextIndex];
+    if (!nextLevel || nextLevel.levelId === this.selectedLevelId) return;
+    this.applyLevel(nextLevel);
+    requestAnimationFrame(() => {
+      this.query<HTMLElement>(`[data-editor-level-id="${nextLevel.levelId}"]`)
+        .scrollIntoView({ block: 'nearest' });
+    });
   }
 
   private deleteLevel(levelId: number): void {

@@ -376,6 +376,12 @@ describe('level editor path generation', () => {
       pathSource: 'manual',
       solutionPath: path,
     });
+    expect(model.prepareHiddenGeneration()).toMatchObject({
+      context: {
+        generationPhase: 'hidden',
+        fixedPath: path,
+      },
+    });
   });
 
   it('applies clipboard JSON as a manual level while preserving the selected algorithm', () => {

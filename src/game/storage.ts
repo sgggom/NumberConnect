@@ -144,14 +144,26 @@ const parseLevelArray = (value: string | null): LevelData[] => {
   }
 };
 
-export const loadLevelCollection = (bundledLevels: LevelData[]): LevelData[] => {
-  if (!hasStorage()) return bundledLevels.map((level) => ({ ...level }));
+export const loadEditorLevelCollection = (): LevelData[] => {
+  if (!hasStorage()) return [];
   const storedValue = window.localStorage.getItem(LEVEL_COLLECTION_KEY);
-  if (storedValue !== null) {
-    const customLevels = parseLevelArray(storedValue).filter((level) => level.custom === true);
+  return storedValue === null
+    ? []
+    : parseLevelArray(storedValue)
+      .filter((level) => level.custom === true)
+      .sort((left, right) => left.levelId - right.levelId);
+};
+
+export const loadLevelCollection = (bundledLevels: LevelData[]): LevelData[] => {
+  const customLevels = loadEditorLevelCollection();
+  if (customLevels.length > 0) {
+    const customByLevelId = new Map(customLevels.map((level) => [level.levelId, level]));
+    const bundledLevelIds = new Set(bundledLevels.map((level) => level.levelId));
     return [
-      ...bundledLevels.map((level) => ({ ...level })),
-      ...customLevels,
+      ...bundledLevels.map((level) => ({
+        ...(customByLevelId.get(level.levelId) ?? level),
+      })),
+      ...customLevels.filter((level) => !bundledLevelIds.has(level.levelId)),
     ].sort((left, right) => left.levelId - right.levelId);
   }
   return bundledLevels.map((level) => ({ ...level }));
