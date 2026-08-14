@@ -213,8 +213,13 @@ describe('level collection migration', () => {
     }
   });
 
-  it('loads and saves editor changes with the v5 collection key', () => {
-    const stored = [makeLevel(7, true)];
+  it('keeps bundled configuration authoritative and preserves custom editor levels', () => {
+    const bundled = [
+      { ...makeLevel(1), hiddenCells: [{ x: 0, y: 0 }] },
+    ];
+    const staleBundledCopy = makeLevel(1);
+    const customLevel = makeLevel(7, true);
+    const stored = [staleBundledCopy, customLevel];
     const getItem = vi.fn((key: string) => (
       key === 'number-connect.level-collection.v5' ? JSON.stringify(stored) : null
     ));
@@ -222,11 +227,11 @@ describe('level collection migration', () => {
     vi.stubGlobal('window', { localStorage: { getItem, setItem } });
 
     try {
-      expect(loadLevelCollection([makeLevel(1)])).toEqual(stored);
+      expect(loadLevelCollection(bundled)).toEqual([bundled[0], customLevel]);
       saveLevelCollection(stored);
       expect(setItem).toHaveBeenCalledWith(
         'number-connect.level-collection.v5',
-        JSON.stringify(stored),
+        JSON.stringify([customLevel]),
       );
     } finally {
       vi.unstubAllGlobals();
