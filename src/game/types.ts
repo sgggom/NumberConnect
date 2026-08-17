@@ -180,6 +180,7 @@ export interface BoardSessionInput {
   completionGemColors?: readonly string[];
   completionGemDestination?: 'jar' | 'showcase';
   showNextNumber: boolean;
+  showDifficultyScore?: boolean;
   soundEnabled: boolean;
   inputMode: InputMode;
   touchPreviewRingDepth: 1 | 2;

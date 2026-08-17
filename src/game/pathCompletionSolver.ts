@@ -20,6 +20,7 @@ const pairKey = (left: number, right: number): string => (
 export class PathCompletionSolver {
   private readonly neighbors: ReadonlyArray<ReadonlyArray<number>>;
   private readonly completionCache = new Map<string, readonly number[] | null>();
+  private lastCompletion?: readonly number[];
 
   public constructor(
     private readonly cells: ReadonlyArray<Cell>,
@@ -40,13 +41,54 @@ export class PathCompletionSolver {
       return cached ? [...cached] : null;
     }
 
+    if (this.lastCompletion && this.completionSatisfies(this.lastCompletion, request)) {
+      const reused = [...this.lastCompletion];
+      this.completionCache.set(cacheKey, reused);
+      return reused;
+    }
+
     const completion = this.searchCompletion(request);
     if (this.completionCache.size >= 2048) {
       const oldestKey = this.completionCache.keys().next().value as string | undefined;
       if (oldestKey !== undefined) this.completionCache.delete(oldestKey);
     }
     this.completionCache.set(cacheKey, completion ? [...completion] : null);
+    if (completion) this.lastCompletion = [...completion];
     return completion ? [...completion] : null;
+  }
+
+  private completionSatisfies(
+    completion: ReadonlyArray<number>,
+    { fixedPositions, requiredEdges, directedStep }: PathCompletionRequest,
+  ): boolean {
+    if (
+      completion.length !== this.cells.length
+      || new Set(completion).size !== this.cells.length
+    ) return false;
+    const positions = new Map(completion.map((node, position) => [node, position]));
+    for (const [node, position] of fixedPositions) {
+      if (completion[position] !== node) return false;
+    }
+    for (const [left, right] of requiredEdges) {
+      const leftPosition = positions.get(left);
+      const rightPosition = positions.get(right);
+      if (
+        leftPosition === undefined
+        || rightPosition === undefined
+        || Math.abs(leftPosition - rightPosition) !== 1
+      ) return false;
+    }
+    if (directedStep) {
+      const fromPosition = positions.get(directedStep.from);
+      const toPosition = positions.get(directedStep.to);
+      if (fromPosition === undefined || toPosition === undefined) return false;
+      const delta = toPosition - fromPosition;
+      if (
+        Math.abs(delta) !== 1
+        || (directedStep.direction !== undefined && delta !== directedStep.direction)
+      ) return false;
+    }
+    return true;
   }
 
   private searchCompletion({
@@ -58,11 +100,39 @@ export class PathCompletionSolver {
     if (total === 0) return [];
 
     const fixedNodeAtPosition = Array<number | undefined>(total).fill(undefined);
+    const fixedPositionByNode = Array<number | undefined>(total).fill(undefined);
     for (const [node, position] of fixedPositions) {
       if (!this.inBounds(node) || !this.inBounds(position)) return null;
       const existing = fixedNodeAtPosition[position];
       if (existing !== undefined && existing !== node) return null;
+      const existingPosition = fixedPositionByNode[node];
+      if (existingPosition !== undefined && existingPosition !== position) return null;
       fixedNodeAtPosition[position] = node;
+      fixedPositionByNode[node] = position;
+    }
+
+    const fixNodeAtPosition = (node: number, position: number): boolean => {
+      if (!this.inBounds(node) || !this.inBounds(position)) return false;
+      const existingNode = fixedNodeAtPosition[position];
+      const existingPosition = fixedPositionByNode[node];
+      if (
+        (existingNode !== undefined && existingNode !== node)
+        || (existingPosition !== undefined && existingPosition !== position)
+      ) return false;
+      fixedNodeAtPosition[position] = node;
+      fixedPositionByNode[node] = position;
+      return true;
+    };
+
+    if (directedStep?.direction !== undefined) {
+      const fromPosition = fixedPositionByNode[directedStep.from];
+      const toPosition = fixedPositionByNode[directedStep.to];
+      if (
+        (fromPosition !== undefined
+          && !fixNodeAtPosition(directedStep.to, fromPosition + directedStep.direction))
+        || (toPosition !== undefined
+          && !fixNodeAtPosition(directedStep.from, toPosition - directedStep.direction))
+      ) return null;
     }
 
     const requiredNeighbors = Array.from({ length: total }, () => new Set<number>());
@@ -153,7 +223,7 @@ export class PathCompletionSolver {
           (count, neighbor) => count + Number(neighbor === current || !visited[neighbor]),
           0,
         );
-        const fixedPosition = fixedPositions.get(node);
+        const fixedPosition = fixedPositionByNode[node];
         const mayBeFinalNode = fixedPosition === undefined || fixedPosition === total - 1;
         if (availableNeighborCount === 0 || (!mayBeFinalNode && availableNeighborCount < 2)) {
           return false;
@@ -202,7 +272,7 @@ export class PathCompletionSolver {
 
       for (const node of candidates) {
         if (visited[node]) continue;
-        const fixedPosition = fixedPositions.get(node);
+        const fixedPosition = fixedPositionByNode[node];
         if (fixedPosition !== undefined && fixedPosition !== position) continue;
         if (previous !== undefined && !this.neighbors[previous].includes(node)) continue;
         if (!directedStepAllows(node, position)) continue;

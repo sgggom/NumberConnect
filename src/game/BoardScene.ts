@@ -2,9 +2,9 @@ import Phaser from 'phaser';
 import { COLLECTION_ARTWORK_NAMES } from '../gameplay/collection/collectionArtwork';
 import {
   buildBoardNeighborhoodPreview,
-  calculateHeldCellScore,
   stepRewardEmojiForDifficulty,
 } from './boardNeighborhood';
+import { calculateCompletionAwareScoreInWorker } from './completionAwareScoreWorker';
 import {
   boardArtworkSourceRect,
   sampleBoardArtworkAverageColors,
@@ -28,6 +28,7 @@ import {
 } from './dragJudgment';
 import { findSwappableHiddenPairs } from './hiddenSwap';
 import { PathCompletionSolver } from './pathCompletionSolver';
+import { findPathCompletionInWorker } from './pathCompletionWorker';
 import { projectCell } from './topology';
 import {
   BoardShape,
@@ -70,6 +71,12 @@ interface ArtworkColorTileView {
 interface StepRewardFeedback {
   index: number;
   emoji: string;
+}
+
+interface PendingStepRewardFeedback {
+  index: number;
+  session: BoardSessionInput;
+  result: Promise<StepRewardFeedback | undefined>;
 }
 
 interface BoardView {
@@ -234,7 +241,10 @@ export class BoardScene extends Phaser.Scene {
   private neighborhoodPreviewIndex?: number;
   private pointerLineTarget?: { x: number; y: number };
   private raisedConnectedCellIndex?: number;
-  private pendingStepReward?: StepRewardFeedback;
+  private pendingStepReward?: PendingStepRewardFeedback;
+  private completionCheckPending = false;
+  private readonly heldScoreRequests = new Map<string, Promise<BoardHoldScore | undefined>>();
+  private heldScoreDisplayToken = 0;
   private paused = true;
   private entranceAnimating = false;
   private entranceAnimationToken = 0;
@@ -311,6 +321,9 @@ export class BoardScene extends Phaser.Scene {
     this.pointerLineTarget = undefined;
     this.raisedConnectedCellIndex = undefined;
     this.pendingStepReward = undefined;
+    this.completionCheckPending = false;
+    this.heldScoreRequests.clear();
+    this.heldScoreDisplayToken += 1;
     this.wrongFeedbackActive = false;
     this.wrongCellIndexes.clear();
     this.cellSelectionHandler = undefined;
@@ -697,6 +710,8 @@ export class BoardScene extends Phaser.Scene {
     this.pointerLineTarget = undefined;
     this.raisedConnectedCellIndex = undefined;
     this.pendingStepReward = undefined;
+    this.heldScoreRequests.clear();
+    this.heldScoreDisplayToken += 1;
     this.wrongFeedbackActive = false;
     this.wrongCellIndexes.clear();
     this.cellSelectionHandler = undefined;
@@ -1978,17 +1993,7 @@ export class BoardScene extends Phaser.Scene {
     if (this.session && usesClickInput(this.session.inputMode)) {
       this.wrongFeedbackActive = false;
       this.showHeldCellChoiceScore(index);
-      const stepReward = this.stepRewardFeedback(this.connection.currentClickIndex, index);
-      const actions = this.connection.clickForward(index);
-      actions.forEach((action, actionIndex) => {
-        this.handleConnectionAction(action, actionIndex === actions.length - 1, stepReward);
-      });
-      if (
-        this.session.inputMode === 'auto-click'
-        && actions.some((action) => action.type === 'advanced' && action.index === index)
-      ) {
-        this.scheduleAutoClickStep();
-      }
+      void this.handleClickForward(index);
       return;
     }
     this.isDrawing = true;
@@ -2011,6 +2016,7 @@ export class BoardScene extends Phaser.Scene {
       || this.drawingPointerId !== pointer.id
       || !pointer.isDown
       || this.locked
+      || this.completionCheckPending
       || !this.view
       || !this.connection
       || !this.session
@@ -2048,9 +2054,26 @@ export class BoardScene extends Phaser.Scene {
         !this.solutionRevealed && !this.connection.isVisible(closest.index),
       );
       const stepReward = this.stepRewardFeedback(this.connection.activeIndex, closest.index);
-      const action = this.connection.extend(closest.index);
-      if (shouldHandleDragAction(closestJudgmentMode, action.type === 'wrong')) {
-        this.handleConnectionAction(action, true, stepReward);
+      if (this.connection.canExtendWithoutSearch(closest.index)) {
+        const action = this.connection.extend(closest.index);
+        if (shouldHandleDragAction(closestJudgmentMode, action.type === 'wrong')) {
+          this.handleConnectionAction(action, true, stepReward);
+        }
+      } else {
+        const session = this.session;
+        const connection = this.connection;
+        this.completionCheckPending = true;
+        void connection.extendAsync(closest.index, (request) => (
+          findPathCompletionInWorker(session.level.solutionPath, session.level.boardShape, request)
+        )).then((action) => {
+          if (
+            this.session === session
+            && this.connection === connection
+            && shouldHandleDragAction(closestJudgmentMode, action.type === 'wrong')
+          ) this.handleConnectionAction(action, true, stepReward);
+        }).catch(() => undefined).finally(() => {
+          if (this.connection === connection) this.completionCheckPending = false;
+        });
       }
     }
     const previewIndex = closest?.index ?? this.neighborhoodPreviewIndex;
@@ -2078,6 +2101,33 @@ export class BoardScene extends Phaser.Scene {
     if (this.connection?.complete !== true) this.lowerRaisedConnectedCell();
     if (wasDrawing) this.refreshView();
     this.clearNeighborhoodPreview();
+  }
+
+  private async handleClickForward(index: number): Promise<void> {
+    if (this.completionCheckPending || !this.session || !this.connection) return;
+    const session = this.session;
+    const connection = this.connection;
+    const stepReward = this.stepRewardFeedback(connection.currentClickIndex, index);
+    this.completionCheckPending = true;
+    try {
+      const actions = connection.canExtendWithoutSearch(index)
+        ? connection.clickForward(index)
+        : await connection.clickForwardAsync(index, (request) => (
+            findPathCompletionInWorker(session.level.solutionPath, session.level.boardShape, request)
+          ));
+      if (this.session !== session || this.connection !== connection) return;
+      actions.forEach((action, actionIndex) => {
+        this.handleConnectionAction(action, actionIndex === actions.length - 1, stepReward);
+      });
+      if (
+        session.inputMode === 'auto-click'
+        && actions.some((action) => action.type === 'advanced' && action.index === index)
+      ) this.scheduleAutoClickStep();
+    } catch {
+      // Worker failures leave the current connection state unchanged.
+    } finally {
+      if (this.connection === connection) this.completionCheckPending = false;
+    }
   }
 
   private scheduleAutoClickStep(): void {
@@ -2207,6 +2257,10 @@ export class BoardScene extends Phaser.Scene {
 
   private showHeldCellChoiceScore(index: number): void {
     if (!this.session || !this.connection || !this.view) return;
+    if (this.session.showDifficultyScore !== true) {
+      this.hideHeldCellChoiceScore();
+      return;
+    }
     const heldCell = this.session.level.solutionPath[index];
     const heldCellView = heldCell
       ? this.view.cells.get(cellKey(heldCell))
@@ -2216,50 +2270,78 @@ export class BoardScene extends Phaser.Scene {
       return;
     }
 
-    const score = this.heldCellChoiceScore(index);
-    if (!score) {
-      this.hideHeldCellChoiceScore();
-      return;
+    const session = this.session;
+    const view = this.view;
+    const displayToken = ++this.heldScoreDisplayToken;
+    void this.heldCellChoiceScore(index).then((score) => {
+      if (
+        !score
+        || this.session !== session
+        || this.view !== view
+        || displayToken !== this.heldScoreDisplayToken
+      ) return;
+      view.choiceScore
+        .setText(String(score.badgeScore))
+        .setPosition(
+          heldCellView.x - view.radius * 0.72,
+          heldCellView.y - view.radius * 0.72,
+        )
+        .setVisible(true);
+      session.onHoldScore?.(score);
+    });
+  }
+
+  private heldCellChoiceScore(index: number): Promise<BoardHoldScore | undefined> {
+    if (!this.session || !this.connection || !this.session.level.solutionPath[index]) {
+      return Promise.resolve(undefined);
     }
-    this.view.choiceScore
-      .setText(String(score.badgeScore))
-      .setPosition(
-        heldCellView.x - this.view.radius * 0.72,
-        heldCellView.y - this.view.radius * 0.72,
-      )
-      .setVisible(true);
-    this.session.onHoldScore?.(score);
-  }
-
-  private heldCellChoiceScore(index: number): BoardHoldScore | undefined {
-    if (!this.session || !this.connection) return undefined;
-    if (!this.session.level.solutionPath[index]) return undefined;
-    return calculateHeldCellScore(
-      this.session.level,
+    const level = this.session.level;
+    const connection = this.connection;
+    const snapshot = connection.completionSnapshot();
+    const availableIndices = level.solutionPath.flatMap((cell, candidateIndex) => (
+      !this.solutionRevealed
+      && this.session?.hiddenCells.has(cellKey(cell))
+      && !connection.isNodeConnected(candidateIndex)
+        ? [candidateIndex]
+        : []
+    ));
+    const visibleIndices = level.solutionPath.flatMap((_, candidateIndex) => (
+      this.solutionRevealed || connection.isVisible(candidateIndex) ? [candidateIndex] : []
+    ));
+    const displayNumbers = level.solutionPath.map((_, candidateIndex) => (
+      connection.displayNumber(candidateIndex)
+    ));
+    const cacheKey = JSON.stringify([
+      level.levelId,
       index,
-      (candidateIndex) => {
-        const candidate = this.session?.level.solutionPath[candidateIndex];
-        return Boolean(
-          candidate
-          && !this.solutionRevealed
-          && this.session?.hiddenCells.has(cellKey(candidate))
-          && this.connection?.isNodeConnected(candidateIndex) !== true
-        );
-      },
-      (candidateIndex) => (
-        this.solutionRevealed
-        || this.connection?.isVisible(candidateIndex) === true
-      ),
-      (candidateIndex) => (
-        this.connection?.displayNumber(candidateIndex) ?? candidateIndex + 1
-      ),
-      (candidateIndex) => (
-        this.connection?.canCompleteAfterStep(index, candidateIndex) !== true
-      ),
-    );
+      availableIndices,
+      visibleIndices,
+      snapshot.fixedPositions,
+      snapshot.requiredEdges,
+      snapshot.solutionOrder,
+    ]);
+    const cached = this.heldScoreRequests.get(cacheKey);
+    if (cached) return cached;
+    const request = calculateCompletionAwareScoreInWorker({
+      cells: level.solutionPath.map((cell) => ({ ...cell })),
+      boardShape: level.boardShape,
+      centerIndex: index,
+      availableIndices,
+      visibleIndices,
+      displayNumbers,
+      fixedPositions: snapshot.fixedPositions,
+      requiredEdges: snapshot.requiredEdges,
+      solutionOrder: snapshot.solutionOrder,
+    }).catch(() => undefined);
+    if (this.heldScoreRequests.size >= 256) {
+      const oldestKey = this.heldScoreRequests.keys().next().value as string | undefined;
+      if (oldestKey !== undefined) this.heldScoreRequests.delete(oldestKey);
+    }
+    this.heldScoreRequests.set(cacheKey, request);
+    return request;
   }
 
-  private stepRewardFeedback(fromIndex: number | undefined, toIndex: number): StepRewardFeedback | undefined {
+  private stepRewardFeedback(fromIndex: number | undefined, toIndex: number): PendingStepRewardFeedback | undefined {
     if (!this.session || !this.connection || fromIndex === undefined) return undefined;
     const target = this.session.level.solutionPath[toIndex];
     if (
@@ -2267,12 +2349,19 @@ export class BoardScene extends Phaser.Scene {
       || !this.session.hiddenCells.has(cellKey(target))
       || this.connection.isVisible(toIndex)
     ) return undefined;
-    const score = this.heldCellChoiceScore(fromIndex);
-    const emoji = score ? stepRewardEmojiForDifficulty(score.badgeScore) : undefined;
-    return emoji ? { index: toIndex, emoji } : undefined;
+    const session = this.session;
+    return {
+      index: toIndex,
+      session,
+      result: this.heldCellChoiceScore(fromIndex).then((score) => {
+        const emoji = score ? stepRewardEmojiForDifficulty(score.badgeScore) : undefined;
+        return emoji ? { index: toIndex, emoji } : undefined;
+      }),
+    };
   }
 
   private hideHeldCellChoiceScore(): void {
+    this.heldScoreDisplayToken += 1;
     this.view?.choiceScore.setVisible(false);
     this.session?.onHoldScore?.(null);
   }
@@ -2304,7 +2393,7 @@ export class BoardScene extends Phaser.Scene {
   private handleConnectionAction(
     action: ConnectionAction,
     playFeedback = true,
-    stepReward?: StepRewardFeedback,
+    stepReward?: PendingStepRewardFeedback,
   ): void {
     if (!this.session || !this.view || action.type === 'ignored') return;
     if (action.type === 'wrong') {
@@ -2332,7 +2421,11 @@ export class BoardScene extends Phaser.Scene {
     this.refreshView();
     const rewardToPlay = this.pendingStepReward;
     this.pendingStepReward = stepReward?.index === action.index ? stepReward : undefined;
-    if (playFeedback && rewardToPlay) this.playStepRewardFeedback(rewardToPlay);
+    if (playFeedback && rewardToPlay) {
+      void rewardToPlay.result.then((feedback) => {
+        if (feedback && this.session === rewardToPlay.session) this.playStepRewardFeedback(feedback);
+      });
+    }
 
     const completionSession = this.session;
     let completionWaitsForLanding = false;
@@ -2366,8 +2459,9 @@ export class BoardScene extends Phaser.Scene {
     if (!cell) return;
 
     const isThumb = feedback.emoji === '👍';
-    const originX = isThumb ? 0.12 : 0.88;
-    const originY = 0.88;
+    const isClap = feedback.emoji === '👏';
+    const originX = isThumb ? 0.12 : 0.5;
+    const originY = isThumb ? 0.88 : 0.5;
     const tapAngle = isThumb ? 17 : -17;
     const radius = this.view.radius;
 
@@ -2375,7 +2469,7 @@ export class BoardScene extends Phaser.Scene {
       fontFamily: 'Segoe UI Emoji, Apple Color Emoji, sans-serif',
       fontSize: `${Math.max(36, radius * 2.1)}px`,
       align: 'center',
-    }).setOrigin(originX, originY).setAlpha(0).setScale(0.42);
+    }).setOrigin(originX, originY).setAlpha(isClap ? 1 : 0).setScale(isClap ? 1.3 : 0.42);
     reward.setPosition(
       cell.x + (originX - 0.5) * reward.width,
       cell.y + (originY - 0.5) * reward.height,
@@ -2386,6 +2480,45 @@ export class BoardScene extends Phaser.Scene {
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
       reward.setAlpha(1).setScale(1);
       this.time.delayedCall(420, () => reward.destroy());
+      return;
+    }
+
+    if (isClap) {
+      this.tweens.add({
+        targets: reward,
+        scaleX: 1,
+        scaleY: 1,
+        duration: 75,
+        ease: 'Quad.easeOut',
+        onComplete: () => {
+          this.tweens.add({
+            targets: reward,
+            alpha: 0,
+            duration: 100,
+            ease: 'Quad.easeIn',
+            onComplete: () => {
+              reward.setAlpha(1).setScale(1.3);
+              this.tweens.add({
+                targets: reward,
+                scaleX: 1,
+                scaleY: 1,
+                duration: 75,
+                ease: 'Quad.easeOut',
+                onComplete: () => {
+                  this.tweens.add({
+                    targets: reward,
+                    alpha: 0,
+                    delay: 120,
+                    duration: 220,
+                    ease: 'Quad.easeIn',
+                    onComplete: () => reward.destroy(),
+                  });
+                },
+              });
+            },
+          });
+        },
+      });
       return;
     }
 

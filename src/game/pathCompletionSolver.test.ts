@@ -34,6 +34,21 @@ describe('path completion solver', () => {
     })).toBeNull();
   });
 
+  it('rejects a directed step immediately when its derived position is already fixed', () => {
+    const solver = new PathCompletionSolver([
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 0, y: 1 },
+      { x: 1, y: 1 },
+    ], BoardShape.Square);
+
+    expect(solver.findCompletion({
+      fixedPositions: new Map([[0, 0], [1, 1], [3, 3]]),
+      requiredEdges: [[0, 2]],
+      directedStep: { from: 0, to: 2, direction: 1 },
+    })).toBeNull();
+  });
+
   it('keeps all previously accepted edges in the completion', () => {
     const solver = new PathCompletionSolver([
       { x: 0, y: 0 },
@@ -65,5 +80,24 @@ describe('path completion solver', () => {
     expect(first).toEqual([0, 2, 1, 3]);
     if (first) first[0] = 99;
     expect(solver.findCompletion(request)).toEqual([0, 2, 1, 3]);
+  });
+
+  it('reuses the last completion when a following request keeps the same path', () => {
+    const solver = new PathCompletionSolver([
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 0, y: 1 },
+      { x: 1, y: 1 },
+    ], BoardShape.Square);
+    expect(solver.findCompletion({
+      fixedPositions: new Map([[0, 0], [3, 3]]),
+      requiredEdges: [[0, 2]],
+      directedStep: { from: 0, to: 2, direction: 1 },
+    })).toEqual([0, 2, 1, 3]);
+    expect(solver.findCompletion({
+      fixedPositions: new Map([[0, 0], [2, 1], [3, 3]]),
+      requiredEdges: [[0, 2], [2, 1]],
+      directedStep: { from: 2, to: 1, direction: 1 },
+    })).toEqual([0, 2, 1, 3]);
   });
 });

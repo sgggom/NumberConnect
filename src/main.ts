@@ -2139,6 +2139,7 @@ class NumberConnectApp {
           : undefined,
       completionGemDestination: usesPlayShowcase ? 'showcase' : 'jar',
       showNextNumber: this.settings.showNextNumber,
+      showDifficultyScore: this.settings.showDifficultyScore,
       soundEnabled: this.settings.soundEnabled,
       inputMode: this.settings.inputMode,
       touchPreviewRingDepth: this.settings.touchPreviewSize === 'large' ? 2 : 1,
