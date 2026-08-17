@@ -6,6 +6,7 @@ import { ScreenRouter, type ScreenName } from './app/ScreenRouter';
 import { query } from './app/dom';
 import { EventBus } from './core/events/EventBus';
 import { BoardScene } from './game/BoardScene';
+import { loadCoinBalance, saveCoinBalance } from './game/coinBalance';
 import {
   createDailyChallengeLevel,
   daysInMonth,
@@ -371,6 +372,9 @@ class NumberConnectApp {
   private readonly primaryActionLabel = query<HTMLElement>('#primary-action-label');
   private readonly events = new EventBus<GameEventMap>();
   private readonly playScreen = query<HTMLElement>('#play-screen');
+  private readonly playCoinFrame = query<HTMLElement>('#play-coin-frame');
+  private readonly playCoinCount = query<HTMLElement>('#play-coin-count');
+  private readonly comboCoinRewardLayer = query<HTMLElement>('#combo-coin-reward-layer');
   private readonly gameHost = query<HTMLElement>('#game-host');
   private readonly playBeadShowcaseArt = query<HTMLElement>('#play-bead-showcase-art');
   private readonly playPuzzleShowcaseArt = query<HTMLElement>('#play-puzzle-showcase-art');
@@ -494,6 +498,9 @@ class NumberConnectApp {
   private mode: GameMode = 'normal';
   private stage = initialEndlessRunState.stage;
   private lives = 3;
+  private coinBalance = loadCoinBalance();
+  private coinRewardCleanupTimer?: number;
+  private coinRewardAnimationFrame?: number;
   private editorPlaytestErrorCount = 0;
   private mode3DifficultyState = loadDynamicDifficultyState();
   private mode4DifficultyState = loadMode4DynamicDifficultyState();
@@ -597,6 +604,7 @@ class NumberConnectApp {
 
   public constructor() {
     applyUiTheme(this.settings.uiTheme);
+    this.renderCoinBalance();
     this.applyPlayPuzzleRotation();
     startLobbyAmbientNetwork();
     this.boardScene.registerArtworkTextures(PLAY_PUZZLE_PATTERNS.map((pattern) => ({
@@ -2166,6 +2174,9 @@ class NumberConnectApp {
         }
         void this.handleComplete();
       },
+      onComboComplete: () => {
+        if (this.playContext !== 'editor-playtest') this.awardComboCoins(5);
+      },
       onNeighborhoodPreview: (preview) => this.handleNeighborhoodPreview(preview),
       onHoldScore: (score) => this.renderHoldScore(score),
     };
@@ -2754,6 +2765,110 @@ class NumberConnectApp {
       this.livesLabel.replaceChildren(...heartSlots);
     }
     this.livesLabel.setAttribute('aria-label', `生命值 ${this.lives}`);
+  }
+
+  private renderCoinBalance(): void {
+    this.playCoinCount.textContent = String(this.coinBalance);
+    this.playCoinFrame.setAttribute('aria-label', `金币 ${this.coinBalance}`);
+  }
+
+  private awardComboCoins(amount: number): void {
+    const reward = Math.max(0, Math.floor(amount));
+    if (reward === 0) return;
+    this.coinBalance = saveCoinBalance(this.coinBalance + reward);
+    this.renderCoinBalance();
+    this.playComboCoinRewardAnimation(reward);
+  }
+
+  private playComboCoinRewardAnimation(amount: number): void {
+    if (this.coinRewardCleanupTimer !== undefined) {
+      window.clearTimeout(this.coinRewardCleanupTimer);
+    }
+    if (this.coinRewardAnimationFrame !== undefined) {
+      window.cancelAnimationFrame(this.coinRewardAnimationFrame);
+      this.coinRewardAnimationFrame = undefined;
+    }
+    this.comboCoinRewardLayer.replaceChildren();
+    this.playCoinFrame.querySelector('.play-coin-gain')?.remove();
+
+    const positions = [
+      ['12.5%', '24px', -154], ['27.5%', '24px', -112], ['42.5%', '24px', -62],
+      ['57.5%', '24px', 68], ['72.5%', '24px', 118], ['87.5%', '24px', 162],
+      ['12.5%', 'calc(100% - 24px)', -168], ['27.5%', 'calc(100% - 24px)', -124], ['42.5%', 'calc(100% - 24px)', -74],
+      ['57.5%', 'calc(100% - 24px)', 78], ['72.5%', 'calc(100% - 24px)', 132], ['87.5%', 'calc(100% - 24px)', 176],
+      ['24px', '12.5%', 126], ['24px', '27.5%', 148], ['24px', '42.5%', 172],
+      ['24px', '57.5%', 138], ['24px', '72.5%', 162], ['24px', '87.5%', 188],
+      ['calc(100% - 24px)', '12.5%', -132], ['calc(100% - 24px)', '27.5%', -156], ['calc(100% - 24px)', '42.5%', -182],
+      ['calc(100% - 24px)', '57.5%', -144], ['calc(100% - 24px)', '72.5%', -170], ['calc(100% - 24px)', '87.5%', -196],
+    ] as const;
+    const standardGravity = 9.80665;
+    const pixelsPerMeter = 100;
+    const gravity = standardGravity * pixelsPerMeter;
+    const coins = positions.map(([left, top, velocityX], index) => {
+      const coin = document.createElement('i');
+      coin.className = 'combo-coin-reward-coin';
+      coin.style.backgroundImage = "url('./ui/coins/coin-spin-strip.png')";
+      coin.style.left = left;
+      coin.style.top = top;
+      const delay = (index % 6) * 30;
+      coin.style.setProperty('--coin-delay', `${delay}ms`);
+      return {
+        coin,
+        delay,
+        velocityX: velocityX * 0.3,
+        velocityY: -128 - (index % 4) * 9,
+        gravity,
+      };
+    });
+    this.comboCoinRewardLayer.replaceChildren(...coins.map(({ coin }) => coin));
+
+    const startedAt = performance.now();
+    const duration = 850;
+    const animateCoins = (timestamp: number): void => {
+      let animationActive = false;
+      coins.forEach(({ coin, delay, velocityX, velocityY, gravity }) => {
+        const elapsed = timestamp - startedAt - delay;
+        if (elapsed < 0) {
+          animationActive = true;
+          return;
+        }
+        if (elapsed > duration) {
+          coin.style.opacity = '0';
+          return;
+        }
+        animationActive = true;
+        const seconds = elapsed / 1000;
+        const x = velocityX * seconds;
+        const y = velocityY * seconds + 0.5 * gravity * seconds * seconds;
+        const fadeIn = Math.min(1, elapsed / 90);
+        const fadeOut = Math.min(1, (duration - elapsed) / 220);
+        const scale = Math.min(1, 0.58 + elapsed / 180);
+        coin.style.opacity = String(Math.max(0, Math.min(fadeIn, fadeOut)));
+        coin.style.transform = `translate(-50%, -50%) translate(${x}px, ${y}px) scale(${scale})`;
+      });
+      if (animationActive) {
+        this.coinRewardAnimationFrame = window.requestAnimationFrame(animateCoins);
+      } else {
+        this.coinRewardAnimationFrame = undefined;
+      }
+    };
+    this.coinRewardAnimationFrame = window.requestAnimationFrame(animateCoins);
+
+    const gain = document.createElement('span');
+    gain.className = 'play-coin-gain';
+    gain.textContent = `+${amount}`;
+    gain.setAttribute('aria-hidden', 'true');
+    this.playCoinFrame.append(gain);
+
+    this.coinRewardCleanupTimer = window.setTimeout(() => {
+      if (this.coinRewardAnimationFrame !== undefined) {
+        window.cancelAnimationFrame(this.coinRewardAnimationFrame);
+        this.coinRewardAnimationFrame = undefined;
+      }
+      this.comboCoinRewardLayer.replaceChildren();
+      gain.remove();
+      this.coinRewardCleanupTimer = undefined;
+    }, 1050);
   }
 
   private renderDailyPlayProgress(): void {

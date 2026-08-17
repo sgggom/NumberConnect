@@ -6,6 +6,7 @@
     <meta name="theme-color" content="#fff4e3" />
     <meta name="description" content="Number Connect — 一笔连接所有数字的浏览器益智游戏" />
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="preload" as="image" href="./ui/coins/coin-spin-strip.png" />
     <title>Number Connect · Puzzle</title>
   </head>
   <body>
@@ -133,6 +134,21 @@
       </section>
 
       <section id="play-screen" class="screen play-screen" hidden aria-label="游戏界面">
+        <div id="connection-combo-edge" class="connection-combo-edge" aria-hidden="true">
+          <i class="connection-combo-segment connection-combo-segment--top-left"></i>
+          <i class="connection-combo-segment connection-combo-segment--top-right"></i>
+          <i class="connection-combo-segment connection-combo-segment--bottom-left"></i>
+          <i class="connection-combo-segment connection-combo-segment--bottom-right"></i>
+          <i class="connection-combo-segment connection-combo-segment--left-top"></i>
+          <i class="connection-combo-segment connection-combo-segment--left-bottom"></i>
+          <i class="connection-combo-segment connection-combo-segment--right-top"></i>
+          <i class="connection-combo-segment connection-combo-segment--right-bottom"></i>
+        </div>
+        <div id="combo-coin-reward-layer" class="combo-coin-reward-layer" aria-hidden="true"></div>
+        <div id="play-coin-frame" class="play-coin-frame" role="status" aria-live="polite" aria-label="金币 0">
+          <img src="./ui/coins/coin.png" alt="" draggable="false" />
+          <strong id="play-coin-count">0</strong>
+        </div>
         <div class="play-top-zone">
           <header class="game-header">
             <div class="game-heading">
