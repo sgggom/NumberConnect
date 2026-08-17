@@ -9,6 +9,7 @@ import {
   parseBatchPlaytestConfigRows,
   runConcurrentBatchTaskPool,
   simulateBatchPlaytestLevel,
+  simulateBatchPlaytestLevelAsync,
 } from './batchPlaytest';
 
 const headers = [
@@ -60,7 +61,7 @@ describe('批量跑关', () => {
       .toThrow('行数与列数必须一致');
   });
 
-  it('生成、模拟并导出带表头的结果', () => {
+  it('生成、模拟并导出带表头的结果', async () => {
     const [config] = parseBatchPlaytestConfigRows([
       headers,
       ['CFG-001', '是', '正方形', 3, 3, 0, 40, 35, 6, 41, 8, 4, 1, 2, '中', 1234, 2, '冒烟'],
@@ -71,6 +72,10 @@ describe('批量跑关', () => {
     expect(generated).not.toBeNull();
     const level = createBatchPlaytestLevel(task, generated!);
     const simulation = simulateBatchPlaytestLevel(task, level);
+    const simulationProgress: number[] = [];
+    const asyncSimulation = await simulateBatchPlaytestLevelAsync(task, level, {
+      onProgress: (completed) => simulationProgress.push(completed),
+    });
     const text = formatBatchPlaytestResultsTsv([{ task, level, simulation }], true);
 
     expect(level.hiddenCells?.filter((cell) => (
@@ -83,6 +88,15 @@ describe('批量跑关', () => {
       '低推理平均错误数', '中推理平均错误数', '高推理平均错误数',
     ]));
     expect(simulation.errorCount).toBe(simulation.averageErrorCountByReasoning.medium);
+    expect(asyncSimulation).toEqual(simulation);
+    expect(simulationProgress).toEqual([1, 2, 3, 4, 5, 6]);
+    const abortController = new AbortController();
+    await expect(simulateBatchPlaytestLevelAsync(task, level, {
+      signal: abortController.signal,
+      onProgress: (completed) => {
+        if (completed === 1) abortController.abort();
+      },
+    })).rejects.toMatchObject({ name: 'AbortError' });
     expect(text).toContain('CFG-001\t冒烟');
     const values = text.split('\r\n')[1].split('\t');
     expect(values).toHaveLength(BATCH_PLAYTEST_RESULT_HEADERS.length);

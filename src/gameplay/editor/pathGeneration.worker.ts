@@ -16,6 +16,7 @@ const workerScope = globalThis as unknown as PathGenerationWorkerScope;
 
 workerScope.addEventListener('message', (event) => {
   if (event.data.type !== 'generate') return;
+  const { jobId } = event.data;
 
   try {
     const result = runEditorAlgorithm(event.data.selection, {
@@ -23,13 +24,15 @@ workerScope.addEventListener('message', (event) => {
       activeCells: new Set(event.data.context.activeCells),
       onProgress: (progress) => workerScope.postMessage({
         type: 'progress',
+        jobId,
         progress,
       }),
     });
-    workerScope.postMessage({ type: 'completed', result });
+    workerScope.postMessage({ type: 'completed', jobId, result });
   } catch (error) {
     workerScope.postMessage({
       type: 'error',
+      jobId,
       message: error instanceof Error ? error.message : '路径生成线程执行失败。',
     });
   }

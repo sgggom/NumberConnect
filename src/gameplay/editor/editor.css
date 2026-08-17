@@ -208,6 +208,25 @@
 .editor-batch-playtest-header input { width: 14px; height: 14px; margin: 0; accent-color: var(--green); }
 .editor-batch-playtest-header:has(input:checked) { color: var(--green); border-color: rgba(88,208,170,.34); background: rgba(88,208,170,.09); }
 .editor-batch-playtest-header:has(input:disabled) { cursor: default; opacity: .55; }
+.editor-batch-playtest-dialog { width: min(430px, calc(100vw - 32px)); max-width: none; margin: auto; padding: 0; border: 0; border-radius: 20px; color: var(--ink); background: transparent; overflow: visible; }
+.editor-batch-playtest-dialog[open] { display: grid; place-items: center; }
+.editor-batch-playtest-dialog::backdrop { background: rgba(5,12,20,.68); backdrop-filter: blur(5px); }
+.editor-batch-playtest-dialog__card { width: 100%; padding: 22px; display: grid; gap: 16px; border: 1px solid rgba(126,201,255,.25); border-radius: 20px; background: #172538; box-shadow: 0 24px 70px rgba(0,0,0,.46); }
+.editor-batch-playtest-dialog__heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
+.editor-batch-playtest-dialog__heading small { color: var(--green); font-size: .68rem; font-weight: 900; letter-spacing: .08em; }
+.editor-batch-playtest-dialog__heading h3 { margin: 4px 0 0; font-size: 1.08rem; }
+.editor-batch-playtest-dialog__heading strong { color: var(--gold); font-size: 1.35rem; font-variant-numeric: tabular-nums; }
+.editor-batch-playtest-dialog progress { width: 100%; height: 12px; overflow: hidden; border: 0; border-radius: 999px; background: rgba(255,255,255,.08); }
+.editor-batch-playtest-dialog progress::-webkit-progress-bar { border-radius: 999px; background: rgba(255,255,255,.08); }
+.editor-batch-playtest-dialog progress::-webkit-progress-value { border-radius: 999px; background: linear-gradient(90deg, #2f9e83, #58d0aa); }
+.editor-batch-playtest-dialog progress::-moz-progress-bar { border-radius: 999px; background: linear-gradient(90deg, #2f9e83, #58d0aa); }
+.editor-batch-playtest-dialog__stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.editor-batch-playtest-dialog__stats div { padding: 10px; display: grid; gap: 4px; border-radius: 10px; background: rgba(255,255,255,.055); text-align: center; }
+.editor-batch-playtest-dialog__stats span { color: var(--muted); font-size: .65rem; font-weight: 800; }
+.editor-batch-playtest-dialog__stats b { font-size: .86rem; font-variant-numeric: tabular-nums; }
+.editor-batch-playtest-dialog__detail { min-height: 42px; margin: 0; color: var(--muted); font-size: .72rem; line-height: 1.55; }
+.editor-batch-playtest-dialog #editor-batch-playtest-cancel { width: 100%; border-color: rgba(240,184,75,.36); color: var(--gold); background: rgba(240,184,75,.1); }
+.editor-batch-playtest-dialog #editor-batch-playtest-cancel:disabled { cursor: wait; opacity: .6; }
 .editor-level-list { min-height: 0; display: flex; flex-direction: column; gap: 7px; overflow-y: auto; overscroll-behavior: contain; padding-right: 2px; }
 .editor-level-item { min-height: 54px; padding: 8px 8px 8px 11px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; border: 1px solid rgba(255,255,255,.09); border-radius: 11px; background: rgba(255,255,255,.045); cursor: pointer; transition: background .16s ease, border-color .16s ease, transform .16s ease; }
 .editor-level-item:focus-visible { border-color: rgba(126,201,255,.45); background: rgba(126,201,255,.09); outline: 0; transform: translateY(-1px); }
