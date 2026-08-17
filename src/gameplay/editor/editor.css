@@ -201,8 +201,13 @@
 .editor-level-count { flex: 0 0 auto; padding: 5px 8px; border-radius: 999px; color: var(--green); background: rgba(88,208,170,.1); font-size: .7rem; font-weight: 900; }
 .editor-level-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 .editor-level-actions .button { min-width: 0; padding: 9px 7px; font-size: .72rem; }
-.editor-level-actions .editor-batch-playtest { grid-column: 1 / -1; border-color: rgba(88,208,170,.34); color: var(--green); background: rgba(88,208,170,.09); }
+.editor-batch-playtest-row { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: stretch; gap: 6px; }
+.editor-level-actions .editor-batch-playtest { border-color: rgba(88,208,170,.34); color: var(--green); background: rgba(88,208,170,.09); }
 .editor-level-actions .editor-batch-playtest.is-running { color: var(--gold); border-color: rgba(240,184,75,.45); background: rgba(240,184,75,.11); cursor: pointer; }
+.editor-batch-playtest-header { min-width: 82px; padding: 0 9px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid rgba(255,255,255,.09); border-radius: 8px; color: var(--muted); background: rgba(255,255,255,.045); font-size: .66rem; font-weight: 800; cursor: pointer; user-select: none; }
+.editor-batch-playtest-header input { width: 14px; height: 14px; margin: 0; accent-color: var(--green); }
+.editor-batch-playtest-header:has(input:checked) { color: var(--green); border-color: rgba(88,208,170,.34); background: rgba(88,208,170,.09); }
+.editor-batch-playtest-header:has(input:disabled) { cursor: default; opacity: .55; }
 .editor-level-list { min-height: 0; display: flex; flex-direction: column; gap: 7px; overflow-y: auto; overscroll-behavior: contain; padding-right: 2px; }
 .editor-level-item { min-height: 54px; padding: 8px 8px 8px 11px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; border: 1px solid rgba(255,255,255,.09); border-radius: 11px; background: rgba(255,255,255,.045); cursor: pointer; transition: background .16s ease, border-color .16s ease, transform .16s ease; }
 .editor-level-item:focus-visible { border-color: rgba(126,201,255,.45); background: rgba(126,201,255,.09); outline: 0; transform: translateY(-1px); }

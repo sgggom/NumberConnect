@@ -68,6 +68,8 @@ describe('level editor view layout', () => {
     const markup = renderEditorMarkup();
 
     expect(markup).toContain('id="editor-batch-playtest"');
+    expect(markup).toContain('id="editor-batch-playtest-header" type="checkbox"');
+    expect(markup).not.toContain('id="editor-batch-playtest-header" type="checkbox" checked');
     expect(markup).toContain('id="editor-batch-playtest-file"');
     expect(markup).toContain('accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"');
   });
