@@ -201,7 +201,8 @@
 .editor-level-count { flex: 0 0 auto; padding: 5px 8px; border-radius: 999px; color: var(--green); background: rgba(88,208,170,.1); font-size: .7rem; font-weight: 900; }
 .editor-level-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 .editor-level-actions .button { min-width: 0; padding: 9px 7px; font-size: .72rem; }
-#editor-level-batch.is-loading::before { content: ""; width: 12px; height: 12px; margin-right: 6px; display: inline-block; vertical-align: -2px; border: 2px solid rgba(255,255,255,.3); border-top-color: currentColor; border-radius: 50%; animation: editor-image-spin .75s linear infinite; }
+.editor-level-actions .editor-batch-playtest { grid-column: 1 / -1; border-color: rgba(88,208,170,.34); color: var(--green); background: rgba(88,208,170,.09); }
+.editor-level-actions .editor-batch-playtest.is-running { color: var(--gold); border-color: rgba(240,184,75,.45); background: rgba(240,184,75,.11); cursor: pointer; }
 .editor-level-list { min-height: 0; display: flex; flex-direction: column; gap: 7px; overflow-y: auto; overscroll-behavior: contain; padding-right: 2px; }
 .editor-level-item { min-height: 54px; padding: 8px 8px 8px 11px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; border: 1px solid rgba(255,255,255,.09); border-radius: 11px; background: rgba(255,255,255,.045); cursor: pointer; transition: background .16s ease, border-color .16s ease, transform .16s ease; }
 .editor-level-item:focus-visible { border-color: rgba(126,201,255,.45); background: rgba(126,201,255,.09); outline: 0; transform: translateY(-1px); }
@@ -223,26 +224,8 @@
 .editor-screen.is-path-calculating .editor-level-panel,
 .editor-screen.is-image-recognizing .editor-grid,
 .editor-screen.is-image-recognizing .editor-sidebar,
-.editor-screen.is-image-recognizing .editor-level-panel,
-.editor-screen.is-batch-generating .editor-layout { pointer-events: none; }
+.editor-screen.is-image-recognizing .editor-level-panel { pointer-events: none; }
 
-.editor-batch-dialog { width: min(520px, calc(100vw - 32px)); padding: 0; overflow: hidden; border: 1px solid rgba(126,201,255,.28); border-radius: 20px; color: var(--ink); background: #111c28; box-shadow: 0 28px 90px rgba(0,0,0,.58), 0 0 0 1px rgba(88,208,170,.08); }
-.editor-batch-dialog::backdrop { background: rgba(1,6,12,.76); backdrop-filter: blur(5px); }
-.editor-batch-dialog__header { padding: 24px 24px 18px; display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; border-bottom: 1px solid rgba(126,201,255,.12); background: linear-gradient(135deg, rgba(88,208,170,.12), rgba(126,201,255,.055)); }
-.editor-batch-dialog__eyebrow { display: block; margin-bottom: 5px; color: var(--green); font-size: .65rem; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
-.editor-batch-dialog__header h3 { margin: 0; color: var(--ink); font-size: 1.18rem; }
-.editor-batch-dialog__percent { flex: 0 0 auto; min-width: 58px; padding: 7px 10px; border: 1px solid rgba(88,208,170,.22); border-radius: 999px; color: var(--green); background: rgba(88,208,170,.08); text-align: center; font-size: .78rem; font-weight: 900; font-variant-numeric: tabular-nums; }
-.editor-batch-dialog__progress { padding: 20px 24px 0; }
-.editor-batch-dialog progress { width: 100%; height: 12px; overflow: hidden; border: 0; border-radius: 999px; background: rgba(255,255,255,.08); appearance: none; }
-.editor-batch-dialog progress::-webkit-progress-bar { border-radius: 999px; background: rgba(255,255,255,.08); }
-.editor-batch-dialog progress::-webkit-progress-value { border-radius: 999px; background: linear-gradient(90deg, #2f9e83, #58d0aa); box-shadow: 0 0 12px rgba(88,208,170,.36); transition: width .18s ease; }
-.editor-batch-dialog progress::-moz-progress-bar { border-radius: 999px; background: linear-gradient(90deg, #2f9e83, #58d0aa); }
-.editor-batch-dialog__message { min-height: 24px; margin: 14px 24px 0; color: var(--ink); font-size: .82rem; font-weight: 800; line-height: 1.55; }
-.editor-batch-dialog__summary { min-height: 20px; margin: 4px 24px 0; color: var(--muted); font-size: .7rem; font-weight: 700; line-height: 1.5; }
-.editor-batch-dialog__message.is-error { color: #ff9eaa; }
-.editor-batch-dialog__actions { padding: 20px 24px 24px; display: grid; grid-template-columns: minmax(0, .75fr) minmax(0, 1.25fr); gap: 10px; }
-.editor-batch-dialog__actions .button { width: 100%; }
-.editor-batch-dialog__actions .button.is-loading::before { content: ""; width: 14px; height: 14px; margin-right: 7px; display: inline-block; vertical-align: -2px; border: 2px solid rgba(255,255,255,.3); border-top-color: currentColor; border-radius: 50%; animation: editor-image-spin .75s linear infinite; }
 
 @keyframes editor-image-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {

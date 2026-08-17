@@ -1,5 +1,5 @@
 import { BoardShape, cellKey, type LevelData } from '../../game/types';
-import { selectAlgorithm8HiddenLayout } from '../editor/algorithms/algorithm8';
+import { selectAlgorithm1HiddenLayout } from '../editor/algorithms/algorithm1';
 import type { EditorShape } from '../editor/types';
 
 export interface Mode5HiddenLayoutConfig {
@@ -30,8 +30,8 @@ export const resolveMode5DifficultyConfig = (
   difficulty: number,
 ): Mode5HiddenLayoutConfig => MODE5_DIFFICULTY_CONFIGS[normalizeMode5Difficulty(difficulty) - 1];
 
-/** 算法8种子与玩法3/4分离，玩法5可以独立修改生成结果。 */
-export const mode5Algorithm8Seed = (level: LevelData, difficulty: number): number => (
+/** 算法1种子与玩法3/4分离，玩法5可以独立修改生成结果。 */
+export const mode5Algorithm1Seed = (level: LevelData, difficulty: number): number => (
   Math.imul(level.levelId + 1, 130363)
   ^ Math.imul(level.rows + 1, 92837111)
   ^ Math.imul(level.columns + 1, 689287499)
@@ -40,8 +40,8 @@ export const mode5Algorithm8Seed = (level: LevelData, difficulty: number): numbe
   ^ 0x27d4eb2f
 ) | 0;
 
-/** @deprecated 使用 mode5Algorithm8Seed；保留旧导出以兼容现有调用。 */
-export const mode5RandomHiddenSeed = (level: LevelData): number => mode5Algorithm8Seed(level, 1);
+/** @deprecated 使用 mode5Algorithm1Seed；保留旧导出以兼容现有调用。 */
+export const mode5RandomHiddenSeed = (level: LevelData): number => mode5Algorithm1Seed(level, 1);
 
 const mode5EditorShape = (shape: BoardShape): EditorShape => {
   if (shape === BoardShape.Hex) return 'hex';
@@ -82,25 +82,23 @@ export const createMode5HiddenCells = (
   const normalizedDifficulty = normalizeMode5Difficulty(difficulty);
   const config = resolveMode5DifficultyConfig(difficulty);
   const hiddenPercent = mode5HiddenPercentForLevel(level, config.hiddenPercentRange);
-  const hiddenIndices = selectAlgorithm8HiddenLayout(
+  const hiddenIndices = selectAlgorithm1HiddenLayout(
     level.solutionPath,
     mode5EditorShape(level.boardShape),
     hiddenPercent,
     normalizedDifficulty,
-    mode5Algorithm8Seed(level, normalizedDifficulty),
+    mode5Algorithm1Seed(level, normalizedDifficulty),
     {
       maxVisibleRun: config.maxVisibleRun,
       maxHiddenRun: config.maxHiddenRun,
-      firstNumberWindow: 4,
-      maxHiddenInFirstWindow: 1,
-      // 配置表给出的占比就是最终占比；难度只控制算法8的布局结构。
+      // 配置表给出的占比就是最终占比；难度只控制算法1的布局结构。
       addTargetDifficultyPercent: false,
     },
   );
   return new Set([...hiddenIndices].map((index) => cellKey(level.solutionPath[index])));
 };
 
-/** 第一大关直接采用配表正负数定义的显隐；后续大关才交给算法8。 */
+/** 第一大关直接采用配表正负数定义的显隐；后续大关才交给算法1。 */
 export const createMode5StageHiddenCells = (
   level: LevelData,
   difficulty: number,

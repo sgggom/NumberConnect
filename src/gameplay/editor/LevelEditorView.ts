@@ -1,4 +1,4 @@
-const LEVEL_EDITOR_VIEW_VERSION = '34';
+const LEVEL_EDITOR_VIEW_VERSION = '35';
 
 export const mountLevelEditorView = (host: HTMLElement): void => {
   const hasCurrentView = host.dataset.editorViewVersion === LEVEL_EDITOR_VIEW_VERSION
@@ -88,14 +88,14 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
           </div>
           <div class="editor-level-actions">
             <button id="editor-level-add" class="button button--primary button--small" disabled>添加当前</button>
-            <button id="editor-level-batch" class="button button--secondary button--small" type="button" title="精简版仅保留算法 8" hidden>批量生成</button>
             <button id="editor-level-import" class="button button--secondary button--small">读取 JSON</button>
             <button id="editor-level-export" class="button button--secondary button--small" title="按关卡 ID 导出仅包含 data 的 JSON 文本" disabled>导出 TXT</button>
             <button id="editor-level-clear" class="button button--secondary button--small" type="button" title="清空关卡列表" disabled>清空列表</button>
+            <button id="editor-batch-playtest" class="button button--secondary button--small editor-batch-playtest" type="button" title="读取批量跑关配置模板并导出模拟结果">批量跑关</button>
           </div>
           <div id="editor-level-list" class="editor-level-list"></div>
-          <input id="editor-level-batch-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
           <input id="editor-level-file" type="file" accept=".json,application/json" hidden>
+          <input id="editor-batch-playtest-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
         </aside>
       </div>
 
@@ -119,7 +119,7 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
           </div>
           <label class="editor-algorithm-select" aria-label="算法">
             <select id="editor-algorithm">
-              <option value="algorithm-8" selected>算法8</option>
+              <option value="algorithm-1" selected>算法1</option>
             </select>
           </label>
         </div>
@@ -209,24 +209,6 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
 
     </div>
 
-    <dialog id="editor-batch-progress-dialog" class="editor-batch-dialog" aria-labelledby="editor-batch-dialog-title" aria-describedby="editor-batch-dialog-message">
-      <div class="editor-batch-dialog__header">
-        <div>
-          <span class="editor-batch-dialog__eyebrow">算法 4 · Excel 批量生成</span>
-          <h3 id="editor-batch-dialog-title">正在读取配置</h3>
-        </div>
-        <span id="editor-batch-progress-percent" class="editor-batch-dialog__percent">0%</span>
-      </div>
-      <div class="editor-batch-dialog__progress">
-        <progress id="editor-batch-progress" max="1"></progress>
-      </div>
-      <p id="editor-batch-dialog-message" class="editor-batch-dialog__message" aria-live="polite">正在准备批量生成…</p>
-      <p id="editor-batch-dialog-summary" class="editor-batch-dialog__summary"></p>
-      <div class="editor-batch-dialog__actions">
-        <button id="editor-batch-dialog-close" class="button button--secondary" type="button" disabled>关闭</button>
-        <button id="editor-batch-dialog-download" class="button button--primary" type="button" disabled>下载本次 TXT</button>
-      </div>
-    </dialog>
 
   `;
 };

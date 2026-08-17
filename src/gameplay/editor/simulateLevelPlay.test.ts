@@ -250,7 +250,7 @@ describe('editor level play simulation', () => {
       columns: 6,
       cellCount: 36,
       levelJson: '{"levelId":4,"levelData":[[1,-2],[0,3]]}',
-      algorithm: '算法2',
+      algorithm: '算法1',
       metrics: {
         rightAngleTurns: 8,
         acuteAngleTurns: 3,
@@ -279,7 +279,7 @@ describe('editor level play simulation', () => {
       '6',
       '6',
       '36',
-      '算法2',
+      '算法1',
       '14',
       '38.9%',
       '19',

@@ -50,12 +50,12 @@ describe('endless difficulty', () => {
     expect(first.maxHiddenRun).toBeLessThan(late.maxHiddenRun);
   });
 
-  it.each([1, 7, 20])('generates endless stage %i with algorithm 2 and its difficulty parameters', (stage) => {
+  it.each([1, 7, 20])('generates endless stage %i with its dedicated varied-path parameters', (stage) => {
     const profile = getEndlessStageSettings(stage);
     const level = generateEndlessLevel(profile, 24680 + stage);
 
     expect(level.algorithm).toMatchObject({
-      id: 'algorithm-2',
+      id: 'endless-varied-path',
       parameters: {
         targetCrossings: profile.targetCrossings,
         hiddenPercent: profile.hiddenPercent,

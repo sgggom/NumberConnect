@@ -36,7 +36,7 @@ const makeLevel = (): LevelData => {
   };
 };
 
-describe('玩法3 Algorithm 8 隐藏布局', () => {
+describe('玩法3算法1隐藏布局', () => {
   it('忽略关卡原隐藏格，并按固定[20,40]配置重新计算', () => {
     const level = makeLevel();
     const hidden = createMode3HiddenCells(level, 6);
@@ -63,7 +63,19 @@ describe('玩法3 Algorithm 8 隐藏布局', () => {
     expect(first.has(cellKey(level.solutionPath.at(-1)!))).toBe(false);
   });
 
-  it('动态难度只改变算法8难度参数，不改变玩法3隐藏占比', () => {
+  it('数字1到4最多隐藏1个', () => {
+    const level = makeLevel();
+    for (let difficulty = 1; difficulty <= 10; difficulty += 1) {
+      const hidden = createMode3HiddenCells(level, difficulty);
+      const firstFourHiddenCount = level.solutionPath.slice(0, 4).filter(
+        (cell) => hidden.has(cellKey(cell)),
+      ).length;
+
+      expect(firstFourHiddenCount).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('动态难度只改变算法1难度参数，不改变玩法3隐藏占比', () => {
     const level = makeLevel();
     const easy = createMode3HiddenCells(level, 1);
     const hard = createMode3HiddenCells(level, 10);
@@ -71,7 +83,7 @@ describe('玩法3 Algorithm 8 隐藏布局', () => {
     expect(hard.size).toBe(easy.size);
   });
 
-  it('把棋盘类型映射到算法8空间拓扑', () => {
+  it('把棋盘类型映射到算法1空间拓扑', () => {
     expect(mode3EditorShape(BoardShape.Square)).toBe('square');
     expect(mode3EditorShape(BoardShape.Level)).toBe('square');
     expect(mode3EditorShape(BoardShape.Diamond)).toBe('diamond');

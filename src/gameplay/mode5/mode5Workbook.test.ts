@@ -23,7 +23,7 @@ describe('玩法5 Excel 关卡配表', () => {
       result.levels[1].solutionPath[6],
     ]);
     expect(result.levels[3].algorithm).toBeUndefined();
-    expect(result.levels[4].algorithm?.id).toBe('algorithm-8');
+    expect(result.levels[4].algorithm?.id).toBe('algorithm-1');
   });
 
   it('按关卡 sheet 的顺序解析阶段并查找阵型数据', () => {
@@ -56,7 +56,7 @@ describe('玩法5 Excel 关卡配表', () => {
     expect(result.levels[1]).toMatchObject({ levelId: 2, rows: 1, columns: 4 });
     expect(result.levels[0].algorithm).toBeUndefined();
     expect(result.levels[1].algorithm).toBeUndefined();
-    expect(result.levels[2].algorithm?.id).toBe('algorithm-8');
+    expect(result.levels[2].algorithm?.id).toBe('algorithm-1');
   });
 
   it('拒绝不存在的阵型引用', () => {

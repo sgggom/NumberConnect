@@ -23,10 +23,10 @@ describe('level editor preferences', () => {
       rectangleColumns: 17,
       rectangleRows: 11.8,
       algorithm: {
-        id: 'algorithm-5',
+        id: 'algorithm-8',
         parameters: {
           turnProbability: 73,
-          earlyHiddenProbability: 61,
+          hiddenPercent: 61,
           maxHiddenRun: 99,
         },
       },
@@ -40,11 +40,11 @@ describe('level editor preferences', () => {
       rectangleColumns: 17,
       rectangleRows: 11,
       algorithm: {
-        id: 'algorithm-5',
+        id: 'algorithm-1',
         parameters: {
           turnProbability: 73,
-          earlyHiddenProbability: 61,
-          maxHiddenRun: 8,
+          hiddenPercent: 61,
+          maxHiddenRun: 99,
         },
       },
     });
@@ -57,7 +57,7 @@ describe('level editor preferences', () => {
     const setItem = vi.fn((key: string, value: string) => values.set(key, value));
     vi.stubGlobal('window', { localStorage: { getItem, setItem } });
     const model = new LevelEditorModel();
-    model.setAlgorithm('algorithm-4');
+    model.setAlgorithm('algorithm-1');
     const preferences = {
       configuration: model.configuration(),
       simulationRunCount: 24,
@@ -154,7 +154,7 @@ describe('level editor preferences', () => {
             rectangleColumns: 999,
             rectangleRows: 9,
             algorithm: {
-              id: 'algorithm-5',
+              id: 'algorithm-8',
               parameters: { turnProbability: 999 },
             },
           },
@@ -182,7 +182,7 @@ describe('level editor preferences', () => {
           rectangleColumns: 20,
           rectangleRows: 9,
           algorithm: {
-            id: 'algorithm-5',
+            id: 'algorithm-1',
             parameters: { turnProbability: 100 },
           },
         },

@@ -82,7 +82,7 @@ describe('single path generation worker', () => {
     const result = await startEditorPathGeneration(
       {
         ...generationRequest(),
-        selection: createEditorAlgorithm('algorithm-2'),
+        selection: createEditorAlgorithm('algorithm-1'),
       },
       (value) => progress.push(value),
     ).promise;

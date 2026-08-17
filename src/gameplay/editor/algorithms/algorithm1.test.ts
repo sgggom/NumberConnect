@@ -1,19 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import {
-  ALGORITHM8_MAX_HIDDEN_COMPONENT_RATIO,
-  algorithm8AdjacentExpansionCount,
-  algorithm8AdjacentExpansionProbability,
-  algorithm8BaseSelectionCount,
-  algorithm8EffectiveHiddenPercent,
-  calculateAlgorithm8ExperienceMetrics,
-  calculateAlgorithm8ExperienceValue,
-  calculateAlgorithm8SpatialLoss,
-  calculateAlgorithm8SpatialMetrics,
-  calculateAlgorithm8DifficultyLoss,
-  createAlgorithm8Selection,
-  runAlgorithm8,
-  selectAlgorithm8HiddenLayout,
-} from './algorithm8';
+  ALGORITHM1_MAX_HIDDEN_COMPONENT_RATIO,
+  algorithm1AdjacentExpansionCount,
+  algorithm1AdjacentExpansionProbability,
+  algorithm1BaseSelectionCount,
+  algorithm1EffectiveHiddenPercent,
+  calculateAlgorithm1ExperienceMetrics,
+  calculateAlgorithm1ExperienceValue,
+  calculateAlgorithm1SpatialLoss,
+  calculateAlgorithm1SpatialMetrics,
+  calculateAlgorithm1DifficultyLoss,
+  createAlgorithm1Selection,
+  runAlgorithm1,
+  selectAlgorithm1HiddenLayout,
+} from './algorithm1';
 import { calculateEditorLevelMetrics } from '../levelMetrics';
 import {
   editorAlgorithmLabel,
@@ -21,7 +21,7 @@ import {
   resolveEditorAlgorithmForShape,
 } from './registry';
 
-describe('editor algorithm 8 spatial hidden selection', () => {
+describe('editor algorithm 1 spatial hidden selection', () => {
   it('strongly prefers an interleaved layout over two solid regions', () => {
     const path = Array.from({ length: 16 }, (_, index) => ({
       x: index % 4,
@@ -31,19 +31,19 @@ describe('editor algorithm 8 spatial hidden selection', () => {
     const interleaved = new Set(path.flatMap((cell, index) => (
       (cell.x + cell.y) % 2 === 0 ? [index] : []
     )));
-    const clusteredMetrics = calculateAlgorithm8SpatialMetrics(path, clustered, 'square');
-    const interleavedMetrics = calculateAlgorithm8SpatialMetrics(path, interleaved, 'square');
+    const clusteredMetrics = calculateAlgorithm1SpatialMetrics(path, clustered, 'square');
+    const interleavedMetrics = calculateAlgorithm1SpatialMetrics(path, interleaved, 'square');
 
     expect(clusteredMetrics.largestHiddenComponentRatio).toBe(1);
     expect(clusteredMetrics.largestVisibleComponentRatio).toBe(1);
     expect(interleavedMetrics.mixedBoundaryRatio).toBe(1);
-    expect(calculateAlgorithm8SpatialLoss(interleavedMetrics))
-      .toBeLessThan(calculateAlgorithm8SpatialLoss(clusteredMetrics));
+    expect(calculateAlgorithm1SpatialLoss(interleavedMetrics))
+      .toBeLessThan(calculateAlgorithm1SpatialLoss(clusteredMetrics));
   });
 
   it('normalizes, labels, and resolves its independent parameters', () => {
     const normalized = normalizeEditorAlgorithm({
-      id: 'algorithm-8',
+      id: 'algorithm-1',
       parameters: {
         targetCrossings: 120,
         turnProbability: -1,
@@ -55,7 +55,7 @@ describe('editor algorithm 8 spatial hidden selection', () => {
     });
 
     expect(normalized).toMatchObject({
-      id: 'algorithm-8',
+      id: 'algorithm-1',
       parameters: {
         targetCrossings: 99,
         turnProbability: 0,
@@ -65,13 +65,13 @@ describe('editor algorithm 8 spatial hidden selection', () => {
         maxHiddenRun: 1,
       },
     });
-    expect(editorAlgorithmLabel('algorithm-8')).toBe('算法8');
-    expect(resolveEditorAlgorithmForShape(createAlgorithm8Selection(), 'hex'))
-      .toMatchObject({ id: 'algorithm-8', parameters: { targetCrossings: 0 } });
+    expect(editorAlgorithmLabel('algorithm-1')).toBe('算法1');
+    expect(resolveEditorAlgorithmForShape(createAlgorithm1Selection(), 'hex'))
+      .toMatchObject({ id: 'algorithm-1', parameters: { targetCrossings: 0 } });
   });
 
   it('generates a deterministic optimized layout inside the configured limits', () => {
-    const selection = createAlgorithm8Selection();
+    const selection = createAlgorithm1Selection();
     selection.parameters = {
       ...selection.parameters,
       targetCrossings: 0,
@@ -89,15 +89,15 @@ describe('editor algorithm 8 spatial hidden selection', () => {
       searchMode: 'quality' as const,
     };
 
-    const pathOnly = runAlgorithm8({ ...context, generationPhase: 'path' }, selection);
+    const pathOnly = runAlgorithm1({ ...context, generationPhase: 'path' }, selection);
     expect(pathOnly?.hiddenCells).toBeUndefined();
     const hiddenContext = {
       ...context,
       generationPhase: 'hidden' as const,
       fixedPath: pathOnly?.path,
     };
-    const first = runAlgorithm8(hiddenContext, selection);
-    const second = runAlgorithm8(hiddenContext, selection);
+    const first = runAlgorithm1(hiddenContext, selection);
+    const second = runAlgorithm1(hiddenContext, selection);
     expect(first).toEqual(second);
     expect(first?.path).toEqual(pathOnly?.path);
     expect(first?.path).toHaveLength(9);
@@ -106,15 +106,29 @@ describe('editor algorithm 8 spatial hidden selection', () => {
     expect(first?.hiddenCells).not.toContainEqual(first?.path[8]);
   });
 
-  it('adds exactly one distinct hidden number per requested pass', () => {
+  it('adds one distinct hidden number per pass up to the first-four limit', () => {
     const path = Array.from({ length: 9 }, (_, index) => ({
       x: index % 3,
       y: Math.floor(index / 3),
     }));
 
-    expect(selectAlgorithm8HiddenLayout(path, 'square', 0, 3, 8).size).toBe(0);
-    expect(selectAlgorithm8HiddenLayout(path, 'square', 33, 3, 8).size).toBe(3);
-    expect(selectAlgorithm8HiddenLayout(path, 'square', 100, 3, 8).size).toBe(7);
+    expect(selectAlgorithm1HiddenLayout(path, 'square', 0, 3, 8).size).toBe(0);
+    expect(selectAlgorithm1HiddenLayout(path, 'square', 33, 3, 8).size).toBe(3);
+    const fullyRequested = selectAlgorithm1HiddenLayout(path, 'square', 100, 3, 8);
+    expect(fullyRequested.size).toBe(5);
+    expect([...fullyRequested].filter((index) => index < 4)).toHaveLength(1);
+  });
+
+  it('hides at most one of numbers 1 through 4 for every seed', () => {
+    const path = Array.from({ length: 16 }, (_, index) => ({
+      x: index % 4,
+      y: Math.floor(index / 4),
+    }));
+
+    for (let seed = 0; seed < 50; seed += 1) {
+      const hidden = selectAlgorithm1HiddenLayout(path, 'square', 100, 10, seed);
+      expect([...hidden].filter((index) => index < 4)).toHaveLength(1);
+    }
   });
 
   it('adds the difficulty level as extra hidden percentage points', () => {
@@ -124,12 +138,12 @@ describe('editor algorithm 8 spatial hidden selection', () => {
       return { x: y % 2 === 0 ? offset : 7 - offset, y };
     });
 
-    expect(algorithm8EffectiveHiddenPercent(35, 1)).toBe(36);
-    expect(algorithm8EffectiveHiddenPercent(35, 6)).toBe(41);
-    expect(algorithm8EffectiveHiddenPercent(35, 10)).toBe(45);
-    expect(algorithm8EffectiveHiddenPercent(95, 10)).toBe(100);
-    expect(selectAlgorithm8HiddenLayout(path, 'square', 35, 1, 108).size).toBe(23);
-    expect(selectAlgorithm8HiddenLayout(path, 'square', 35, 10, 108).size).toBe(29);
+    expect(algorithm1EffectiveHiddenPercent(35, 1)).toBe(36);
+    expect(algorithm1EffectiveHiddenPercent(35, 6)).toBe(41);
+    expect(algorithm1EffectiveHiddenPercent(35, 10)).toBe(45);
+    expect(algorithm1EffectiveHiddenPercent(95, 10)).toBe(100);
+    expect(selectAlgorithm1HiddenLayout(path, 'square', 35, 1, 108).size).toBe(23);
+    expect(selectAlgorithm1HiddenLayout(path, 'square', 35, 10, 108).size).toBe(29);
   });
 
   it('can keep the requested percentage final while difficulty only shapes the layout', () => {
@@ -139,10 +153,10 @@ describe('editor algorithm 8 spatial hidden selection', () => {
       return { x: y % 2 === 0 ? offset : 7 - offset, y };
     });
 
-    const easy = selectAlgorithm8HiddenLayout(path, 'square', 35, 1, 118, {
+    const easy = selectAlgorithm1HiddenLayout(path, 'square', 35, 1, 118, {
       addTargetDifficultyPercent: false,
     });
-    const hard = selectAlgorithm8HiddenLayout(path, 'square', 35, 10, 118, {
+    const hard = selectAlgorithm1HiddenLayout(path, 'square', 35, 10, 118, {
       addTargetDifficultyPercent: false,
     });
 
@@ -156,7 +170,7 @@ describe('editor algorithm 8 spatial hidden selection', () => {
       const offset = index % 8;
       return { x: y % 2 === 0 ? offset : 7 - offset, y };
     });
-    const hidden = selectAlgorithm8HiddenLayout(path, 'square', 35, 6, 208, {
+    const hidden = selectAlgorithm1HiddenLayout(path, 'square', 35, 6, 208, {
       maxVisibleRun: 5,
       maxHiddenRun: 2,
     });
@@ -177,16 +191,16 @@ describe('editor algorithm 8 spatial hidden selection', () => {
     const easy = { averageDifficulty: 0.03, hardStepRatio: 0.02, peakDifficulty: 0.4 };
     const hard = { averageDifficulty: 0.9, hardStepRatio: 0.48, peakDifficulty: 4 };
 
-    expect(calculateAlgorithm8DifficultyLoss(easy, 1))
-      .toBeLessThan(calculateAlgorithm8DifficultyLoss(hard, 1));
-    expect(calculateAlgorithm8DifficultyLoss(hard, 10))
-      .toBeLessThan(calculateAlgorithm8DifficultyLoss(easy, 10));
+    expect(calculateAlgorithm1DifficultyLoss(easy, 1))
+      .toBeLessThan(calculateAlgorithm1DifficultyLoss(hard, 1));
+    expect(calculateAlgorithm1DifficultyLoss(hard, 10))
+      .toBeLessThan(calculateAlgorithm1DifficultyLoss(easy, 10));
   });
 
   it('increases the probability of expanding beside base hidden cells with difficulty', () => {
     const probabilities = Array.from(
       { length: 10 },
-      (_, index) => algorithm8AdjacentExpansionProbability(index + 1),
+      (_, index) => algorithm1AdjacentExpansionProbability(index + 1),
     );
 
     expect(probabilities[0]).toBe(0);
@@ -197,7 +211,7 @@ describe('editor algorithm 8 spatial hidden selection', () => {
 
     const counts = Array.from(
       { length: 10 },
-      (_, index) => algorithm8AdjacentExpansionCount(20, index + 1),
+      (_, index) => algorithm1AdjacentExpansionCount(20, index + 1),
     );
     expect(counts[0]).toBe(0);
     expect(counts[9]).toBe(17);
@@ -207,12 +221,12 @@ describe('editor algorithm 8 spatial hidden selection', () => {
   });
 
   it('uses the first ten percent of hidden selections as base cells', () => {
-    expect(algorithm8BaseSelectionCount(0)).toBe(0);
-    expect(algorithm8BaseSelectionCount(1)).toBe(1);
-    expect(algorithm8BaseSelectionCount(10)).toBe(1);
-    expect(algorithm8BaseSelectionCount(11)).toBe(2);
-    expect(algorithm8BaseSelectionCount(64)).toBe(7);
-    expect(algorithm8BaseSelectionCount(100)).toBe(10);
+    expect(algorithm1BaseSelectionCount(0)).toBe(0);
+    expect(algorithm1BaseSelectionCount(1)).toBe(1);
+    expect(algorithm1BaseSelectionCount(10)).toBe(1);
+    expect(algorithm1BaseSelectionCount(11)).toBe(2);
+    expect(algorithm1BaseSelectionCount(64)).toBe(7);
+    expect(algorithm1BaseSelectionCount(100)).toBe(10);
   });
 
   it('produces a clearly harder experience at difficulty ten than difficulty one', () => {
@@ -221,13 +235,13 @@ describe('editor algorithm 8 spatial hidden selection', () => {
       const offset = index % 8;
       return { x: y % 2 === 0 ? offset : 7 - offset, y };
     });
-    const easy = selectAlgorithm8HiddenLayout(path, 'square', 45, 1, 909);
-    const hard = selectAlgorithm8HiddenLayout(path, 'square', 45, 10, 909);
-    const easyValue = calculateAlgorithm8ExperienceValue(
-      calculateAlgorithm8ExperienceMetrics(path, easy, 'square'),
+    const easy = selectAlgorithm1HiddenLayout(path, 'square', 45, 1, 909);
+    const hard = selectAlgorithm1HiddenLayout(path, 'square', 45, 10, 909);
+    const easyValue = calculateAlgorithm1ExperienceValue(
+      calculateAlgorithm1ExperienceMetrics(path, easy, 'square'),
     );
-    const hardValue = calculateAlgorithm8ExperienceValue(
-      calculateAlgorithm8ExperienceMetrics(path, hard, 'square'),
+    const hardValue = calculateAlgorithm1ExperienceValue(
+      calculateAlgorithm1ExperienceMetrics(path, hard, 'square'),
     );
 
     expect(hardValue).toBeGreaterThan(easyValue);
@@ -239,11 +253,13 @@ describe('editor algorithm 8 spatial hidden selection', () => {
       const offset = index % 8;
       return { x: y % 2 === 0 ? offset : 7 - offset, y };
     });
-    const hard = selectAlgorithm8HiddenLayout(path, 'square', 35, 10, 1008);
-    const metrics = calculateAlgorithm8SpatialMetrics(path, hard, 'square');
+    const hard = selectAlgorithm1HiddenLayout(path, 'square', 35, 10, 1008);
+    const metrics = calculateAlgorithm1SpatialMetrics(path, hard, 'square');
 
     expect(hard.size).toBe(29);
     expect(metrics.largestHiddenComponentRatio)
-      .toBeLessThanOrEqual(ALGORITHM8_MAX_HIDDEN_COMPONENT_RATIO);
+      .toBeLessThanOrEqual(ALGORITHM1_MAX_HIDDEN_COMPONENT_RATIO);
   });
 });
+
+

@@ -5,7 +5,6 @@ export default defineConfig({
     exclude: [
       '**/node_modules/**',
       '**/dist/**',
-      'src/gameplay/editor/algorithms/algorithm[1-7].test.ts',
       'src/gameplay/editor/editorPreferences.test.ts',
       'src/gameplay/mode3/**/*.test.ts',
       'src/gameplay/mode5/**/*.test.ts',

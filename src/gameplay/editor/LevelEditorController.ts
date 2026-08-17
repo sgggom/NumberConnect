@@ -23,8 +23,6 @@ import {
   type LevelEditorPreset,
   type LevelEditorPreferencesSaveResult,
 } from './editorPreferences';
-import { readAlgorithm4BatchConfigFile } from './batchLevelGeneration';
-import { generateAlgorithm4BatchLevelsInWorkers } from './batchLevelGenerationPool';
 import {
   startEditorPathGeneration,
   type EditorPathGenerationTask,
@@ -40,7 +38,6 @@ import {
   type SimulationReasoningLevel,
 } from './simulateLevelPlay';
 import {
-  formatLevelCollectionTxt,
   formatLevelListTxt,
   formatSimulatedLevelTsv,
 } from './levelCollectionTxt';
@@ -52,6 +49,19 @@ import {
 } from './algorithms';
 import type { EditorCell, EditorShape, ManualEditMode } from './types';
 import { reorderLevelCollection } from './reorderLevelCollection';
+import {
+  BATCH_PLAYTEST_ATTEMPT_TIMEOUT_MS,
+  BATCH_PLAYTEST_MAX_ATTEMPTS,
+  MAX_BATCH_PLAYTEST_CONCURRENCY,
+  createBatchPlaytestGenerationRequest,
+  createBatchPlaytestLevel,
+  createBatchPlaytestTasks,
+  formatBatchPlaytestResultsTsv,
+  readBatchPlaytestConfigFile,
+  runConcurrentBatchTaskPool,
+  simulateBatchPlaytestLevel,
+  type BatchPlaytestResult,
+} from './batchPlaytest';
 
 interface LevelEditorControllerOptions {
   getLevels: () => LevelData[];
@@ -104,12 +114,13 @@ export class LevelEditorController {
   private isPathCalculating = false;
   private pathCalculationProgress = 0;
   private pathCalculationMode: 'path' | 'hidden' = 'path';
+  private readonly batchPlaytestTasks = new Set<EditorPathGenerationTask>();
+  private batchPlaytestAbortController?: AbortController;
+  private batchPlaytestProgress = { completed: 0, running: 0, failed: 0, total: 0 };
+  private batchPlaytestRun = 0;
+  private isBatchPlaytestRunning = false;
   private imageRecognitionRun = 0;
   private isImageRecognizing = false;
-  private isBatchGenerating = false;
-  private isBatchTxtPreparing = false;
-  private lastBatchGeneratedLevels: LevelData[] = [];
-  private lastBatchTxt?: string;
   private imageRecognitionMode: ImageRecognitionMode = 'complete-level';
   private recognitionAmbiguousCellKeys = new Set<string>();
   private recognitionAmbiguousPathSignature?: string;
@@ -158,6 +169,7 @@ export class LevelEditorController {
     this.query('#editor-back-button').addEventListener('click', () => {
       this.cancelPathAnimation();
       this.cancelPathCalculation();
+      this.cancelBatchPlaytest();
       this.cancelImageRecognition();
       this.closeSimulationWindow();
       this.options.onBack();
@@ -272,28 +284,22 @@ export class LevelEditorController {
     this.query('#editor-simulation-open-button').addEventListener('click', () => this.openSimulationWindow());
     this.query('#editor-playtest-button').addEventListener('click', () => this.playtest());
     this.query('#editor-level-add').addEventListener('click', () => this.save());
-    this.query('#editor-level-batch').addEventListener('click', () => (
-      this.query<HTMLInputElement>('#editor-level-batch-file').click()
-    ));
     this.query('#editor-level-import').addEventListener('click', () => this.query<HTMLInputElement>('#editor-level-file').click());
     this.query('#editor-level-export').addEventListener('click', () => this.exportLevels());
     this.query('#editor-level-clear').addEventListener('click', () => this.clearLevels());
-    this.query<HTMLInputElement>('#editor-level-batch-file').addEventListener(
-      'change',
-      (event) => void this.generateBatchLevels(event),
-    );
     this.query<HTMLInputElement>('#editor-level-file').addEventListener('change', (event) => void this.importLevels(event));
-    this.query('#editor-batch-dialog-close').addEventListener('click', () => {
-      this.closeBatchProgressDialog();
+    this.query('#editor-batch-playtest').addEventListener('click', () => {
+      if (this.isBatchPlaytestRunning) {
+        this.cancelBatchPlaytest();
+        this.render();
+        this.setStatus('已取消批量跑关；正在运行的任务已停止。');
+        return;
+      }
+      this.query<HTMLInputElement>('#editor-batch-playtest-file').click();
     });
-    this.query('#editor-batch-dialog-download').addEventListener('click', () => {
-      void this.downloadLastBatchTxt();
-    });
-    this.query<HTMLDialogElement>('#editor-batch-progress-dialog').addEventListener(
-      'cancel',
-      (event) => {
-        if (this.isBatchGenerating || this.isBatchTxtPreparing) event.preventDefault();
-      },
+    this.query<HTMLInputElement>('#editor-batch-playtest-file').addEventListener(
+      'change',
+      (event) => void this.runBatchPlaytest(event),
     );
     window.addEventListener('pointerup', () => {
       this.painting = false;
@@ -348,9 +354,6 @@ export class LevelEditorController {
     this.cancelPathCalculation();
     this.clearRecognitionAmbiguity();
     this.clearSimulationResult();
-    this.closeBatchProgressDialog(true);
-    this.lastBatchGeneratedLevels = [];
-    this.lastBatchTxt = undefined;
     this.selectedLevelId = undefined;
     this.model.reset();
     this.render();
@@ -485,7 +488,6 @@ export class LevelEditorController {
     this.query<HTMLButtonElement>('#editor-generate-path-button').disabled = this.model.manualEditMode !== 'off' || pathBusy;
     this.query<HTMLButtonElement>('#editor-calculate-hidden-button').disabled = (
       !this.model.hasGeneratedPath
-      || this.model.algorithmSelection.id === 'algorithm-1'
       || pathBusy
     );
     this.renderPathGenerationButton();
@@ -530,6 +532,7 @@ export class LevelEditorController {
     this.renderLevelMetrics(rows, columns);
     this.renderSimulationPanel();
     this.renderLevelList();
+    this.renderBatchPlaytestButton();
     this.syncPresetControls();
   }
 
@@ -1631,9 +1634,7 @@ export class LevelEditorController {
       this.setStatus('当前算法无法生成覆盖全部格子的路径，请调整棋盘或更换算法。', true);
       return;
     }
-    const nextStep = this.model.algorithmSelection.id === 'algorithm-1'
-      ? ''
-      : '，请点击“计算隐藏”生成隐藏布局';
+    const nextStep = '，请点击“计算隐藏”生成隐藏布局';
     this.animateGeneratedPath(`第 ${this.model.pathGenerationCount} 次路径生成成功：共 ${this.model.solutionPath.length} 个格子${nextStep}。`);
   }
 
@@ -1792,7 +1793,7 @@ export class LevelEditorController {
   }
 
   private isPathBusy(): boolean {
-    return this.isPathCalculating || this.isPathAnimating;
+    return this.isPathCalculating || this.isPathAnimating || this.isBatchPlaytestRunning;
   }
 
   private playtest(): void {
@@ -2047,242 +2048,157 @@ export class LevelEditorController {
     }
   }
 
-  private async generateBatchLevels(event: Event): Promise<void> {
+  private async runBatchPlaytest(event: Event): Promise<void> {
     const input = event.target as HTMLInputElement;
     const file = input.files?.[0];
     input.value = '';
-    if (!file || this.isBatchGenerating) return;
+    if (!file || this.isBatchPlaytestRunning) return;
 
-    this.lastBatchGeneratedLevels = [];
-    this.lastBatchTxt = undefined;
-    this.openBatchProgressDialog(file.name);
-    this.setBatchGenerating(true);
+    this.cancelPathAnimation();
+    this.cancelPathCalculation();
+    const run = ++this.batchPlaytestRun;
+    const abortController = new AbortController();
+    this.batchPlaytestAbortController = abortController;
+    this.batchPlaytestProgress = { completed: 0, running: 0, failed: 0, total: 0 };
+    this.isBatchPlaytestRunning = true;
+    this.render();
+
+    let completionMessage = '';
+    let completionIsError = false;
     try {
-      this.setStatus(`正在读取配置表 ${file.name}…`);
-      const configs = await readAlgorithm4BatchConfigFile(file);
-      const total = configs.reduce((sum, config) => sum + config.generationCount, 0);
-      this.updateBatchProgress(0, total, `配置读取完成，准备生成 ${total} 个关卡…`);
-      const seedValues = new Uint32Array(1);
-      if (globalThis.crypto?.getRandomValues) globalThis.crypto.getRandomValues(seedValues);
-      else seedValues[0] = Date.now() >>> 0;
+      const configs = await readBatchPlaytestConfigFile(file);
+      if (run !== this.batchPlaytestRun) return;
+      const tasks = createBatchPlaytestTasks(configs);
+      this.batchPlaytestProgress.total = tasks.length;
+      this.renderBatchPlaytestButton();
+      this.setStatus(`已读取 ${configs.length} 组配置，使用 ${Math.min(MAX_BATCH_PLAYTEST_CONCURRENCY, tasks.length)} 个线程并行处理 ${tasks.length} 关。`);
 
-      let generationThreadCount = 1;
-      const result = await generateAlgorithm4BatchLevelsInWorkers(
-        configs,
-        this.options.getNextLevelId(),
-        seedValues[0],
-        {
-          onWorkerCount: (workerCount) => {
-            generationThreadCount = Math.max(1, workerCount);
-            this.updateBatchProgress(
-              0,
-              total,
-              `已启用 ${generationThreadCount} 个生成线程，准备处理 ${total} 个任务…`,
+      const results = await runConcurrentBatchTaskPool(
+        tasks,
+        async (task): Promise<BatchPlaytestResult> => {
+          if (run !== this.batchPlaytestRun || abortController.signal.aborted) {
+            const error = new Error('批量跑关已取消。');
+            error.name = 'AbortError';
+            throw error;
+          }
+        let generated = null;
+        let generationError = '';
+        for (let attempt = 0; attempt < BATCH_PLAYTEST_MAX_ATTEMPTS && !generated; attempt += 1) {
+          const request = createBatchPlaytestGenerationRequest(task, attempt);
+          const generationTask = startEditorPathGeneration(request, (progress) => {
+            if (run !== this.batchPlaytestRun) return;
+            const percentage = Math.round(progress * 100);
+            this.setStatus(
+              `批量跑关：完成 ${this.batchPlaytestProgress.completed}/${tasks.length}，运行 ${this.batchPlaytestProgress.running}，失败 ${this.batchPlaytestProgress.failed}；${task.config.id} 第 ${task.generationNumber} 关尝试 ${attempt + 1}/${BATCH_PLAYTEST_MAX_ATTEMPTS}，生成 ${percentage}%…`,
             );
-          },
-          onProgress: (completed, requested, sourceRow) => {
-            this.setStatus(`正在用 ${generationThreadCount} 个线程批量生成 ${completed}/${requested}（配置表第 ${sourceRow} 行）…`);
-            this.updateBatchProgress(
-              completed,
-              requested,
-              `${generationThreadCount} 个线程并行生成 · 配置表第 ${sourceRow} 行 · ${completed}/${requested}`,
+          });
+          this.batchPlaytestTasks.add(generationTask);
+          let timedOut = false;
+          let timeoutId: number | undefined;
+          try {
+            const timeout = new Promise<never>((_, reject) => {
+              timeoutId = window.setTimeout(() => {
+                timedOut = true;
+                generationTask.cancel();
+                reject(new Error(`单次生成超过 ${BATCH_PLAYTEST_ATTEMPT_TIMEOUT_MS / 1000} 秒`));
+              }, BATCH_PLAYTEST_ATTEMPT_TIMEOUT_MS);
+            });
+            generated = await Promise.race([generationTask.promise, timeout]);
+          } catch (error) {
+            if (
+              run !== this.batchPlaytestRun
+              || abortController.signal.aborted
+              || (error instanceof Error && error.name === 'AbortError' && !timedOut)
+            ) {
+              const aborted = new Error('批量跑关已取消。');
+              aborted.name = 'AbortError';
+              throw aborted;
+            }
+            generationError = timedOut
+              ? `第 ${attempt + 1} 次尝试超过 ${BATCH_PLAYTEST_ATTEMPT_TIMEOUT_MS / 1000} 秒`
+              : error instanceof Error ? error.message : '路径生成失败';
+          } finally {
+            if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+            this.batchPlaytestTasks.delete(generationTask);
+          }
+        }
+
+        if (!generated) {
+          return {
+            task,
+            error: generationError || `连续尝试 ${BATCH_PLAYTEST_MAX_ATTEMPTS} 次仍无法生成完整关卡`,
+          };
+        }
+        try {
+          const level = createBatchPlaytestLevel(task, generated);
+          const simulation = simulateBatchPlaytestLevel(task, level);
+          return { task, level, simulation };
+        } catch (error) {
+          return {
+            task,
+            error: error instanceof Error ? error.message : '跑关模拟失败',
+          };
+        }
+        },
+        {
+          concurrency: MAX_BATCH_PLAYTEST_CONCURRENCY,
+          signal: abortController.signal,
+          isFailure: ({ level, simulation }) => !level || !simulation,
+          onProgress: (progress) => {
+            if (run !== this.batchPlaytestRun) return;
+            this.batchPlaytestProgress = progress;
+            this.renderBatchPlaytestButton();
+            this.setStatus(
+              `批量跑关：完成 ${progress.completed}/${progress.total}，运行 ${progress.running}，失败 ${progress.failed}。`,
             );
           },
         },
       );
-      if (result.levels.length === 0) {
-        throw new Error(`配置表共要求生成 ${total} 关，但算法 4 未能生成可用关卡。`);
-      }
 
-      const levels = [...this.options.getLevels(), ...result.levels]
-        .sort((left, right) => left.levelId - right.levelId);
-      this.options.onLevelsChange(levels);
-      const lastLevel = result.levels[result.levels.length - 1];
-      this.lastBatchGeneratedLevels = result.levels.map((level) => ({
-        ...level,
-        activeCells: level.activeCells.map((cell) => ({ ...cell })),
-        solutionPath: level.solutionPath.map((cell) => ({ ...cell })),
-        hiddenCells: level.hiddenCells?.map((cell) => ({ ...cell })),
-        algorithm: level.algorithm
-          ? { ...level.algorithm, parameters: { ...level.algorithm.parameters } }
-          : undefined,
-      }));
-      this.selectedLevelId = lastLevel.levelId;
-      this.model.applyLevel(lastLevel);
-      this.persistPreferences();
-      this.render();
-      this.finishBatchProgress(
-        result.levels.length,
-        total,
-        result.failures.length,
-      );
-
-      if (result.failures.length > 0) {
-        const rows = [...new Set(result.failures.map((failure) => failure.sourceRow))].join('、');
-        this.setStatus(
-          `已生成并追加 ${result.levels.length}/${total} 关；配置表第 ${rows} 行有 ${result.failures.length} 次生成失败。`,
-          false,
-          true,
-        );
-      } else {
-        this.setStatus(`已按 ${configs.length} 行配置生成并追加 ${result.levels.length} 关。`);
-      }
+      if (run !== this.batchPlaytestRun) return;
+      const succeeded = results.filter(({ level, simulation }) => level && simulation).length;
+      const failed = results.length - succeeded;
+      this.downloadTxt(formatBatchPlaytestResultsTsv(results), '批量跑关结果.txt');
+      completionMessage = `批量跑关完成：成功 ${succeeded} 关${failed > 0 ? `，失败 ${failed} 关` : ''}；结果已导出。`;
+      completionIsError = succeeded === 0;
     } catch (error) {
-      const message = error instanceof Error ? error.message : '读取配置表或批量生成失败。';
-      this.setStatus(message, true);
-      this.failBatchProgress(message);
+      if (run !== this.batchPlaytestRun) return;
+      completionMessage = error instanceof Error ? `批量跑关失败：${error.message}` : '批量跑关失败。';
+      completionIsError = true;
     } finally {
-      this.setBatchGenerating(false);
+      if (run === this.batchPlaytestRun) {
+        this.batchPlaytestTasks.clear();
+        this.batchPlaytestAbortController = undefined;
+        this.isBatchPlaytestRunning = false;
+        this.render();
+        if (completionMessage) this.setStatus(completionMessage, completionIsError);
+      }
     }
   }
 
-  private openBatchProgressDialog(fileName: string): void {
-    const dialog = this.query<HTMLDialogElement>('#editor-batch-progress-dialog');
-    const progress = this.query<HTMLProgressElement>('#editor-batch-progress');
-    this.query('#editor-batch-dialog-title').textContent = '正在读取配置';
-    this.query('#editor-batch-progress-percent').textContent = '准备中';
-    this.query('#editor-batch-dialog-message').textContent = `正在读取 ${fileName}…`;
-    this.query('#editor-batch-dialog-message').classList.remove('is-error');
-    this.query('#editor-batch-dialog-summary').textContent = '生成完成后，可在此下载仅包含本次关卡的 TXT。';
-    progress.max = 1;
-    progress.removeAttribute('value');
-    const closeButton = this.query<HTMLButtonElement>('#editor-batch-dialog-close');
-    const downloadButton = this.query<HTMLButtonElement>('#editor-batch-dialog-download');
-    closeButton.disabled = true;
-    downloadButton.disabled = true;
-    downloadButton.classList.remove('is-loading');
-    downloadButton.textContent = '下载本次 TXT';
-    if (!dialog.open) dialog.showModal();
+  private cancelBatchPlaytest(): void {
+    this.batchPlaytestRun += 1;
+    this.batchPlaytestAbortController?.abort();
+    this.batchPlaytestAbortController = undefined;
+    this.batchPlaytestTasks.forEach((task) => task.cancel());
+    this.batchPlaytestTasks.clear();
+    this.isBatchPlaytestRunning = false;
   }
 
-  private updateBatchProgress(completed: number, total: number, message: string): void {
-    const progress = this.query<HTMLProgressElement>('#editor-batch-progress');
-    const safeTotal = Math.max(1, total);
-    const safeCompleted = Math.max(0, Math.min(safeTotal, completed));
-    progress.max = safeTotal;
-    progress.value = safeCompleted;
-    this.query('#editor-batch-dialog-title').textContent = '正在生成关卡';
-    this.query('#editor-batch-progress-percent').textContent = `${Math.round(safeCompleted / safeTotal * 100)}%`;
-    this.query('#editor-batch-dialog-message').textContent = message;
-    this.query('#editor-batch-dialog-summary').textContent = `已处理 ${safeCompleted}/${safeTotal} 个生成任务`;
-  }
-
-  private finishBatchProgress(successCount: number, total: number, failureCount: number): void {
-    const progress = this.query<HTMLProgressElement>('#editor-batch-progress');
-    progress.max = Math.max(1, total);
-    progress.value = Math.max(1, total);
-    this.query('#editor-batch-dialog-title').textContent = '批量生成完成';
-    this.query('#editor-batch-progress-percent').textContent = '100%';
-    this.query('#editor-batch-dialog-message').textContent = failureCount > 0
-      ? `本次成功生成 ${successCount}/${total} 个关卡。`
-      : `本次 ${successCount} 个关卡已全部生成。`;
-    this.query('#editor-batch-dialog-summary').textContent = failureCount > 0
-      ? `${failureCount} 个生成任务失败；下载文件只包含成功生成的关卡。`
-      : '点击下载按钮，将仅导出本次生成的关卡和对应模拟数据。';
-    this.query<HTMLButtonElement>('#editor-batch-dialog-close').disabled = false;
-    const downloadButton = this.query<HTMLButtonElement>('#editor-batch-dialog-download');
-    downloadButton.disabled = successCount === 0;
-    downloadButton.focus();
-  }
-
-  private failBatchProgress(message: string): void {
-    const progress = this.query<HTMLProgressElement>('#editor-batch-progress');
-    progress.max = 1;
-    progress.value = 0;
-    this.query('#editor-batch-dialog-title').textContent = '批量生成失败';
-    this.query('#editor-batch-progress-percent').textContent = '失败';
-    const messageElement = this.query('#editor-batch-dialog-message');
-    messageElement.textContent = message;
-    messageElement.classList.add('is-error');
-    this.query('#editor-batch-dialog-summary').textContent = '请关闭弹窗，修正配置表后重新批量生成。';
-    this.query<HTMLButtonElement>('#editor-batch-dialog-close').disabled = false;
-    this.query<HTMLButtonElement>('#editor-batch-dialog-download').disabled = true;
-  }
-
-  private closeBatchProgressDialog(force = false): void {
-    if (!force && (this.isBatchGenerating || this.isBatchTxtPreparing)) return;
-    const dialog = this.query<HTMLDialogElement>('#editor-batch-progress-dialog');
-    if (dialog.open) dialog.close();
-  }
-
-  private async downloadLastBatchTxt(): Promise<void> {
-    if (this.lastBatchGeneratedLevels.length === 0 || this.isBatchTxtPreparing) return;
-    const downloadButton = this.query<HTMLButtonElement>('#editor-batch-dialog-download');
-    const closeButton = this.query<HTMLButtonElement>('#editor-batch-dialog-close');
-    this.isBatchTxtPreparing = true;
-    downloadButton.disabled = true;
-    downloadButton.classList.add('is-loading');
-    downloadButton.textContent = '正在整理 TXT…';
-    closeButton.disabled = true;
-    this.syncLongRunningState();
-
-    try {
-      if (!this.lastBatchTxt) {
-        const total = this.lastBatchGeneratedLevels.length;
-        this.query('#editor-batch-dialog-title').textContent = '正在准备下载';
-        this.updateBatchDownloadProgress(0, total, '正在计算本次关卡的模拟数据…');
-        this.lastBatchTxt = await formatLevelCollectionTxt(this.lastBatchGeneratedLevels, {
-          simulationRunCount: this.simulationRunCount,
-          reasoningLevel: this.simulationReasoningLevel,
-          onProgress: (completed, requested, levelId) => {
-            this.updateBatchDownloadProgress(
-              completed,
-              requested,
-              `正在整理关卡 ${levelId} 的模拟数据 · ${completed}/${requested}`,
-            );
-          },
-        });
-      }
-
-      this.downloadTxt(
-        this.lastBatchTxt,
-        `levels-batch-1-${this.lastBatchGeneratedLevels.length}.txt`,
-      );
-      this.query('#editor-batch-dialog-title').textContent = '本次 TXT 已下载';
-      this.query('#editor-batch-progress-percent').textContent = '100%';
-      this.query('#editor-batch-dialog-message').textContent = `已导出本次生成的 ${this.lastBatchGeneratedLevels.length} 个关卡。`;
-      this.query('#editor-batch-dialog-summary').textContent = '文件不包含此前列表中已有的其他关卡。';
-      this.setStatus(`已下载本次生成的 ${this.lastBatchGeneratedLevels.length} 个关卡。`);
-      downloadButton.textContent = '再次下载 TXT';
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '准备 TXT 失败。';
-      this.query('#editor-batch-dialog-title').textContent = 'TXT 准备失败';
-      this.query('#editor-batch-progress-percent').textContent = '失败';
-      const messageElement = this.query('#editor-batch-dialog-message');
-      messageElement.textContent = message;
-      messageElement.classList.add('is-error');
-      this.setStatus(`下载本次 TXT 失败：${message}`, true);
-      downloadButton.textContent = '重试下载';
-    } finally {
-      this.isBatchTxtPreparing = false;
-      downloadButton.disabled = false;
-      downloadButton.classList.remove('is-loading');
-      closeButton.disabled = false;
-      this.syncLongRunningState();
-    }
-  }
-
-  private updateBatchDownloadProgress(completed: number, total: number, message: string): void {
-    const progress = this.query<HTMLProgressElement>('#editor-batch-progress');
-    const safeTotal = Math.max(1, total);
-    const safeCompleted = Math.max(0, Math.min(safeTotal, completed));
-    progress.max = safeTotal;
-    progress.value = safeCompleted;
-    this.query('#editor-batch-dialog-title').textContent = '正在准备下载';
-    this.query('#editor-batch-progress-percent').textContent = `${Math.round(safeCompleted / safeTotal * 100)}%`;
-    this.query('#editor-batch-dialog-message').textContent = message;
-    this.query('#editor-batch-dialog-message').classList.remove('is-error');
-    this.query('#editor-batch-dialog-summary').textContent = 'TXT 只会包含本次批量生成的关卡。';
-  }
-
-  private setBatchGenerating(active: boolean): void {
-    this.isBatchGenerating = active;
-    this.host.classList.toggle('is-batch-generating', active);
-    const button = this.query<HTMLButtonElement>('#editor-level-batch');
-    button.disabled = active;
-    button.classList.toggle('is-loading', active);
-    button.textContent = active ? '生成中…' : '批量生成';
-    this.syncLongRunningState();
+  private renderBatchPlaytestButton(): void {
+    const button = this.query<HTMLButtonElement>('#editor-batch-playtest');
+    const { completed, running, failed, total } = this.batchPlaytestProgress;
+    button.disabled = !this.isBatchPlaytestRunning
+      && (this.isPathCalculating || this.isPathAnimating || this.isImageRecognizing);
+    button.classList.toggle('is-running', this.isBatchPlaytestRunning);
+    button.setAttribute('aria-busy', String(this.isBatchPlaytestRunning));
+    button.textContent = this.isBatchPlaytestRunning
+      ? `取消跑关 · ${completed}/${total || '…'} · ${running} 运行${failed > 0 ? ` · ${failed} 失败` : ''}`
+      : '批量跑关';
+    this.host.querySelectorAll<HTMLButtonElement>('.editor-level-actions .button:not(#editor-batch-playtest)')
+      .forEach((action) => {
+        if (this.isBatchPlaytestRunning) action.disabled = true;
+      });
   }
 
   private exportLevels(): void {
@@ -2303,12 +2219,6 @@ export class LevelEditorController {
         true,
       );
     }
-  }
-
-  private syncLongRunningState(): void {
-    const busy = this.isBatchGenerating || this.isBatchTxtPreparing;
-    this.host.setAttribute('aria-busy', String(busy));
-    this.query<HTMLButtonElement>('#editor-back-button').disabled = busy;
   }
 
   private downloadTxt(text: string, fileName: string): void {

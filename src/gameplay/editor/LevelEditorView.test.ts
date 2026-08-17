@@ -64,12 +64,20 @@ describe('level editor view layout', () => {
     expect(markup).not.toContain('id="editor-save-button"');
   });
 
+  it('provides the batch playtest workbook entry in the level panel', () => {
+    const markup = renderEditorMarkup();
+
+    expect(markup).toContain('id="editor-batch-playtest"');
+    expect(markup).toContain('id="editor-batch-playtest-file"');
+    expect(markup).toContain('accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"');
+  });
+
   it('shows the algorithm picker without a redundant visible label', () => {
     const markup = renderEditorMarkup();
 
     expect(markup).toContain('class="editor-algorithm-select" aria-label="算法"');
-    expect(markup).toContain('<option value="algorithm-8" selected>算法8</option>');
-    expect(markup).not.toMatch(/<option value="algorithm-[1-7]"/);
+    expect(markup).toContain('<option value="algorithm-1" selected>算法1</option>');
+    expect(markup).not.toMatch(/<option value="algorithm-[2-8]"/);
     expect(markup).not.toContain('class="editor-algorithm-select">算法');
   });
 

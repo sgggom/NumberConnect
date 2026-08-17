@@ -529,7 +529,7 @@ export class LevelEditorModel {
   }
 
   public prepareHiddenGeneration(): LevelEditorPathGenerationRequest | null {
-    if (!this.hasGeneratedPath || this.algorithm.id === 'algorithm-1') return null;
+    if (!this.hasGeneratedPath) return null;
     const { rows, columns } = this.size();
     return {
       selection: normalizeEditorAlgorithm(serializeEditorAlgorithm(this.algorithm)),

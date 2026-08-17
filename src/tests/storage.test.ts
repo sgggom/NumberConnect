@@ -19,8 +19,17 @@ const makeLevel = (levelId: number, custom = false): LevelData => ({
   activeCells: [{ x: 0, y: 0 }],
   solutionPath: [{ x: 0, y: 0 }],
   algorithm: {
-    id: 'algorithm-2',
-    parameters: {},
+    id: 'algorithm-1',
+    parameters: {
+      topology: 'board-shape',
+      pathMode: 'spatial-distribution-multiple-solutions',
+      targetCrossings: 20,
+      turnProbability: 40,
+      hiddenPercent: 35,
+      targetDifficulty: 6,
+      maxVisibleRun: 8,
+      maxHiddenRun: 4,
+    },
   },
   custom,
 });
@@ -253,25 +262,25 @@ describe('level collection migration', () => {
       await expect(loadBuiltInLevels()).resolves.toMatchObject([{
         levelId: 1,
         pathSource: 'generated',
-        algorithm: { id: 'algorithm-8' },
+        algorithm: { id: 'algorithm-1' },
         custom: false,
       }]);
       await expect(loadBeadLevels()).resolves.toMatchObject([{
         levelId: 1,
         pathSource: 'generated',
-        algorithm: { id: 'algorithm-4' },
+        algorithm: { id: 'algorithm-1' },
         custom: false,
       }]);
       await expect(loadMode3Levels()).resolves.toMatchObject([{
         levelId: 1,
         pathSource: 'generated',
-        algorithm: { id: 'algorithm-8' },
+        algorithm: { id: 'algorithm-1' },
         custom: false,
       }]);
       await expect(loadMode5Levels()).resolves.toMatchObject([{
         levelId: 1,
         pathSource: 'generated',
-        algorithm: { id: 'algorithm-8' },
+        algorithm: { id: 'algorithm-1' },
         custom: false,
       }]);
       expect(fetchMock).toHaveBeenNthCalledWith(1, './levels/mode5-levels.json');

@@ -17,19 +17,35 @@ const LEVEL_COLLECTION_KEY = 'number-connect.level-collection.v5';
 const hasStorage = (): boolean => typeof window !== 'undefined' && 'localStorage' in window;
 
 const withDefaultAlgorithm = (level: LevelData): LevelData => {
-  if (level.algorithm?.id === 'algorithm-1') {
+  if (level.algorithm?.id === 'algorithm-1' || level.algorithm?.id === 'algorithm-8') {
+    const parameters = level.algorithm.parameters ?? {};
     return {
       ...level,
       algorithm: {
         id: 'algorithm-1',
         parameters: {
           topology: 'board-shape',
-          pathMode: 'single-stroke',
+          pathMode: 'spatial-distribution-multiple-solutions',
           targetCrossings: level.boardShape === BoardShape.Hex
             ? 0
-            : Number.isFinite(Number(level.algorithm.parameters?.targetCrossings))
-            ? Math.max(0, Math.min(99, Math.floor(Number(level.algorithm.parameters.targetCrossings))))
-            : 0,
+            : Number.isFinite(Number(parameters.targetCrossings))
+            ? Math.max(0, Math.min(99, Math.floor(Number(parameters.targetCrossings))))
+            : 20,
+          turnProbability: Number.isFinite(Number(parameters.turnProbability))
+            ? Math.max(0, Math.min(100, Math.floor(Number(parameters.turnProbability))))
+            : 40,
+          hiddenPercent: Number.isFinite(Number(parameters.hiddenPercent))
+            ? Math.max(0, Math.min(100, Math.floor(Number(parameters.hiddenPercent))))
+            : 35,
+          targetDifficulty: Number.isFinite(Number(parameters.targetDifficulty))
+            ? Math.max(1, Math.min(10, Math.floor(Number(parameters.targetDifficulty))))
+            : 6,
+          maxVisibleRun: Number.isFinite(Number(parameters.maxVisibleRun))
+            ? Math.max(1, Math.min(99, Math.floor(Number(parameters.maxVisibleRun))))
+            : 8,
+          maxHiddenRun: Number.isFinite(Number(parameters.maxHiddenRun))
+            ? Math.max(1, Math.min(99, Math.floor(Number(parameters.maxHiddenRun))))
+            : 4,
         },
       },
     };
@@ -39,7 +55,16 @@ const withDefaultAlgorithm = (level: LevelData): LevelData => {
       ...level,
       algorithm: {
         id: 'algorithm-1',
-        parameters: { topology: 'board-shape', pathMode: 'single-stroke', targetCrossings: 0 },
+        parameters: {
+          topology: 'board-shape',
+          pathMode: 'spatial-distribution-multiple-solutions',
+          targetCrossings: level.boardShape === BoardShape.Hex ? 0 : 20,
+          turnProbability: 40,
+          hiddenPercent: 35,
+          targetDifficulty: 6,
+          maxVisibleRun: 8,
+          maxHiddenRun: 4,
+        },
       },
     };
 };
@@ -198,20 +223,20 @@ const loadBundledLevels = async (
 };
 
 export const loadBuiltInLevels = (): Promise<LevelData[]> => (
-  loadBundledLevels('./levels/mode5-levels.json', 'algorithm-8')
+  loadBundledLevels('./levels/mode5-levels.json', 'algorithm-1')
 );
 
 export const loadBeadLevels = (): Promise<LevelData[]> => (
-  loadBundledLevels('./levels/bead-levels.json', 'algorithm-4')
+  loadBundledLevels('./levels/bead-levels.json', 'algorithm-1')
 );
 
 export const loadMode3Levels = (): Promise<LevelData[]> => (
-  loadBundledLevels('./levels/mode3-levels.json', 'algorithm-8')
+  loadBundledLevels('./levels/mode3-levels.json', 'algorithm-1')
 );
 
 /** 玩法5读取独立资源文件，后续调整阵型不会影响玩法3/4。 */
 export const loadMode5Levels = (): Promise<LevelData[]> => (
-  loadBundledLevels('./levels/mode5-levels.json', 'algorithm-8')
+  loadBundledLevels('./levels/mode5-levels.json', 'algorithm-1')
 );
 
 export const getNextLevelId = (levels: LevelData[]): number => {

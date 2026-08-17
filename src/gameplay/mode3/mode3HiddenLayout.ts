@@ -1,7 +1,7 @@
 import { BoardShape, cellKey, type LevelData } from '../../game/types';
 import {
-  selectAlgorithm8HiddenLayout,
-} from '../editor/algorithms/algorithm8';
+  selectAlgorithm1HiddenLayout,
+} from '../editor/algorithms/algorithm1';
 import type { EditorShape } from '../editor/types';
 import { selectMode4RandomDispersedHiddenLayout } from './mode4RandomHiddenLayout';
 
@@ -11,7 +11,7 @@ export interface AdaptiveHiddenLayoutConfig {
   maxHiddenRun: number;
 }
 
-/** 玩法3整局只调整算法8目标难度，以下三个配置始终固定。 */
+/** 玩法3整局只调整算法1目标难度，以下三个配置始终固定。 */
 export const MODE3_DIFFICULTY_CONFIG: AdaptiveHiddenLayoutConfig = {
   hiddenPercentRange: [20, 40],
   maxVisibleRun: 3,
@@ -98,16 +98,16 @@ export const mode4EffectiveHiddenPercent = (
   resolveMode4DifficultyConfig(difficulty).hiddenPercentRange,
 );
 
-const createMode3Algorithm8HiddenCells = (
+const createMode3Algorithm1HiddenCells = (
   level: LevelData,
   difficulty: number,
 ): Set<string> => {
   const normalizedTargetDifficulty = normalizeDifficulty(difficulty);
   const effectiveHiddenPercent = mode3EffectiveHiddenPercent(level);
 
-  // 玩法3的配置区间就是最终隐藏占比。关闭算法8编辑器默认的“+目标难度%”，
+  // 玩法3的配置区间就是最终隐藏占比。关闭算法1编辑器默认的“+目标难度%”，
   // 让目标难度只调整隐藏位置结构，不再改变隐藏总量。
-  const hiddenIndices = selectAlgorithm8HiddenLayout(
+  const hiddenIndices = selectAlgorithm1HiddenLayout(
     level.solutionPath,
     mode3EditorShape(level.boardShape),
     effectiveHiddenPercent,
@@ -129,10 +129,10 @@ const createMode3Algorithm8HiddenCells = (
 export const createMode3HiddenCells = (
   level: LevelData,
   difficulty: number,
-): Set<string> => createMode3Algorithm8HiddenCells(level, difficulty);
+): Set<string> => createMode3Algorithm1HiddenCells(level, difficulty);
 
 /**
- * 玩法4不使用算法8难度评分。当前档位只负责选择配置，隐藏位置由同一套
+ * 玩法4不使用算法1难度评分。当前档位只负责选择配置，隐藏位置由同一套
  * 关卡固定随机序列分散生成；数字1～4最多隐藏1个。
  */
 export const createMode4HiddenCells = (

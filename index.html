@@ -138,6 +138,11 @@
             <div class="game-heading">
               <button id="play-level-button" class="play-level-button" type="button" aria-haspopup="dialog" aria-controls="level-picker-dialog"><span id="play-level-label">Level 1-1</span></button>
               <span id="play-lives" class="life-counter" role="status" aria-live="polite" aria-label="生命值 3" hidden>♥♥♥</span>
+              <div id="daily-play-progress" class="daily-play-progress" role="progressbar" aria-label="每日挑战关卡进度" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" hidden>
+                <span class="daily-play-progress-track" aria-hidden="true"><i id="daily-play-progress-fill"></i></span>
+                <b id="daily-play-progress-current" class="daily-play-progress-ball daily-play-progress-ball--current" aria-hidden="true">1</b>
+                <b id="daily-play-progress-end" class="daily-play-progress-ball daily-play-progress-ball--end" aria-hidden="true">0</b>
+              </div>
               <p id="hold-score-formula" class="hold-score-formula is-inactive" role="status" aria-live="polite" aria-hidden="true">
                 <span class="hold-score-summary">
                   <span class="hold-score-total">总分 <b id="hold-score-total">0</b></span>
@@ -342,10 +347,20 @@
         </header>
         <div class="bead-screen-stage">
           <div class="bead-pattern-heading">
-            <div><h3 id="bead-pattern-name">橙色小猫</h3></div>
-            <strong id="bead-progress-text">0 / 0</strong>
+            <div>
+              <h3 id="bead-pattern-name">橙色小猫</h3>
+            </div>
+            <strong id="bead-progress-text" class="bead-visually-hidden">0 / 0</strong>
           </div>
-          <div id="bead-pattern-board" class="bead-pattern-board" role="img" aria-label="20乘20拼豆图纸"></div>
+          <div class="bead-workbench">
+            <div class="bead-board-frame">
+              <div id="bead-pattern-board" class="bead-pattern-board" role="img" aria-label="20乘20拼豆图纸"></div>
+            </div>
+            <div class="bead-progress-panel">
+              <div class="bead-progress-track" role="progressbar" aria-label="拼豆完成进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="bead-progress-fill"></i></div>
+              <p id="bead-screen-status" class="bead-screen-status bead-visually-hidden" aria-live="polite">正在读取拼豆图纸…</p>
+            </div>
+          </div>
           <button id="bead-jar-button" class="bead-jar-button" type="button" aria-label="拼豆瓶是空的" disabled>
             <span id="bead-jar-contents" class="bead-jar-contents" aria-hidden="true"></span>
             <img src="./ui/beads/open-glass-jar.svg" alt="" draggable="false" />
@@ -355,8 +370,6 @@
             <strong><b id="bead-jar-count">0</b> 颗</strong>
             <small>点击放 1 颗 · 长按连续放置</small>
           </button>
-          <div class="bead-progress-track" role="progressbar" aria-label="拼豆完成进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="bead-progress-fill"></i></div>
-          <p id="bead-screen-status" class="bead-screen-status" aria-live="polite">正在读取拼豆图纸…</p>
           <button id="bead-start-button" class="button bead-start-button" type="button">进入普通关卡</button>
         </div>
       </section>

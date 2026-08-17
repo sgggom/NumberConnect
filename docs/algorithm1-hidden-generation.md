@@ -1,15 +1,13 @@
-# 隐藏生成算法 8 说明（C# 开发对接版）
+# 隐藏生成算法 1 说明
 
-本文档对应当前项目的 `src/gameplay/editor/algorithms/algorithm8.ts`。算法 8 分为两段：
+本文档对应当前项目的 `src/gameplay/editor/algorithms/algorithm1.ts`。算法 1 分为两段：
 
-1. 路径阶段沿用算法 2，生成包含全部有效格子的完整数字路径。
+1. 路径阶段使用通用多样化路径生成器，生成包含全部有效格子的完整数字路径。
 2. 隐藏阶段接收这条有序路径，逐次选择需要隐藏的数字。
-
-C# 移植文件：[`Algorithm8HiddenGenerator.cs`](./Algorithm8HiddenGenerator.cs)。该文件实现隐藏阶段；已有固定路径时可以直接接入。
 
 ## 设计目标
 
-算法 8 不是“按概率随机隐藏若干数字”，而是一个逐步构造、带约束的布局优化器。它要同时解决以下问题：
+算法 1 不是“按概率随机隐藏若干数字”，而是一个逐步构造、带约束的布局优化器。它要同时解决以下问题：
 
 1. **数量可控**：最终隐藏数量必须准确等于配置推导出的目标数量。
 2. **空间上不过度成片**：隐藏格不能集中成一整块，否则玩家只能面对一大片无提示区域。
@@ -118,32 +116,37 @@ return hidden
 - `seed`：确定性随机种子。
 - `maxVisibleRun`：最长连续显示，默认 8。
 - `maxHiddenRun`：最长连续隐藏，默认 4。
-- `addTargetDifficultyPercent`：是否把目标难度作为额外隐藏百分点，默认 `true`；玩法3和玩法5传 `false`。玩法4不调用算法8。
+- `firstNumberWindow`：开头受限数字窗口，默认 4。
+- `maxHiddenInFirstWindow`：开头窗口最多隐藏数量，默认 1。
+- `addTargetDifficultyPercent`：是否把目标难度作为额外隐藏百分点，默认 `true`；玩法3和玩法5传 `false`。玩法4不调用算法1。
 
-输出是 `path` 下标集合。首尾数字固定显示，因此下标 `0` 与 `path.Count - 1` 永远不会进入结果。
+输出是 `path` 下标集合。首尾数字固定显示，因此下标 `0` 与 `path.Count - 1` 永远不会进入结果；默认情况下，数字 1～4 中最多隐藏 1 个。
 
 ## 2. 默认参数与范围
 
 | 参数 | 默认值 | 编辑器范围 | 用途 |
 |---|---:|---:|---|
-| 最大交叉数量 | 20 | 0–99 | 仅用于算法 2 路径阶段；六边形强制为 0 |
-| 路径拐弯概率 | 40% | 0–100% | 仅用于算法 2 路径阶段 |
+| 最大交叉数量 | 20 | 0–99 | 仅用于路径生成阶段；六边形强制为 0 |
+| 路径拐弯概率 | 40% | 0–100% | 仅用于路径生成阶段 |
 | 基础隐藏占比 | 35% | 0–100% | 决定目标隐藏数量 |
 | 目标难度 | 6 | 1–10 | 同时影响隐藏数量、邻近扩张配额和候选评分 |
 | 最长连续显示 | 8 | 1–99 | 尽量限制路径上的连续显示长度 |
 | 最长连续隐藏 | 4 | 1–99 | 尽量限制路径上的连续隐藏长度 |
+| 开头受限数字数量 | 4 | — | 数字 1～4 受开头隐藏上限约束 |
+| 开头最多隐藏数量 | 1 | — | 数字 1～4 最多隐藏 1 个 |
 | 额外增加难度百分点 | 是 | 是/否 | 玩法3关闭，配置区间直接作为最终占比 |
 
 ## 3. 目标隐藏数量
 
-默认编辑器算法8会直接增加同值的隐藏百分点：
+默认编辑器算法1会直接增加同值的隐藏百分点：
 
 ```text
 实际隐藏占比 = min(100, clamp(基础隐藏占比, 0, 100) + clamp(floor(难度), 1, 10))
-目标隐藏数 = min(N - 2, JS_Round(N × 实际隐藏占比 / 100))
+可选上限 = (N - 2) - 开头窗口内可隐藏数 + 开头窗口隐藏上限
+目标隐藏数 = min(可选上限, JS_Round(N × 实际隐藏占比 / 100))
 ```
 
-`N` 为路径长度，`N - 2` 用于排除首尾数字。`JS_Round` 必须按 JavaScript 的非负数舍入方式实现，即 `floor(x + 0.5)`；不能使用 C# 默认的银行家舍入。
+`N` 为路径长度，`N - 2` 用于排除首尾数字。默认 4/1 配置下，开头窗口内原本可隐藏数字 2、3、4，现在最多选择其中 1 个。`JS_Round` 必须按 JavaScript 的非负数舍入方式实现，即 `floor(x + 0.5)`；不能使用 C# 默认的银行家舍入。
 
 例如 64 格、基础隐藏 35%、难度 6：实际隐藏占比为 41%，目标隐藏数为 `round(64 × 0.41) = 26`。
 
@@ -159,7 +162,7 @@ return hidden
 
 如果难度只改变候选形态，而隐藏总量完全不变，大棋盘在高难度下仍可能保留过多直接线索，难度上限会很快饱和。额外增加 1–10 个百分点，让高难度同时具备“线索更少”和“局部分岔更复杂”两层变化。
 
-这也意味着基础隐藏占比为 0 时，不一定完全不隐藏：实际占比仍会包含难度百分点。若业务需要真正的“零隐藏模式”，应在调用算法 8 前单独短路返回空集合，而不是依赖 `requestedPercent = 0`。
+这也意味着基础隐藏占比为 0 时，不一定完全不隐藏：实际占比仍会包含难度百分点。若业务需要真正的“零隐藏模式”，应在调用算法 1 前单独短路返回空集合，而不是依赖 `requestedPercent = 0`。
 
 ## 4. 基准点新规则
 
@@ -479,19 +482,19 @@ using NCWeb.Algorithms;
 // path 必须已经按数字顺序排列。
 IReadOnlyList<Cell> path = LoadSolutionPath();
 
-int seed = Algorithm8HiddenGenerator.BuildSeed(
+int seed = Algorithm1HiddenGenerator.BuildSeed(
     generationIndex,
     rows,
     columns,
     path.Count);
 
-HashSet<int> hiddenIndices = Algorithm8HiddenGenerator.SelectHiddenLayout(
+HashSet<int> hiddenIndices = Algorithm1HiddenGenerator.SelectHiddenLayout(
     path,
     BoardShape.Square,
     requestedPercent: 35,
     targetDifficulty: 6,
     seed,
-    new Algorithm8HiddenLayoutOptions
+    new Algorithm1HiddenLayoutOptions
     {
         MaxVisibleRun = 8,
         MaxHiddenRun = 4,
@@ -505,7 +508,7 @@ Cell[] hiddenCells = hiddenIndices
     .ToArray();
 ```
 
-算法允许同一组显示数字对应多条完整解，不执行唯一解修复。如果业务端要求唯一解，需要在算法 8 输出后另加求解器校验与显格修复步骤。
+算法允许同一组显示数字对应多条完整解，不执行唯一解修复。如果业务端要求唯一解，需要在算法 1 输出后另加求解器校验与显格修复步骤。
 
 ## 13. 边界情况与明确行为
 
