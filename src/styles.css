@@ -2066,7 +2066,7 @@ html[data-theme="default"] .primary-action-button[data-action-theme="lobby"]:act
 .play-screen .icon-button { background: rgba(255,255,255,.72); box-shadow: 0 8px 22px rgba(75,99,126,.1); }
 
 .life-counter { min-width: 0; padding: 0; border: 0; color: #e60012; background: transparent; text-align: center; font-size: 26px; font-weight: 900; letter-spacing: .06em; line-height: 1; box-shadow: none; transform: translateY(10px); }
-.daily-play-progress { width: min(250px, 100%); height: 30px; margin: 4px auto 0; position: relative; }
+.daily-play-progress { width: min(250px, 100%); height: 30px; margin: 24px auto 0; position: relative; }
 .daily-play-progress[hidden] { display: none; }
 .daily-play-progress-track { height: 18px; position: absolute; top: 50%; right: 14px; left: 14px; overflow: hidden; border: 0; border-radius: 999px; background: radial-gradient(ellipse at 78% 78%, rgba(255,255,255,.98) 0%, rgba(247,248,249,.96) 42%, rgba(225,228,230,.92) 68%, rgba(199,204,207,.78) 86%, rgba(174,181,186,.56) 100%); box-shadow: none; transform: translateY(-50%); }
 .daily-play-progress-track > i { width: 0; height: 100%; display: block; border-radius: inherit; background: linear-gradient(90deg, #ff7d55, #ffb34f); box-shadow: inset 0 2px 2px rgba(255,255,255,.34), inset 0 -3px 3px rgba(177,66,35,.2); transition: width .35s cubic-bezier(.2,.8,.2,1); }

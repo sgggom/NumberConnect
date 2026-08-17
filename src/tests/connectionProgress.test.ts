@@ -21,6 +21,28 @@ describe('connection progress', () => {
     expect(findCompletion).not.toHaveBeenCalled();
   });
 
+  it('uses asynchronous completion only after leaving the cached path', async () => {
+    const cells = [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 0, y: 1 },
+      { x: 1, y: 1 },
+    ];
+    const progress = new ConnectionProgress(
+      cells.length,
+      [0, 3],
+      [],
+      new PathCompletionSolver(cells, BoardShape.Square),
+    );
+    const findCompletion = vi.fn(async () => [0, 2, 1, 3]);
+
+    progress.begin(0);
+    await expect(progress.extendAsync(2, findCompletion)).resolves.toMatchObject({ type: 'advanced' });
+    expect(findCompletion).toHaveBeenCalledTimes(1);
+    await expect(progress.extendAsync(1, findCompletion)).resolves.toMatchObject({ type: 'advanced' });
+    expect(findCompletion).toHaveBeenCalledTimes(1);
+  });
+
   it('accepts an alternate connection when the remaining board still has a full solution', () => {
     const cells = [
       { x: 0, y: 0 },

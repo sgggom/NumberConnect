@@ -1,4 +1,4 @@
-import type { PathCompletionSolver } from './pathCompletionSolver';
+import type { PathCompletionRequest, PathCompletionSolver } from './pathCompletionSolver';
 
 export type ConnectionFailure =
   | 'hidden-start'
@@ -44,6 +44,12 @@ interface ConnectionStepSnapshot {
   clickAnchor?: number;
   solutionOrder: number[];
   swapChoices: Array<SwapChoice | undefined>;
+}
+
+export interface ConnectionCompletionSnapshot {
+  fixedPositions: Array<readonly [number, number]>;
+  requiredEdges: Array<readonly [number, number]>;
+  solutionOrder: number[];
 }
 
 const edgeKey = (left: number, right: number): string =>
@@ -195,6 +201,40 @@ export class ConnectionProgress {
     return actions.length > 0 ? actions : [{ type: 'ignored' }];
   }
 
+  public async clickForwardAsync(
+    index: number,
+    findCompletion: (request: PathCompletionRequest) => Promise<number[] | null>,
+  ): Promise<ConnectionAction[]> {
+    if (!this.inBounds(index) || this.complete) return [{ type: 'ignored' }];
+    const orderedIndices = this.orderedIndices();
+    this.syncClickAnchor(orderedIndices);
+    this.clickAnchor ??= orderedIndices[0];
+    if (index === this.clickAnchor) return [{ type: 'ignored' }];
+
+    const actions: ConnectionAction[] = [];
+    if (this.active !== this.clickAnchor) {
+      const started = this.begin(this.clickAnchor, true);
+      actions.push(started);
+      if (started.type === 'wrong') return actions;
+    }
+    if (this.followConnectedClickEdge(index)) {
+      this.clickAnchor = index;
+      return actions.length > 0 ? actions : [{ type: 'ignored' }];
+    }
+    const action = await this.extendAsync(index, findCompletion);
+    if (action.type === 'wrong') {
+      actions.push({
+        type: 'wrong',
+        index,
+        reason: action.reason === 'no-completion' ? 'no-completion' : 'click-order',
+      });
+      return actions;
+    }
+    actions.push(action);
+    if (action.type === 'advanced' && (this.active === index || this.complete)) this.clickAnchor = index;
+    return actions.length > 0 ? actions : [{ type: 'ignored' }];
+  }
+
   public nextVisibleClickIndex(): number | undefined {
     const nextIndex = this.nextClickIndex();
     return nextIndex !== undefined && this.visibleIndices.has(nextIndex) ? nextIndex : undefined;
@@ -288,6 +328,13 @@ export class ConnectionProgress {
   public isNodeConnected(index: number): boolean {
     return this.connectedNodes.has(index);
   }
+  public completionSnapshot(): ConnectionCompletionSnapshot {
+    return {
+      fixedPositions: [...this.fixedPositions.entries()],
+      requiredEdges: [...this.connectedEdges.values()],
+      solutionOrder: [...this.solutionOrder],
+    };
+  }
 
   public canCompleteAfterStep(from: number, to: number): boolean {
     if (!this.inBounds(from) || !this.inBounds(to) || from === to) return false;
@@ -295,6 +342,8 @@ export class ConnectionProgress {
     if (!this.completionSolver) return true;
     const connectionKey = edgeKey(from, to);
     if (this.connectedEdges.has(connectionKey)) return true;
+    const fromPosition = this.solutionOrder.indexOf(from);
+    if (this.solutionOrder[fromPosition + ASCENDING_DIRECTION] === to) return true;
 
     return this.completionSolver.findCompletion({
       fixedPositions: this.fixedPositions,
@@ -308,6 +357,40 @@ export class ConnectionProgress {
         direction: ASCENDING_DIRECTION,
       },
     }) !== null;
+  }
+
+  public canExtendWithoutSearch(index: number): boolean {
+    if (this.active === undefined || !this.inBounds(index)) return false;
+    const fromPosition = this.solutionOrder.indexOf(this.active);
+    const toPosition = this.solutionOrder.indexOf(index);
+    const direction = Math.sign(toPosition - fromPosition) as Direction;
+    return fromPosition >= 0
+      && Math.abs(toPosition - fromPosition) === 1
+      && (this.direction === undefined || direction === this.direction);
+  }
+
+  public async extendAsync(
+    index: number,
+    findCompletion: (request: PathCompletionRequest) => Promise<number[] | null>,
+  ): Promise<ConnectionAction> {
+    if (!this.completionSolver || this.canExtendWithoutSearch(index)) return this.extend(index);
+    if (this.active === undefined || !this.inBounds(index) || this.complete || index === this.active) {
+      return { type: 'ignored' };
+    }
+    if (index === this.previous) return { type: 'ignored' };
+
+    const from = this.active;
+    const targetAlreadyConnected = this.isNodeConnected(index);
+    const connectionKey = edgeKey(from, index);
+    if (this.connectedEdges.has(connectionKey)) return { type: 'ignored' };
+    const requiredEdges = [...this.connectedEdges.values(), [from, index] as const];
+    const completion = await findCompletion({
+      fixedPositions: new Map(this.fixedPositions),
+      requiredEdges,
+      directedStep: { from, to: index, direction: this.direction },
+    });
+    if (this.active !== from || this.connectedEdges.has(connectionKey)) return { type: 'ignored' };
+    return this.applyCompletionExtension(index, targetAlreadyConnected, completion);
   }
 
   public suggestedNextHint(): ConnectionHint | undefined {
@@ -565,6 +648,17 @@ export class ConnectionProgress {
             direction: this.direction,
           },
         });
+    return this.applyCompletionExtension(index, targetAlreadyConnected, completion);
+  }
+
+  private applyCompletionExtension(
+    index: number,
+    targetAlreadyConnected: boolean,
+    completion: number[] | null,
+  ): ConnectionAction {
+    if (this.active === undefined) return { type: 'ignored' };
+    const from = this.active;
+    const connectionKey = edgeKey(from, index);
     if (!completion) {
       if (targetAlreadyConnected) return { type: 'ignored' };
       return {
