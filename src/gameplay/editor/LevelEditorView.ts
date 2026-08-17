@@ -91,7 +91,13 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
             <button id="editor-level-import" class="button button--secondary button--small">读取 JSON</button>
             <button id="editor-level-export" class="button button--secondary button--small" title="按关卡 ID 导出仅包含 data 的 JSON 文本" disabled>导出 TXT</button>
             <button id="editor-level-clear" class="button button--secondary button--small" type="button" title="清空关卡列表" disabled>清空列表</button>
-            <button id="editor-batch-playtest" class="button button--secondary button--small editor-batch-playtest" type="button" title="读取批量跑关配置模板并导出模拟结果">批量跑关</button>
+            <div class="editor-batch-playtest-row">
+              <button id="editor-batch-playtest" class="button button--secondary button--small editor-batch-playtest" type="button" title="读取批量跑关配置模板并导出模拟结果">批量跑关</button>
+              <label class="editor-batch-playtest-header">
+                <input id="editor-batch-playtest-header" type="checkbox">
+                <span>输出表头</span>
+              </label>
+            </div>
           </div>
           <div id="editor-level-list" class="editor-level-list"></div>
           <input id="editor-level-file" type="file" accept=".json,application/json" hidden>

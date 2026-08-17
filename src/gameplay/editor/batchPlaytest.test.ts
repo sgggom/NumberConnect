@@ -71,13 +71,33 @@ describe('批量跑关', () => {
     expect(generated).not.toBeNull();
     const level = createBatchPlaytestLevel(task, generated!);
     const simulation = simulateBatchPlaytestLevel(task, level);
-    const text = formatBatchPlaytestResultsTsv([{ task, level, simulation }]);
+    const text = formatBatchPlaytestResultsTsv([{ task, level, simulation }], true);
 
     expect(level.hiddenCells?.filter((cell) => (
       level.solutionPath.slice(0, 4).some((first) => first.x === cell.x && first.y === cell.y)
     )).length).toBeLessThanOrEqual(1);
     expect(text.split('\r\n')[0].split('\t')).toEqual([...BATCH_PLAYTEST_RESULT_HEADERS]);
-    expect(text).toContain('成功\t\tCFG-001\t冒烟');
+    expect(BATCH_PLAYTEST_RESULT_HEADERS.slice(0, 2)).toEqual(['配置ID', '输出标签']);
+    expect(BATCH_PLAYTEST_RESULT_HEADERS).not.toContain('平均错误数');
+    expect(BATCH_PLAYTEST_RESULT_HEADERS).toEqual(expect.arrayContaining([
+      '低推理平均错误数', '中推理平均错误数', '高推理平均错误数',
+    ]));
+    expect(simulation.errorCount).toBe(simulation.averageErrorCountByReasoning.medium);
+    expect(text).toContain('CFG-001\t冒烟');
+    const values = text.split('\r\n')[1].split('\t');
+    expect(values).toHaveLength(BATCH_PLAYTEST_RESULT_HEADERS.length);
+    expect(values[BATCH_PLAYTEST_RESULT_HEADERS.indexOf('推理能力')]).toBe('中');
+    expect(Number(values[BATCH_PLAYTEST_RESULT_HEADERS.indexOf('中推理平均错误数')]))
+      .toBeCloseTo(simulation.errorCount);
+    const rightAngleRatio = Number(values[BATCH_PLAYTEST_RESULT_HEADERS.indexOf('直角拐弯占比')]);
+    expect(rightAngleRatio).toBeGreaterThanOrEqual(0);
+    expect(rightAngleRatio).toBeLessThanOrEqual(1);
+    expect(Number(values[BATCH_PLAYTEST_RESULT_HEADERS.indexOf('平均路径长度（拐弯的拐点算作端点，看整个棋盘中的线段平均长度）')]))
+      .toBeGreaterThan(0);
+    expect(['左上', '右上', '左下', '右下', '靠中'])
+      .toContain(values[BATCH_PLAYTEST_RESULT_HEADERS.indexOf('起点位置（分为左上/右上/左下/右下/靠中）')]);
+    expect(formatBatchPlaytestResultsTsv([{ task, level, simulation }]).startsWith('CFG-001\t冒烟'))
+      .toBe(true);
   });
 
   it('最多并行执行指定数量的任务并保持结果顺序', async () => {

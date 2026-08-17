@@ -2053,6 +2053,7 @@ export class LevelEditorController {
     const file = input.files?.[0];
     input.value = '';
     if (!file || this.isBatchPlaytestRunning) return;
+    const includeHeader = this.query<HTMLInputElement>('#editor-batch-playtest-header').checked;
 
     this.cancelPathAnimation();
     this.cancelPathCalculation();
@@ -2071,7 +2072,7 @@ export class LevelEditorController {
       const tasks = createBatchPlaytestTasks(configs);
       this.batchPlaytestProgress.total = tasks.length;
       this.renderBatchPlaytestButton();
-      this.setStatus(`已读取 ${configs.length} 组配置，使用 ${Math.min(MAX_BATCH_PLAYTEST_CONCURRENCY, tasks.length)} 个线程并行处理 ${tasks.length} 关。`);
+      this.setStatus(`已读取 ${configs.length} 组配置，使用 ${Math.min(MAX_BATCH_PLAYTEST_CONCURRENCY, tasks.length)} 个线程并行处理 ${tasks.length} 关，每关分别跑低中高三档推理。`);
 
       const results = await runConcurrentBatchTaskPool(
         tasks,
@@ -2158,7 +2159,7 @@ export class LevelEditorController {
       if (run !== this.batchPlaytestRun) return;
       const succeeded = results.filter(({ level, simulation }) => level && simulation).length;
       const failed = results.length - succeeded;
-      this.downloadTxt(formatBatchPlaytestResultsTsv(results), '批量跑关结果.txt');
+      this.downloadTxt(formatBatchPlaytestResultsTsv(results, includeHeader), '批量跑关结果.txt');
       completionMessage = `批量跑关完成：成功 ${succeeded} 关${failed > 0 ? `，失败 ${failed} 关` : ''}；结果已导出。`;
       completionIsError = succeeded === 0;
     } catch (error) {
@@ -2187,11 +2188,13 @@ export class LevelEditorController {
 
   private renderBatchPlaytestButton(): void {
     const button = this.query<HTMLButtonElement>('#editor-batch-playtest');
+    const headerCheckbox = this.query<HTMLInputElement>('#editor-batch-playtest-header');
     const { completed, running, failed, total } = this.batchPlaytestProgress;
     button.disabled = !this.isBatchPlaytestRunning
       && (this.isPathCalculating || this.isPathAnimating || this.isImageRecognizing);
     button.classList.toggle('is-running', this.isBatchPlaytestRunning);
     button.setAttribute('aria-busy', String(this.isBatchPlaytestRunning));
+    headerCheckbox.disabled = this.isBatchPlaytestRunning;
     button.textContent = this.isBatchPlaytestRunning
       ? `取消跑关 · ${completed}/${total || '…'} · ${running} 运行${failed > 0 ? ` · ${failed} 失败` : ''}`
       : '批量跑关';

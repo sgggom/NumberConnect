@@ -8,12 +8,28 @@ export interface EditorLevelMetrics {
   acuteAngleTurns: number;
   obtuseAngleTurns: number;
   straightContinuations: number;
+  rightAngleTurnRatio: number;
+  acuteAngleTurnRatio: number;
+  obtuseAngleTurnRatio: number;
+  averageSegmentLength: number;
+  upwardMoveRatio: number;
+  downwardMoveRatio: number;
+  leftwardMoveRatio: number;
+  rightwardMoveRatio: number;
+  upperLeftMoveRatio: number;
+  upperRightMoveRatio: number;
+  lowerLeftMoveRatio: number;
+  lowerRightMoveRatio: number;
+  startRegion: EditorEndpointRegion;
+  endRegion: EditorEndpointRegion;
   pathCrossings: number;
   hiddenCount: number;
   hiddenRatio: number;
   longestHiddenRun: number;
   longestVisibleRun: number;
 }
+
+export type EditorEndpointRegion = '左上' | '右上' | '左下' | '右下' | '靠中';
 
 interface EditorLevelMetricsInput {
   path: ReadonlyArray<EditorCell>;
@@ -52,6 +68,31 @@ const interiorAngle = (previous: EditorCell, current: EditorCell, next: EditorCe
   return Math.acos(cosine) * 180 / Math.PI;
 };
 
+const endpointRegion = (
+  cell: EditorCell | undefined,
+  projectedPath: ReadonlyArray<EditorCell>,
+): EditorEndpointRegion => {
+  if (!cell || projectedPath.length === 0) return '靠中';
+  const xs = projectedPath.map((point) => point.x);
+  const ys = projectedPath.map((point) => point.y);
+  const minimumX = Math.min(...xs);
+  const maximumX = Math.max(...xs);
+  const minimumY = Math.min(...ys);
+  const maximumY = Math.max(...ys);
+  const centerX = (minimumX + maximumX) / 2;
+  const centerY = (minimumY + maximumY) / 2;
+  const centerHalfWidth = (maximumX - minimumX) / 6;
+  const centerHalfHeight = (maximumY - minimumY) / 6;
+  if (
+    Math.abs(cell.x - centerX) <= centerHalfWidth + Number.EPSILON
+    && Math.abs(cell.y - centerY) <= centerHalfHeight + Number.EPSILON
+  ) {
+    return '靠中';
+  }
+  if (cell.y <= centerY) return cell.x <= centerX ? '左上' : '右上';
+  return cell.x <= centerX ? '左下' : '右下';
+};
+
 export const classifyEditorTurn = (
   previous: EditorCell | undefined,
   current: EditorCell,
@@ -78,6 +119,7 @@ export const calculateEditorLevelMetrics = ({
   let acuteAngleTurns = 0;
   let obtuseAngleTurns = 0;
   let straightContinuations = 0;
+  const projectedPath = path.map((cell) => projectCell(cell, shape));
 
   for (let index = 1; index < path.length - 1; index += 1) {
     const turnType = classifyEditorTurn(
@@ -91,6 +133,46 @@ export const calculateEditorLevelMetrics = ({
     else if (turnType === 'acute') acuteAngleTurns += 1;
     else obtuseAngleTurns += 1;
   }
+
+  let totalPathLength = 0;
+  let upwardMoves = 0;
+  let downwardMoves = 0;
+  let leftwardMoves = 0;
+  let rightwardMoves = 0;
+  let upperLeftMoves = 0;
+  let upperRightMoves = 0;
+  let lowerLeftMoves = 0;
+  let lowerRightMoves = 0;
+  for (let index = 1; index < projectedPath.length; index += 1) {
+    const deltaX = projectedPath[index].x - projectedPath[index - 1].x;
+    const deltaY = projectedPath[index].y - projectedPath[index - 1].y;
+    totalPathLength += Math.hypot(deltaX, deltaY);
+    const horizontalDirection = deltaX < -Number.EPSILON
+      ? 'left'
+      : deltaX > Number.EPSILON ? 'right' : 'center';
+    const verticalDirection = deltaY < -Number.EPSILON
+      ? 'up'
+      : deltaY > Number.EPSILON ? 'down' : 'center';
+    if (horizontalDirection === 'center') {
+      if (verticalDirection === 'up') upwardMoves += 1;
+      else if (verticalDirection === 'down') downwardMoves += 1;
+    } else if (verticalDirection === 'center') {
+      if (horizontalDirection === 'left') leftwardMoves += 1;
+      else rightwardMoves += 1;
+    } else if (verticalDirection === 'up') {
+      if (horizontalDirection === 'left') upperLeftMoves += 1;
+      else upperRightMoves += 1;
+    } else if (horizontalDirection === 'left') {
+      lowerLeftMoves += 1;
+    } else {
+      lowerRightMoves += 1;
+    }
+  }
+  const moveCount = Math.max(0, path.length - 1);
+  const segmentCount = moveCount === 0
+    ? 0
+    : 1 + rightAngleTurns + acuteAngleTurns + obtuseAngleTurns;
+  const turnCellCount = Math.max(0, path.length - 2);
 
   let hiddenCount = 0;
   let hiddenRun = 0;
@@ -115,6 +197,20 @@ export const calculateEditorLevelMetrics = ({
     acuteAngleTurns,
     obtuseAngleTurns,
     straightContinuations,
+    rightAngleTurnRatio: turnCellCount === 0 ? 0 : rightAngleTurns / turnCellCount,
+    acuteAngleTurnRatio: turnCellCount === 0 ? 0 : acuteAngleTurns / turnCellCount,
+    obtuseAngleTurnRatio: turnCellCount === 0 ? 0 : obtuseAngleTurns / turnCellCount,
+    averageSegmentLength: segmentCount === 0 ? 0 : totalPathLength / segmentCount,
+    upwardMoveRatio: moveCount === 0 ? 0 : upwardMoves / moveCount,
+    downwardMoveRatio: moveCount === 0 ? 0 : downwardMoves / moveCount,
+    leftwardMoveRatio: moveCount === 0 ? 0 : leftwardMoves / moveCount,
+    rightwardMoveRatio: moveCount === 0 ? 0 : rightwardMoves / moveCount,
+    upperLeftMoveRatio: moveCount === 0 ? 0 : upperLeftMoves / moveCount,
+    upperRightMoveRatio: moveCount === 0 ? 0 : upperRightMoves / moveCount,
+    lowerLeftMoveRatio: moveCount === 0 ? 0 : lowerLeftMoves / moveCount,
+    lowerRightMoveRatio: moveCount === 0 ? 0 : lowerRightMoves / moveCount,
+    startRegion: endpointRegion(projectedPath[0], projectedPath),
+    endRegion: endpointRegion(projectedPath.at(-1), projectedPath),
     pathCrossings: countEditorPathCrossings(path, shape),
     hiddenCount,
     hiddenRatio: path.length === 0 ? 0 : hiddenCount / path.length,

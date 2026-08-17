@@ -523,6 +523,38 @@ describe('level editor path generation', () => {
     expect(metricsFor([{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }]).rightAngleTurns).toBe(1);
     expect(metricsFor([{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: -1 }]).acuteAngleTurns).toBe(1);
     expect(metricsFor([{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 1 }]).obtuseAngleTurns).toBe(1);
+
+    const mixed = metricsFor([
+      { x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }, { x: 2, y: 1 },
+    ]);
+    expect(mixed.rightAngleTurnRatio).toBe(0.5);
+    expect(mixed.acuteAngleTurnRatio).toBe(0);
+    expect(mixed.obtuseAngleTurnRatio).toBe(0);
+  });
+
+  it('calculates path segments, movement ratios, and endpoint regions', () => {
+    const metrics = calculateEditorLevelMetrics({
+      path: [
+        { x: 0, y: 0 },
+        { x: 1, y: 0 },
+        { x: 2, y: 1 },
+        { x: 2, y: 2 },
+      ],
+      hiddenCellKeys: new Set(),
+      shape: 'square',
+    });
+
+    expect(metrics.averageSegmentLength).toBeCloseTo((2 + Math.SQRT2) / 3);
+    expect(metrics.upwardMoveRatio).toBe(0);
+    expect(metrics.downwardMoveRatio).toBeCloseTo(1 / 3);
+    expect(metrics.leftwardMoveRatio).toBe(0);
+    expect(metrics.rightwardMoveRatio).toBeCloseTo(1 / 3);
+    expect(metrics.upperLeftMoveRatio).toBe(0);
+    expect(metrics.upperRightMoveRatio).toBe(0);
+    expect(metrics.lowerLeftMoveRatio).toBe(0);
+    expect(metrics.lowerRightMoveRatio).toBeCloseTo(1 / 3);
+    expect(metrics.startRegion).toBe('左上');
+    expect(metrics.endRegion).toBe('右下');
   });
 
   it('calculates crossings, hidden ratio, and longest visibility runs', () => {

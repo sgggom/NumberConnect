@@ -36,12 +36,18 @@ const REQUIRED_HEADERS = [
 ] as const;
 
 export const BATCH_PLAYTEST_RESULT_HEADERS = [
-  '状态', '错误信息', '配置ID', '输出标签', '配置表行号', '配置内关卡序号', '关卡JSON',
+  '配置ID', '输出标签', '配置表行号', '配置内关卡序号', '关卡JSON',
   '棋盘形状', '行数', '列数', '格子数', '随机种子', '最大交叉数量', '路径拐弯概率 %',
   '基础隐藏占比 %', '目标难度', '配置实际隐藏占比 %', '最长连续显示限制', '最长连续隐藏限制',
   '实际隐藏数', '实际隐藏占比 %', '实际最长连续显示', '实际最长连续隐藏', '路径交叉数量',
-  '每关跑关次数', '推理能力', '平均总步数', '平均错误数', '平均可连接数量', '直接连接占比 %',
+  '每关跑关次数', '推理能力', '平均总步数', '低推理平均错误数', '中推理平均错误数',
+  '高推理平均错误数', '平均可连接数量', '直接连接占比 %',
   '平均距离下个显示数字', '平均每步难度分', '前期平均难度分', '中期平均难度分', '后期平均难度分',
+  '直角拐弯占比', '锐角拐弯占比', '钝角拐弯占比',
+  '平均路径长度（拐弯的拐点算作端点，看整个棋盘中的线段平均长度）',
+  '向上移动占比', '向下移动占比', '向左移动占比', '向右移动占比',
+  '向左上移动占比', '向右上移动占比', '向左下移动占比', '向右下移动占比',
+  '起点位置（分为左上/右上/左下/右下/靠中）', '终点位置',
 ] as const;
 
 export const MAX_BATCH_PLAYTEST_LEVELS = 500;
@@ -79,8 +85,12 @@ export interface BatchPlaytestTask {
 export interface BatchPlaytestResult {
   task: BatchPlaytestTask;
   level?: LevelData;
-  simulation?: SimulatedPlayResult;
+  simulation?: BatchPlaytestSimulation;
   error?: string;
+}
+
+export interface BatchPlaytestSimulation extends SimulatedPlayResult {
+  averageErrorCountByReasoning: Record<SimulationReasoningLevel, number>;
 }
 
 export interface BatchTaskPoolProgress {
@@ -273,7 +283,7 @@ export const parseBatchPlaytestConfigRows = (
   if (configs.length === 0) throw new Error('没有启用的跑关配置，请至少将一行“启用”设为“是”。');
   const totalLevels = configs.reduce((sum, config) => sum + config.generationCount, 0);
   const totalSimulations = configs.reduce(
-    (sum, config) => sum + config.generationCount * config.simulationRunCount,
+    (sum, config) => sum + config.generationCount * config.simulationRunCount * 3,
     0,
   );
   if (totalLevels > MAX_BATCH_PLAYTEST_LEVELS) {
@@ -370,18 +380,34 @@ export const createBatchPlaytestLevel = (
 export const simulateBatchPlaytestLevel = (
   task: BatchPlaytestTask,
   level: LevelData,
-): SimulatedPlayResult => {
+): BatchPlaytestSimulation => {
   const hiddenCellKeys = new Set((level.hiddenCells ?? []).map((cell) => `${cell.x},${cell.y}`));
-  const results = Array.from({ length: task.config.simulationRunCount }, (_, runIndex) => (
-    simulateLevelPlay({
-      path: level.solutionPath,
-      hiddenCellKeys,
-      shape: task.config.shape,
-      reasoningLevel: task.config.reasoningLevel,
-      random: createRandom(mixedSeed(task, runIndex + 1000)),
-    })
-  ));
-  return results.length === 1 ? results[0] : averageSimulatedPlayResults(results);
+  const reasoningLevels: ReadonlyArray<SimulationReasoningLevel> = ['low', 'medium', 'high'];
+  const resultsByReasoning = new Map(reasoningLevels.map((reasoningLevel) => [
+    reasoningLevel,
+    Array.from({ length: task.config.simulationRunCount }, (_, runIndex) => (
+      simulateLevelPlay({
+        path: level.solutionPath,
+        hiddenCellKeys,
+        shape: task.config.shape,
+        reasoningLevel,
+        random: createRandom(mixedSeed(task, runIndex + 1000)),
+      })
+    )),
+  ]));
+  const summarized = (reasoningLevel: SimulationReasoningLevel): SimulatedPlayResult => {
+    const results = resultsByReasoning.get(reasoningLevel) ?? [];
+    return results.length === 1 ? results[0] : averageSimulatedPlayResults(results);
+  };
+  const mediumSimulation = summarized('medium');
+  return {
+    ...mediumSimulation,
+    averageErrorCountByReasoning: {
+      low: summarized('low').errorCount,
+      medium: mediumSimulation.errorCount,
+      high: summarized('high').errorCount,
+    },
+  };
 };
 
 const rounded = (value: number): number => Math.round(value * 100) / 100;
@@ -401,6 +427,7 @@ const safeTsv = (value: unknown): string => String(value ?? '').replace(/[\t\r\n
 
 export const formatBatchPlaytestResultsTsv = (
   results: ReadonlyArray<BatchPlaytestResult>,
+  includeHeader = false,
 ): string => {
   const rows = results.map((result) => {
     const { task, level, simulation } = result;
@@ -409,9 +436,9 @@ export const formatBatchPlaytestResultsTsv = (
       const failureRow = Array.from({ length: BATCH_PLAYTEST_RESULT_HEADERS.length }, () => '');
       failureRow.splice(
         0,
-        10,
-        '失败', result.error ?? '关卡生成失败', config.id, config.outputLabel,
-        String(config.sourceRow), String(task.generationNumber), '', shapeLabel(config.shape),
+        8,
+        config.id, config.outputLabel, String(config.sourceRow), String(task.generationNumber),
+        '', shapeLabel(config.shape),
         String(config.rows), String(config.columns),
       );
       return failureRow;
@@ -425,21 +452,31 @@ export const formatBatchPlaytestResultsTsv = (
     const difficulty = summarizeDifficultyScores(simulation.steps.map((step) => step.difficultyScore));
     const configuredHiddenPercent = Math.min(100, config.hiddenPercent + config.targetDifficulty);
     return [
-      '成功', '', config.id, config.outputLabel, config.sourceRow, task.generationNumber,
+      config.id, config.outputLabel, config.sourceRow, task.generationNumber,
       JSON.stringify(encodeCompactLevelCollection([level])[0]), shapeLabel(config.shape),
       config.rows, config.columns, level.activeCells.length, config.seed, config.targetCrossings,
       config.turnProbability, config.hiddenPercent, config.targetDifficulty, configuredHiddenPercent,
       config.maxVisibleRun, config.maxHiddenRun, metrics.hiddenCount, rounded(metrics.hiddenRatio * 100),
       metrics.longestVisibleRun, metrics.longestHiddenRun, metrics.pathCrossings,
-      config.simulationRunCount, reasoningLabel(config.reasoningLevel), rounded(simulation.totalSteps),
-      rounded(simulation.errorCount), rounded(average(simulation.steps.map((step) => step.connectableCount))),
+      config.simulationRunCount, reasoningLabel('medium'), rounded(simulation.totalSteps),
+      rounded(simulation.averageErrorCountByReasoning.low),
+      rounded(simulation.averageErrorCountByReasoning.medium),
+      rounded(simulation.averageErrorCountByReasoning.high),
+      rounded(average(simulation.steps.map((step) => step.connectableCount))),
       rounded(average(simulation.steps.map((step) => step.directConnectRate ?? Number(step.directConnect))) * 100),
       rounded(average(simulation.steps.map((step) => step.distanceToNextVisibleNumber))),
       rounded(difficulty.averageStepDifficultyScore), rounded(difficulty.earlyAverageDifficultyScore),
       rounded(difficulty.middleAverageDifficultyScore), rounded(difficulty.lateAverageDifficultyScore),
+      rounded(metrics.rightAngleTurnRatio), rounded(metrics.acuteAngleTurnRatio),
+      rounded(metrics.obtuseAngleTurnRatio),
+      rounded(metrics.averageSegmentLength), rounded(metrics.upwardMoveRatio),
+      rounded(metrics.downwardMoveRatio), rounded(metrics.leftwardMoveRatio),
+      rounded(metrics.rightwardMoveRatio), rounded(metrics.upperLeftMoveRatio),
+      rounded(metrics.upperRightMoveRatio), rounded(metrics.lowerLeftMoveRatio),
+      rounded(metrics.lowerRightMoveRatio), metrics.startRegion, metrics.endRegion,
     ];
   });
-  return [BATCH_PLAYTEST_RESULT_HEADERS, ...rows]
+  return [...(includeHeader ? [BATCH_PLAYTEST_RESULT_HEADERS] : []), ...rows]
     .map((row) => row.map(safeTsv).join('\t'))
     .join('\r\n');
 };
