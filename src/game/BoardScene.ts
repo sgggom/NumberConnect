@@ -243,6 +243,7 @@ export class BoardScene extends Phaser.Scene {
   private raisedConnectedCellIndex?: number;
   private pendingStepReward?: PendingStepRewardFeedback;
   private completionCheckPending = false;
+  private connectionComboCount = 0;
   private readonly heldScoreRequests = new Map<string, Promise<BoardHoldScore | undefined>>();
   private heldScoreDisplayToken = 0;
   private paused = true;
@@ -308,6 +309,7 @@ export class BoardScene extends Phaser.Scene {
   };
 
   public setBoard(session: BoardSessionInput): void {
+    this.resetConnectionComboEdge();
     this.cancelAutoClickSequence();
     this.cancelBoardEntrance();
     this.clearNeighborhoodPreview();
@@ -702,6 +704,7 @@ export class BoardScene extends Phaser.Scene {
     );
 
     this.session = session;
+    this.resetConnectionComboEdge();
     this.connection = this.createConnectionProgress(session);
     this.boardViewportScroll = { x: 0.5, y: 0.5 };
     this.isDrawing = false;
@@ -2099,6 +2102,7 @@ export class BoardScene extends Phaser.Scene {
     if (!this.session || !usesClickInput(this.session.inputMode)) this.connection?.endStroke();
     this.view?.pointerLine.clear();
     if (this.connection?.complete !== true) this.lowerRaisedConnectedCell();
+    if (wasDrawing && this.connection?.complete !== true) this.resetConnectionComboEdge();
     if (wasDrawing) this.refreshView();
     this.clearNeighborhoodPreview();
   }
@@ -2401,7 +2405,12 @@ export class BoardScene extends Phaser.Scene {
       this.wrongFeedbackActive = true;
       const shouldLoseLife = !this.wrongCellIndexes.has(action.index);
       this.flashWrong(action.index);
+      this.resetConnectionComboEdge();
       this.playSound('wrong');
+      this.cancelAutoClickSequence();
+      this.pendingStepReward = undefined;
+      this.finishPointerInteraction();
+      this.connection?.endStroke();
       this.session.onWrong(this.connectionFailureMessage(action.reason), shouldLoseLife);
       return;
     }
@@ -2438,7 +2447,8 @@ export class BoardScene extends Phaser.Scene {
         });
       });
       completionWaitsForLanding = action.complete && feedbackStarted;
-      this.playSound(`combo-${Math.min(8, action.progress - 1)}`);
+      const comboLevel = this.advanceConnectionComboEdge(action.index);
+      if (comboLevel !== undefined) this.playSound(`combo-${comboLevel}`);
     }
     this.session.onProgress(action.progress, this.session.level.solutionPath.length);
 
@@ -2718,6 +2728,7 @@ export class BoardScene extends Phaser.Scene {
     if (!cell) return;
     this.wrongCellIndexes.add(index);
     this.refreshView();
+    this.playCellRipple(index, COLORS.wrongRipple);
   }
 
   private playSound(key: string): void {
@@ -2727,6 +2738,61 @@ export class BoardScene extends Phaser.Scene {
     } catch {
       // Browsers may keep WebAudio locked until the first explicit pointer gesture.
     }
+  }
+
+  private advanceConnectionComboEdge(index: number): number | undefined {
+    this.connectionComboCount += 1;
+    if (this.connectionComboCount < 2) return undefined;
+    const comboProgress = this.connectionComboCount - 1;
+    const soundLevel = Phaser.Math.Clamp(comboProgress, 1, 8);
+    const numberCount = this.session?.level.solutionPath.length ?? 0;
+    const totalComboProgress = Math.max(10, Math.ceil(numberCount / 4));
+    const progress = Math.min(1, comboProgress / totalComboProgress);
+    const edge = this.connectionComboEdge();
+    const pathCell = this.session?.level.solutionPath[index];
+    const cell = pathCell && this.view ? this.view.cells.get(cellKey(pathCell)) : undefined;
+    const ballColor = this.view
+      ? this.view.artworkEnabled && cell
+        ? cell.color
+        : this.view.ballColor
+      : 0xff9f43;
+    edge?.style.setProperty(
+      '--connection-combo-color',
+      `#${ballColor.toString(16).padStart(6, '0')}`,
+    );
+    edge?.style.setProperty(
+      '--connection-combo-horizontal-length',
+      `${Math.min(50, progress * 100)}%`,
+    );
+    edge?.style.setProperty(
+      '--connection-combo-vertical-length',
+      `${Math.max(0, (progress - 0.5) * 100)}%`,
+    );
+    edge?.classList.add('is-active');
+    if (progress >= 1) {
+      this.clearConnectionComboEdgeVisual();
+      this.connectionComboCount = 0;
+      this.session?.onComboComplete?.();
+    }
+    return soundLevel;
+  }
+
+  private resetConnectionComboEdge(): void {
+    this.connectionComboCount = 0;
+    this.clearConnectionComboEdgeVisual();
+  }
+
+  private clearConnectionComboEdgeVisual(): void {
+    const edge = this.connectionComboEdge();
+    edge?.classList.remove('is-active');
+    edge?.style.setProperty('--connection-combo-horizontal-length', '0%');
+    edge?.style.setProperty('--connection-combo-vertical-length', '0%');
+  }
+
+  private connectionComboEdge(): HTMLElement | null {
+    return this.sys.game.canvas
+      .closest<HTMLElement>('.play-screen')
+      ?.querySelector<HTMLElement>('#connection-combo-edge') ?? null;
   }
 
   private disableViewInput(view: BoardView): void {

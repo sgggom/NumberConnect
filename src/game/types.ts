@@ -189,6 +189,7 @@ export interface BoardSessionInput {
   onProgress: (current: number, total: number) => void;
   onWrong: (message: string, shouldLoseLife: boolean) => void;
   onComplete: () => void;
+  onComboComplete?: () => void;
   onNeighborhoodPreview?: (preview: BoardNeighborhoodPreview | null) => void;
   onHoldScore?: (score: BoardHoldScore | null) => void;
 }
