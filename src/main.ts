@@ -7,8 +7,7 @@ import { query } from './app/dom';
 import { EventBus } from './core/events/EventBus';
 import { BoardScene } from './game/BoardScene';
 import {
-  dailyChallengeSeed,
-  dailyChallengeStage,
+  createDailyChallengeLevel,
   daysInMonth,
   formatDailyDateKey,
   isDailyDateKey,
@@ -18,6 +17,7 @@ import {
 import { getEndlessStageSettings } from './game/difficulty';
 import { selectHiddenCells } from './game/hidden';
 import { formatLives } from './game/lives';
+import { hasUnlimitedLives } from './game/lifeRules';
 import { levelBallColorCss } from './game/levelTheme';
 import {
   chooseWatercolorReveal,
@@ -392,6 +392,10 @@ class NumberConnectApp {
   private readonly holdScoreExtra = query<HTMLElement>('#hold-score-extra');
   private readonly holdScoreFeasible = query<HTMLElement>('#hold-score-feasible');
   private readonly livesLabel = query<HTMLElement>('#play-lives');
+  private readonly dailyPlayProgress = query<HTMLElement>('#daily-play-progress');
+  private readonly dailyPlayProgressFill = query<HTMLElement>('#daily-play-progress-fill');
+  private readonly dailyPlayProgressCurrent = query<HTMLElement>('#daily-play-progress-current');
+  private readonly dailyPlayProgressEnd = query<HTMLElement>('#daily-play-progress-end');
   private readonly powerUpStatus = query<HTMLElement>('#power-up-status');
   private readonly undoStepButton = query<HTMLButtonElement>('#undo-step-button');
   private readonly watercolorBrushButton = query<HTMLButtonElement>('#watercolor-brush-button');
@@ -560,7 +564,6 @@ class NumberConnectApp {
   private dailyCalendarMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1, 12);
   private dailyChallengeDateKey = formatDailyDateKey(new Date());
   private completedDailyChallenges = loadCompletedDailyChallenges();
-  private dailyChallengeProfile?: EndlessStageSettings;
   private favoritesTab: 'album' | 'beads' = 'album';
   private activeNeighborhoodPreview: BoardNeighborhoodPreview | null = null;
   private manualTouchPreviewPosition?: { left: number; top: number };
@@ -1962,18 +1965,15 @@ class NumberConnectApp {
   private async startDailyChallenge(dateKey: string): Promise<void> {
     if (!parseDailyDateKey(dateKey) || dateKey > formatDailyDateKey(new Date())) return;
     this.dailyChallengeDateKey = dateKey;
-    const profile = getEndlessStageSettings(dailyChallengeStage(dateKey));
-    this.dailyChallengeProfile = profile;
+    const level = createDailyChallengeLevel(dateKey);
     this.playContext = 'daily';
     this.mode = 'normal';
     this.lives = 3;
+    this.currentProgress = 0;
+    this.currentTotal = level.solutionPath.length;
     this.renderLives();
     await this.showPlayScreen();
-    const generated = generateEndlessLevel(profile, dailyChallengeSeed(dateKey));
-    this.setCurrentBoard({
-      ...generated,
-      levelId: Number(dateKey.replaceAll('-', '')),
-    }, profile);
+    this.setCurrentBoard(level);
   }
 
   private async startBeadLevel(): Promise<void> {
@@ -2147,6 +2147,7 @@ class NumberConnectApp {
       onProgress: (current, total) => {
         this.currentProgress = current;
         this.currentTotal = total;
+        this.renderDailyPlayProgress();
         this.renderPowerUps();
         if (this.playContext !== 'editor-playtest') {
           this.events.emit('level.progressed', { ...eventContext, current, total });
@@ -2188,6 +2189,7 @@ class NumberConnectApp {
     this.resetPowerUps();
     this.currentProgress = 0;
     this.currentTotal = level.solutionPath.length;
+    this.renderDailyPlayProgress();
     this.updateGameHeading(level);
     this.prepareMainGameplayShowcase(level);
     this.boardScene.setBoard(this.makeSession(level, profile));
@@ -2681,6 +2683,12 @@ class NumberConnectApp {
   }
 
   private renderLives(animation?: { lost?: boolean; gainedFrom?: number }): void {
+    if (hasUnlimitedLives(this.playContext)) {
+      this.livesLabel.hidden = true;
+      this.renderDailyPlayProgress();
+      return;
+    }
+    this.dailyPlayProgress.hidden = true;
     if (this.playContext === 'editor-playtest') {
       this.livesLabel.hidden = false;
       this.livesLabel.textContent = `错误 × ${this.editorPlaytestErrorCount}`;
@@ -2747,6 +2755,25 @@ class NumberConnectApp {
     this.livesLabel.setAttribute('aria-label', `生命值 ${this.lives}`);
   }
 
+  private renderDailyPlayProgress(): void {
+    if (this.playContext !== 'daily') {
+      this.dailyPlayProgress.hidden = true;
+      return;
+    }
+    const total = Math.max(0, this.currentTotal);
+    const current = Math.max(0, Math.min(this.currentProgress, total));
+    const currentNumber = total > 0 ? Math.max(1, current) : 0;
+    const percent = total > 1 ? (currentNumber - 1) / (total - 1) * 100 : 0;
+    this.dailyPlayProgress.hidden = false;
+    this.dailyPlayProgressFill.style.width = `${percent}%`;
+    this.dailyPlayProgressCurrent.style.left = `calc((100% - 28px) * ${percent / 100})`;
+    this.dailyPlayProgressCurrent.textContent = String(currentNumber);
+    this.dailyPlayProgressEnd.textContent = String(total);
+    this.dailyPlayProgress.setAttribute('aria-valuemax', String(total));
+    this.dailyPlayProgress.setAttribute('aria-valuenow', String(current));
+    this.dailyPlayProgress.setAttribute('aria-valuetext', `已完成 ${current}，共 ${total}`);
+  }
+
   private recordEndlessProgress(): void {
     if (this.endlessSessionActive) this.endlessHighScore = Math.max(this.endlessHighScore, this.stage);
     saveEndlessRunState({
@@ -2772,6 +2799,7 @@ class NumberConnectApp {
   }
 
   private handleWrong(): void {
+    if (hasUnlimitedLives(this.playContext)) return;
     if (this.playContext === 'editor-playtest') {
       this.editorPlaytestErrorCount += 1;
       this.renderLives();
@@ -3614,10 +3642,7 @@ class NumberConnectApp {
       const profile = getEndlessStageSettings(this.stage);
       this.setCurrentBoard(this.createEndlessLevel(this.stage, profile), profile);
     } else if (this.currentLevel) {
-      this.setCurrentBoard(
-        this.currentLevel,
-        this.playContext === 'daily' ? this.dailyChallengeProfile : undefined,
-      );
+      this.setCurrentBoard(this.currentLevel);
     }
   }
 

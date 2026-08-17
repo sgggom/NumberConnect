@@ -1,4 +1,11 @@
+import dailyChallengeLevels from './dailyChallengeLevels.json';
+import { decodeCompactLevelData } from './levelDataFormat';
+import type { LevelData } from './types';
+
 const DAILY_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
+
+export const DAILY_CHALLENGE_LEVEL_COUNT = dailyChallengeLevels.length;
 
 export const formatDailyDateKey = (date: Date): string => {
   const year = date.getFullYear();
@@ -23,16 +30,26 @@ export const isDailyDateKey = (value: unknown): value is string => (
   typeof value === 'string' && parseDailyDateKey(value) !== null
 );
 
-export const dailyChallengeSeed = (dateKey: string): number => {
-  let hash = 2166136261;
-  for (const character of dateKey) {
-    hash ^= character.charCodeAt(0);
-    hash = Math.imul(hash, 16777619);
-  }
-  return hash >>> 1;
+export const dailyChallengeLevelIndex = (dateKey: string): number => {
+  const date = parseDailyDateKey(dateKey);
+  if (!date) throw new Error(`无效的每日挑战日期：${dateKey}`);
+  const dayNumber = Math.floor(Date.UTC(
+    date.getFullYear(),
+    date.getMonth(),
+    date.getDate(),
+  ) / MILLISECONDS_PER_DAY);
+  return (
+    dayNumber % DAILY_CHALLENGE_LEVEL_COUNT + DAILY_CHALLENGE_LEVEL_COUNT
+  ) % DAILY_CHALLENGE_LEVEL_COUNT;
 };
 
-export const dailyChallengeStage = (dateKey: string): number => 2 + dailyChallengeSeed(dateKey) % 9;
+export const createDailyChallengeLevel = (dateKey: string): LevelData => (
+  decodeCompactLevelData(
+    dailyChallengeLevels[dailyChallengeLevelIndex(dateKey)],
+    Number(dateKey.replaceAll('-', '')),
+    false,
+  )
+);
 
 export const mondayFirstOffset = (year: number, month: number): number => (
   new Date(year, month, 1, 12).getDay() + 6

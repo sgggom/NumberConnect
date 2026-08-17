@@ -5,7 +5,7 @@ import {
   MODE5_DIFFICULTY_CONFIGS,
   createMode5HiddenCells,
   createMode5StageHiddenCells,
-  mode5Algorithm8Seed,
+  mode5Algorithm1Seed,
   mode5EffectiveHiddenPercent,
   resolveMode5DifficultyConfig,
 } from './mode5HiddenLayout';
@@ -53,9 +53,9 @@ describe('玩法5独立隐藏布局', () => {
     expect(first.has(cellKey(level.solutionPath.at(-1)!))).toBe(false);
   });
 
-  it('难度会进入玩法5自己的算法8种子', () => {
+  it('难度会进入玩法5自己的算法1种子', () => {
     const level = makeLevel();
-    expect(mode5Algorithm8Seed(level, 1)).not.toBe(mode5Algorithm8Seed(level, 10));
+    expect(mode5Algorithm1Seed(level, 1)).not.toBe(mode5Algorithm1Seed(level, 10));
   });
 
   it('数字1到4最多隐藏1个', () => {
@@ -80,7 +80,7 @@ describe('玩法5独立隐藏布局', () => {
 
   it('拥有独立于玩法4的种子与占比入口', () => {
     const level = makeLevel();
-    expect(mode5Algorithm8Seed(level, 6)).not.toBe(mode4RandomHiddenSeed(level));
+    expect(mode5Algorithm1Seed(level, 6)).not.toBe(mode4RandomHiddenSeed(level));
     expect(mode5EffectiveHiddenPercent(level, 6)).toBeGreaterThanOrEqual(46);
     expect(mode5EffectiveHiddenPercent(level, 6)).toBeLessThanOrEqual(50);
   });

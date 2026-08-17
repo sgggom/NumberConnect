@@ -1,34 +1,15 @@
-import { selectHiddenCells } from '../../../game/hidden';
-import type { Cell } from '../../../game/types';
 import { areEditorCellsNeighbors, findEditorPath, randomizeEditorPath } from '../findEditorPath';
 import type { EditorCell } from '../types';
-import type {
-  Algorithm2Selection,
-  EditorAlgorithmContext,
-  EditorAlgorithmResult,
-} from './types';
+import type { EditorAlgorithmContext } from './types';
 
-export const createAlgorithm2Selection = (): Algorithm2Selection => ({
-  id: 'algorithm-2',
-  parameters: {
-    topology: 'board-shape',
-    pathMode: 'single-stroke-multiple-solutions',
-    targetCrossings: 20,
-    turnProbability: 40,
-    hiddenPercent: 50,
-    maxHiddenRun: 3,
-    maxVisibleRun: 4,
-  },
-});
+export interface VariedPathParameters {
+  targetCrossings: number;
+  turnProbability: number;
+}
 
-const toCell = (key: string): Cell => {
-  const [x, y] = key.split(',').map(Number);
-  return { x, y };
-};
-
-export const generateAlgorithm2Path = (
+export const generateVariedPath = (
   context: EditorAlgorithmContext,
-  parameters: Pick<Algorithm2Selection['parameters'], 'targetCrossings' | 'turnProbability'>,
+  parameters: VariedPathParameters,
 ): EditorCell[] | null => {
   const reportProgress = (progress: number): void => context.onProgress?.(
     Math.max(0, Math.min(0.98, progress)),
@@ -59,11 +40,7 @@ export const generateAlgorithm2Path = (
   reportProgress(0.16);
   const candidates: EditorCell[][] = [];
   const zeroCrossingLimit = parameters.targetCrossings <= 0;
-  const attempts = realtime
-    ? 2
-    : zeroCrossingLimit
-      ? 3
-      : context.activeCells.size <= 64 ? 5 : 4;
+  const attempts = realtime ? 2 : zeroCrossingLimit ? 3 : context.activeCells.size <= 64 ? 5 : 4;
   const candidateNodeBudget = realtime ? 6000 : zeroCrossingLimit ? 15000 : 40000;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const attemptStart = 0.16 + 0.58 * attempt / attempts;
@@ -85,8 +62,7 @@ export const generateAlgorithm2Path = (
       },
     );
     reportProgress(attemptStart + attemptSpan);
-    if (!candidate) continue;
-    candidates.push(candidate);
+    if (candidate) candidates.push(candidate);
   }
 
   const candidateSeed = (
@@ -109,42 +85,4 @@ export const generateAlgorithm2Path = (
   );
   reportProgress(0.98);
   return randomizedPath;
-};
-
-export const runAlgorithm2 = (
-  context: EditorAlgorithmContext,
-  selection: Algorithm2Selection,
-): EditorAlgorithmResult | null => {
-  const path = context.fixedPath?.map((cell) => ({ ...cell }))
-    ?? generateAlgorithm2Path(context, selection.parameters);
-  if (!path) return null;
-  context.onProgress?.(0.98);
-  if (context.generationPhase === 'path') {
-    context.onProgress?.(1);
-    return { path };
-  }
-
-  const seed = Math.imul(context.generationIndex + 1, 104729)
-    ^ Math.imul(context.rows + 1, 73856093)
-    ^ Math.imul(context.columns + 1, 19349663)
-    ^ path.length
-    ^ 0x4f1bbcdc;
-  const hiddenCells = selectHiddenCells(
-    [...path],
-    selection.parameters.hiddenPercent,
-    selection.parameters.maxHiddenRun,
-    selection.parameters.maxVisibleRun,
-    seed,
-  );
-  const targetHiddenCount = Math.min(
-    Math.max(0, path.length - 2),
-    Math.max(0, Math.round(path.length * selection.parameters.hiddenPercent / 100)),
-  );
-  context.onProgress?.(1);
-
-  return {
-    path,
-    hiddenCells: [...hiddenCells].map(toCell),
-    targetHiddenCount,
-  };
 };

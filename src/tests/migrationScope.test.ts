@@ -23,8 +23,8 @@ describe('migrated product scope', () => {
     expect(indexMarkup).not.toContain('id="primary-tab-bar"');
   });
 
-  it('exposes algorithm 8 as the editor algorithm', () => {
-    expect(EDITOR_ALGORITHMS.map(({ id }) => id)).toEqual(['algorithm-8']);
+  it('exposes the current generator as algorithm 1', () => {
+    expect(EDITOR_ALGORITHMS.map(({ id }) => id)).toEqual(['algorithm-1']);
     expect(indexMarkup).toContain('id="default-editor-button"');
   });
 });

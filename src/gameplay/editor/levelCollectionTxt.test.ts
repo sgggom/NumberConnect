@@ -29,7 +29,7 @@ const createLevel = (
     hiddenCells: [path[2], path[4]],
     pathSource: 'generated',
     algorithm: {
-      id: 'algorithm-4',
+      id: 'algorithm-1',
       parameters: {
         topology: 'board-shape',
         pathMode: 'single-stroke-multiple-solutions',
@@ -85,7 +85,7 @@ describe('level collection TXT export', () => {
       '3',
       '3',
       '9',
-      '算法4',
+      '算法1',
     ]);
     expect(second.slice(0, 3)).toEqual([
       '2',
@@ -97,7 +97,7 @@ describe('level collection TXT export', () => {
     expect(progress).toHaveBeenNthCalledWith(2, 2, 2, 2);
   });
 
-  it('keeps the algorithm 8 type used by the gameplay 5 editor levels', async () => {
+  it('exports legacy algorithm 8 levels under the current algorithm 1 label', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true,
       json: async () => [{ data: [[1, 2], [4, -3]] }],
@@ -112,7 +112,7 @@ describe('level collection TXT export', () => {
       const values = text.split('\t');
 
       expect(values[1]).toBe('{"data":[[1,2],[4,-3]]}');
-      expect(values[6]).toBe('算法8');
+      expect(values[6]).toBe('算法1');
     } finally {
       vi.unstubAllGlobals();
     }

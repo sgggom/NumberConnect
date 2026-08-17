@@ -71,7 +71,7 @@ export const parseMode5WorkbookSheets = (
         : {
             ...decodedLevel,
             pathSource: 'generated',
-            algorithm: { id: 'algorithm-8', parameters: {} },
+            algorithm: { id: 'algorithm-1', parameters: {} },
           });
       return stageLevelId;
     });

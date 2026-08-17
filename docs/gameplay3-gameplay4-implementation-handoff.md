@@ -3,7 +3,7 @@
 > 文档状态：可进入开发
 > 版本：V1.0
 > 更新日期：2026-08-11
-> 适用范围：主玩法中的玩法3、玩法4、玩法3算法8隐藏生成、玩法4随机分散隐藏生成和最近5局动态难度系统
+> 适用范围：主玩法中的玩法3、玩法4、玩法3算法1隐藏生成、玩法4随机分散隐藏生成和最近5局动态难度系统
 
 > 玩法5已拆为独立实现，不属于本文件的玩法3/4共享范围；见 [玩法5独立实现说明](./gameplay5-implementation.md)。
 
@@ -11,8 +11,8 @@
 
 程序需要在现有主玩法中实现两个“无拼豆、无拼图奖励”的数字连线玩法：
 
-- **玩法3**：使用算法8生成隐藏布局；根据最近5局表现调整算法8目标难度，但隐藏配置始终固定为 `[20,40] / 3 / 3`。
-- **玩法4**：取消算法8难度评分，按动态难度1–10切换隐藏占比区间、最长连续显示和最长连续隐藏，再使用固定种子的简单随机分散方式挑选隐藏数字。
+- **玩法3**：使用算法1生成隐藏布局；根据最近5局表现调整算法1目标难度，但隐藏配置始终固定为 `[20,40] / 3 / 3`。
+- **玩法4**：取消算法1难度评分，按动态难度1–10切换隐藏占比区间、最长连续显示和最长连续隐藏，再使用固定种子的简单随机分散方式挑选隐藏数字。
 - **难度选择**：设置页允许选择 `动态` 或固定 `1–10`；固定档立即覆盖生成难度，但不修改或采样动态难度历史。
 
 两种玩法共用一套24关路径数据，但必须分别保存：
@@ -22,10 +22,9 @@
 - 最近5局记录。
 - 调整冷却局数。
 
-本文件讲“程序具体怎么接”。算法8内部候选评分、基准点和扩张逻辑见：
+本文件讲“程序具体怎么接”。算法1内部候选评分、基准点和扩张逻辑见：
 
-- [算法8详细说明](./algorithm8-hidden-generation.md)
-- [算法8 C#完整参考代码](./Algorithm8HiddenGenerator.cs)
+- [算法1详细说明](./algorithm1-hidden-generation.md)
 - [玩法4随机分散C#完整参考代码](./Mode4RandomHiddenGenerator.cs)
 - [动态难度设计说明](./dynamic-difficulty-last-5-games.md)
 
@@ -47,7 +46,7 @@
 | 固定档统计 | 固定难度对局不进入最近5局，切回动态后继续原有状态 |
 | 玩法3配置 | 固定 `[20,40] / 最长显示3 / 最长隐藏3` |
 | 玩法4配置 | 按第5节的10档表取值 |
-| 玩法4选点 | 不使用算法8难度评分；难度差异只能来自配置值 |
+| 玩法4选点 | 不使用算法1难度评分；难度差异只能来自配置值 |
 | 玩法4前段保护 | 数字1～4中最多隐藏1个 |
 | 作弊局 | 显示答案或快速完成后，本局不进入动态难度历史 |
 | 广告续命 | 不结束本局，继续累计同一局错误 |
@@ -61,7 +60,7 @@
 |---|---|---:|
 | `DynamicDifficultyController` | 接收一局结果，计算难度升降 | 否 |
 | `AdaptiveDifficultyConfigProvider` | 返回玩法3或玩法4当前配置 | 否 |
-| `AdaptiveHiddenLayoutService` | 选占比，并按玩法路由到算法8或随机分散生成器 | 否 |
+| `AdaptiveHiddenLayoutService` | 选占比，并按玩法路由到算法1或随机分散生成器 | 否 |
 | `Mode4RandomHiddenGenerator` | 不接收难度值，按配置和固定种子分散选点 | 否 |
 | `AdaptiveDifficultyRepository` | 分玩法读取和保存状态 | 否 |
 | `AdaptiveGameplaySession` | 管理一局的错误、资格、终局和防重复记录 | 是，接游戏事件 |
@@ -74,7 +73,7 @@ flowchart LR
     B --> C["AdaptiveDifficultyRepository"]
     B --> D["AdaptiveDifficultyConfigProvider"]
     B --> E["AdaptiveHiddenLayoutService"]
-    E --> F["玩法3 Algorithm8HiddenGenerator"]
+    E --> F["玩法3 Algorithm1HiddenGenerator"]
     E --> H["玩法4 Mode4RandomHiddenGenerator"]
     B --> G["DynamicDifficultyController"]
     G --> C
@@ -190,7 +189,7 @@ public sealed class AdaptiveAttemptContext
 最长连续隐藏：3
 ```
 
-动态难度1–10只传给算法8的 `targetDifficulty`。
+动态难度1–10只传给算法1的 `targetDifficulty`。
 
 ### 5.2 玩法4
 
@@ -433,7 +432,7 @@ public static class DynamicDifficultyController
 - 行列数
 - `levelId`
 
-玩法3调用算法8重新得到隐藏索引；玩法4调用随机分散选择器。两者都必须排除起点索引0和终点索引 `path.Count - 1`。
+玩法3调用算法1重新得到隐藏索引；玩法4调用随机分散选择器。两者都必须排除起点索引0和终点索引 `path.Count - 1`。
 
 ### 7.2 区间占比如何取值
 
@@ -444,7 +443,7 @@ public static class DynamicDifficultyController
 1. 用 `levelId + rows + columns + pathLength` 生成稳定整数种子。
 2. 用无符号种子对区间长度取模。
 3. 玩法3的占比种子**不能包含动态难度**。
-4. 玩法3布局种子可以包含动态难度，使难度变化后算法8重新选择结构。
+4. 玩法3布局种子可以包含动态难度，使难度变化后算法1重新选择结构。
 5. 玩法4随机种子禁止包含动态难度；难度差异只能来自配置表。
 
 C#实现：
@@ -522,10 +521,10 @@ public static class AdaptiveHiddenSeed
 
 这是最容易实现错误的地方。
 
-算法8编辑器默认仍可使用原规则：
+算法1编辑器默认仍可使用原规则：
 
 ```text
-算法8最终占比 = requestedHiddenPercent + targetDifficulty
+算法1最终占比 = requestedHiddenPercent + targetDifficulty
 ```
 
 玩法3已经取消“额外增加难度百分点”的隐藏补偿，运行时必须显式关闭该选项：
@@ -536,7 +535,7 @@ requestedHiddenPercent = effectiveHiddenPercent
 最终隐藏占比 = effectiveHiddenPercent
 ```
 
-玩法4不调用算法8，选中的占比直接交给随机分散选择器。例如难度6某关从 `[35,40]` 选出38：
+玩法4不调用算法1，选中的占比直接交给随机分散选择器。例如难度6某关从 `[35,40]` 选出38：
 
 ```text
 传给玩法4随机选择器的 hiddenPercent = 38
@@ -548,7 +547,7 @@ requestedHiddenPercent = effectiveHiddenPercent
 ### 7.4 布局服务参考接口
 
 ```csharp
-public interface IAlgorithm8HiddenGenerator
+public interface IAlgorithm1HiddenGenerator
 {
     // 返回solutionPath中的隐藏索引，不返回坐标更容易保证顺序正确。
     System.Collections.Generic.HashSet<int> Generate(
@@ -576,14 +575,14 @@ public interface IMode4RandomHiddenGenerator
 
 public sealed class AdaptiveHiddenLayoutService
 {
-    private readonly IAlgorithm8HiddenGenerator _algorithm8;
+    private readonly IAlgorithm1HiddenGenerator _algorithm1;
     private readonly IMode4RandomHiddenGenerator _mode4Random;
 
     public AdaptiveHiddenLayoutService(
-        IAlgorithm8HiddenGenerator algorithm8,
+        IAlgorithm1HiddenGenerator algorithm1,
         IMode4RandomHiddenGenerator mode4Random)
     {
-        _algorithm8 = algorithm8;
+        _algorithm1 = algorithm1;
         _mode4Random = mode4Random;
     }
 
@@ -613,7 +612,7 @@ public sealed class AdaptiveHiddenLayoutService
                 level.SolutionPath.Count,
                 normalizedDifficulty);
 
-            result = _algorithm8.Generate(
+            result = _algorithm1.Generate(
                 level.SolutionPath,
                 level.BoardShape,
                 effectivePercent,
@@ -658,11 +657,11 @@ public sealed class AdaptiveHiddenLayoutService
 3. 下标小于4的隐藏数量最多为1，也就是数字1～4最多隐藏1个。
 4. 每轮优先减少连续隐藏/显示超限，再优先选择离已有隐藏点更远的数字。
 5. 完全同分时按关卡固定种子打散；同关同配置重玩结果一致。
-6. 选择器没有 `targetDifficulty` 参数，不计算算法8体验目标、扩张配额或难度损失。
+6. 选择器没有 `targetDifficulty` 参数，不计算算法1体验目标、扩张配额或难度损失。
 
 完整C#实现见 [Mode4RandomHiddenGenerator.cs](./Mode4RandomHiddenGenerator.cs)。
 
-### 7.6 玩法3算法8基准点规则
+### 7.6 玩法3算法1基准点规则
 
 目标隐藏数量确定后：
 
@@ -905,7 +904,7 @@ public interface IAdaptiveLevelProgressRepository
 
 ### 第二步：两种隐藏生成器
 
-- 玩法3接入完整算法8。
+- 玩法3接入完整算法1。
 - 玩法4接入简单随机分散选择器，禁止传入目标难度。
 - 实现稳定占比种子。
 - 玩法3关闭额外难度百分点；玩法4直接使用配置占比。
@@ -962,8 +961,8 @@ public interface IAdaptiveLevelProgressRepository
 | 玩法4难度1 | 最终占比位于 `[10,15]`，连续参数5/2 |
 | 玩法4难度10 | 最终占比位于 `[55,60]`，连续参数2/5 |
 | 玩法4逐级检查 | 10档逐项匹配配置表 |
-| 玩法3算法8占比 | 最终占比等于选定占比，不再额外加难度 |
-| 玩法4生成器 | 不调用算法8，难度值不进入选点评分或随机种子 |
+| 玩法3算法1占比 | 最终占比等于选定占比，不再额外加难度 |
+| 玩法4生成器 | 不调用算法1，难度值不进入选点评分或随机种子 |
 | 玩法4前段保护 | 任意关卡、任意档位的数字1～4最多隐藏1个 |
 
 ### 12.3 生命周期
@@ -1043,8 +1042,8 @@ public interface IAdaptiveLevelProgressRepository
 - 最近5局升降、冷却和边界规则全部通过自动测试。
 - 玩法3固定配置不会随难度变化。
 - 玩法4完整匹配10档表。
-- 玩法3算法8没有重复叠加隐藏占比。
-- 玩法4不调用算法8，且数字1～4最多隐藏1个。
+- 玩法3算法1没有重复叠加隐藏占比。
+- 玩法4不调用算法1，且数字1～4最多隐藏1个。
 - 当前棋盘不会中途改变难度或隐藏格。
 - 广告续命、答案、快速完成、退出等边界不会重复或错误记局。
 - 两个玩法的难度历史和关卡进度完全独立。

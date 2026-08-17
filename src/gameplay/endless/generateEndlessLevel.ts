@@ -1,9 +1,6 @@
 import { BoardShape, cellKey, type EndlessStageSettings, type LevelData } from '../../game/types';
-import {
-  createEditorAlgorithm,
-  runEditorAlgorithm,
-  serializeEditorAlgorithm,
-} from '../editor/algorithms';
+import { selectHiddenCells } from '../../game/hidden';
+import { generateVariedPath } from '../editor/algorithms/generateVariedPath';
 
 const GENERATION_ATTEMPTS = 3;
 // Keep hidden runs short enough for readable live stage transitions.
@@ -33,31 +30,28 @@ export const generateEndlessLevel = (
   }));
   const activeCellKeys = new Set(activeCells.map(cellKey));
   const fallbackPath = createFallbackPath(rows, columns, seed);
-  const defaults = createEditorAlgorithm('algorithm-2');
-  if (defaults.id !== 'algorithm-2') throw new Error('无法加载算法二。');
-
-  const algorithm = {
-    ...defaults,
-    parameters: {
-      ...defaults.parameters,
-      targetCrossings: profile.targetCrossings,
-      hiddenPercent: profile.hiddenPercent,
-      maxHiddenRun: Math.min(profile.maxHiddenRun, REALTIME_MAX_HIDDEN_RUN),
-      maxVisibleRun: profile.maxVisibleRun,
-    },
-  };
-
   for (let attempt = 0; attempt < GENERATION_ATTEMPTS; attempt += 1) {
-    const result = runEditorAlgorithm(algorithm, {
+    const generationIndex = seed + attempt * 1000003;
+    const path = generateVariedPath({
       rows,
       columns,
       activeCells: activeCellKeys,
       shape: 'square',
-      generationIndex: seed + attempt * 1000003,
+      generationIndex,
       fallbackPath,
       searchMode: 'realtime',
+    }, {
+      targetCrossings: profile.targetCrossings,
+      turnProbability: 40,
     });
-    if (!result) continue;
+    if (!path) continue;
+    const hiddenCells = selectHiddenCells(
+      path,
+      profile.hiddenPercent,
+      Math.min(profile.maxHiddenRun, REALTIME_MAX_HIDDEN_RUN),
+      profile.maxVisibleRun,
+      Math.imul(generationIndex + 1, 104729) ^ path.length ^ 0x4f1bbcdc,
+    );
 
     return {
       levelId: seed,
@@ -65,12 +59,24 @@ export const generateEndlessLevel = (
       rows,
       columns,
       activeCells,
-      solutionPath: result.path,
+      solutionPath: path,
       pathSource: 'generated',
-      hiddenCells: result.hiddenCells,
-      algorithm: serializeEditorAlgorithm(algorithm),
+      hiddenCells: [...hiddenCells].map((key) => {
+        const [x, y] = key.split(',').map(Number);
+        return { x, y };
+      }),
+      algorithm: {
+        id: 'endless-varied-path',
+        parameters: {
+          targetCrossings: profile.targetCrossings,
+          turnProbability: 40,
+          hiddenPercent: profile.hiddenPercent,
+          maxHiddenRun: Math.min(profile.maxHiddenRun, REALTIME_MAX_HIDDEN_RUN),
+          maxVisibleRun: profile.maxVisibleRun,
+        },
+      },
     };
   }
 
-  throw new Error(`算法二无法生成 ${columns} × ${rows} 的无尽关卡。`);
+  throw new Error(`无法生成 ${columns} × ${rows} 的无尽关卡。`);
 };

@@ -6,7 +6,7 @@
 
 - 难度支持 `动态` 和固定 `1–10`。
 - 动态难度初始为1，统计最近5局错误。
-- 第一大关直接读取 Excel 阵型中的正负数棋盘数据，不调用算法；第二大关起使用算法8生成隐藏布局，并使用玩法5自己的配置、种子和动态难度。
+- 第一大关直接读取 Excel 阵型中的正负数棋盘数据，不调用算法；第二大关起使用算法1生成隐藏布局，并使用玩法5自己的配置、种子和动态难度。
 - 起点数字1和终点固定显示，数字1～4最多隐藏1个。
 - 第1大关包含顺序关卡1～2两个小阶段；此后每4个顺序关卡组成一个大关。
 - 非最后小阶段完成后直接进入下一阶段，不显示结算弹窗；大关最后阶段完成后显示关卡结算。
@@ -21,7 +21,7 @@
 | 主玩法枚举和独立关卡进度 | `src/game/types.ts` 中的 `mode5`、`mode5MainLevelId` |
 | 关卡与阵型资源 | `excel/关卡表.xlsx` 的“关卡”“阵型”sheet |
 | 10档参数和关卡种子 | `src/gameplay/mode5/mode5HiddenLayout.ts` |
-| 算法8选点入口 | `src/gameplay/mode5/mode5HiddenLayout.ts` |
+| 算法1选点入口 | `src/gameplay/mode5/mode5HiddenLayout.ts` |
 | 动态难度公式和状态 | `src/gameplay/mode5/dynamicDifficulty.ts` |
 | 大关/小阶段映射 | `src/gameplay/mode5/mode5Campaign.ts` |
 | 编辑器初始关卡列表 | 同样读取 `excel/关卡表.xlsx`，旧本地列表通过存储版本升级清除 |
@@ -58,7 +58,7 @@ flowchart TD
     D -- "固定1–10" --> F["直接使用固定档位"]
     E --> G["读取玩法5独立配置"]
     F --> G
-    G --> H["第一大关读取棋盘显隐；第二大关起使用算法8"]
+    G --> H["第一大关读取棋盘显隐；第二大关起使用算法1"]
     H --> I["生成棋盘"]
     I --> J{"动态且有效对局？"}
     J -- "是" --> K["仅更新玩法5最近5局"]
@@ -68,7 +68,7 @@ flowchart TD
 ## 5. 后续修改原则
 
 - 改玩法5隐藏占比或连续段：修改 `mode5HiddenLayout.ts`。
-- 改玩法5算法8接入或选点策略：修改 `mode5HiddenLayout.ts`。
+- 改玩法5算法1接入或选点策略：修改 `mode5HiddenLayout.ts`。
 - 改玩法5升降阈值、窗口或冷却：修改 `mode5/dynamicDifficulty.ts`。
 - 改玩法5大关、阶段或阵型：修改 `excel/关卡表.xlsx`。
 - 不要为了修改玩法5去改玩法3/4目录中的实现。

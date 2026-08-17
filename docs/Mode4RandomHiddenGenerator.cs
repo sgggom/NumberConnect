@@ -8,7 +8,7 @@ namespace NCWeb.Algorithms;
 
 /// <summary>
 /// 玩法4简单随机分散隐藏选择器。
-/// Cell 类型复用 Algorithm8HiddenGenerator.cs 中按数字顺序排列的棋盘坐标定义。
+/// Cell 为接入方提供的棋盘坐标类型，path 按数字顺序排列。
 /// 本类不接收动态难度；不同档位的差异只能来自传入的配置值。
 /// </summary>
 public static class Mode4RandomHiddenGenerator
