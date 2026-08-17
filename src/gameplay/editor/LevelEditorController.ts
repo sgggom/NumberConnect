@@ -52,16 +52,19 @@ import { reorderLevelCollection } from './reorderLevelCollection';
 import {
   BATCH_PLAYTEST_ATTEMPT_TIMEOUT_MS,
   BATCH_PLAYTEST_MAX_ATTEMPTS,
-  MAX_BATCH_PLAYTEST_CONCURRENCY,
+  batchPlaytestConcurrency,
   createBatchPlaytestGenerationRequest,
   createBatchPlaytestLevel,
   createBatchPlaytestTasks,
   formatBatchPlaytestResultsTsv,
   readBatchPlaytestConfigFile,
   runConcurrentBatchTaskPool,
-  simulateBatchPlaytestLevel,
   type BatchPlaytestResult,
 } from './batchPlaytest';
+import {
+  startBatchPlaytestSimulation,
+  type BatchSimulationTask,
+} from './batchSimulationWorkerPool';
 
 interface LevelEditorControllerOptions {
   getLevels: () => LevelData[];
@@ -115,10 +118,13 @@ export class LevelEditorController {
   private pathCalculationProgress = 0;
   private pathCalculationMode: 'path' | 'hidden' = 'path';
   private readonly batchPlaytestTasks = new Set<EditorPathGenerationTask>();
+  private readonly batchSimulationTasks = new Set<BatchSimulationTask>();
   private batchPlaytestAbortController?: AbortController;
   private batchPlaytestProgress = { completed: 0, running: 0, failed: 0, total: 0 };
   private batchPlaytestRun = 0;
   private isBatchPlaytestRunning = false;
+  private isBatchPlaytestCancelling = false;
+  private batchPlaytestDetail = '正在读取配置…';
   private imageRecognitionRun = 0;
   private isImageRecognizing = false;
   private imageRecognitionMode: ImageRecognitionMode = 'complete-level';
@@ -290,9 +296,7 @@ export class LevelEditorController {
     this.query<HTMLInputElement>('#editor-level-file').addEventListener('change', (event) => void this.importLevels(event));
     this.query('#editor-batch-playtest').addEventListener('click', () => {
       if (this.isBatchPlaytestRunning) {
-        this.cancelBatchPlaytest();
-        this.render();
-        this.setStatus('已取消批量跑关；正在运行的任务已停止。');
+        this.requestBatchPlaytestCancellation();
         return;
       }
       this.query<HTMLInputElement>('#editor-batch-playtest-file').click();
@@ -301,6 +305,14 @@ export class LevelEditorController {
       'change',
       (event) => void this.runBatchPlaytest(event),
     );
+    this.query('#editor-batch-playtest-cancel').addEventListener(
+      'click',
+      () => this.requestBatchPlaytestCancellation(),
+    );
+    this.query<HTMLDialogElement>('#editor-batch-playtest-dialog').addEventListener('cancel', (event) => {
+      event.preventDefault();
+      this.requestBatchPlaytestCancellation();
+    });
     window.addEventListener('pointerup', () => {
       this.painting = false;
       this.lastManualPathHitKey = undefined;
@@ -2062,21 +2074,29 @@ export class LevelEditorController {
     this.batchPlaytestAbortController = abortController;
     this.batchPlaytestProgress = { completed: 0, running: 0, failed: 0, total: 0 };
     this.isBatchPlaytestRunning = true;
+    this.isBatchPlaytestCancelling = false;
+    this.batchPlaytestDetail = '正在读取配置…';
     this.render();
+    this.openBatchPlaytestDialog();
 
     let completionMessage = '';
     let completionIsError = false;
+    let completedResults: Array<BatchPlaytestResult | undefined> = [];
     try {
       const configs = await readBatchPlaytestConfigFile(file);
       if (run !== this.batchPlaytestRun) return;
       const tasks = createBatchPlaytestTasks(configs);
+      const concurrency = batchPlaytestConcurrency();
+      completedResults = new Array(tasks.length);
       this.batchPlaytestProgress.total = tasks.length;
       this.renderBatchPlaytestButton();
-      this.setStatus(`已读取 ${configs.length} 组配置，使用 ${Math.min(MAX_BATCH_PLAYTEST_CONCURRENCY, tasks.length)} 个线程并行处理 ${tasks.length} 关，每关分别跑低中高三档推理。`);
+      this.batchPlaytestDetail = `已读取 ${configs.length} 组配置，正在启动 ${tasks.length} 关…`;
+      this.renderBatchPlaytestDialog();
+      this.setStatus(`已读取 ${configs.length} 组配置，使用 ${Math.min(concurrency, tasks.length)} 个线程并行处理 ${tasks.length} 关，每关分别跑低中高三档推理。`);
 
       const results = await runConcurrentBatchTaskPool(
         tasks,
-        async (task): Promise<BatchPlaytestResult> => {
+        async (task, taskIndex): Promise<BatchPlaytestResult> => {
           if (run !== this.batchPlaytestRun || abortController.signal.aborted) {
             const error = new Error('批量跑关已取消。');
             error.name = 'AbortError';
@@ -2089,6 +2109,8 @@ export class LevelEditorController {
           const generationTask = startEditorPathGeneration(request, (progress) => {
             if (run !== this.batchPlaytestRun) return;
             const percentage = Math.round(progress * 100);
+            this.batchPlaytestDetail = `${task.config.id} 第 ${task.generationNumber} 关：第 ${attempt + 1}/${BATCH_PLAYTEST_MAX_ATTEMPTS} 次尝试，生成 ${percentage}%…`;
+            this.renderBatchPlaytestDialog();
             this.setStatus(
               `批量跑关：完成 ${this.batchPlaytestProgress.completed}/${tasks.length}，运行 ${this.batchPlaytestProgress.running}，失败 ${this.batchPlaytestProgress.failed}；${task.config.id} 第 ${task.generationNumber} 关尝试 ${attempt + 1}/${BATCH_PLAYTEST_MAX_ATTEMPTS}，生成 ${percentage}%…`,
             );
@@ -2125,30 +2147,51 @@ export class LevelEditorController {
         }
 
         if (!generated) {
-          return {
+          const failedResult: BatchPlaytestResult = {
             task,
             error: generationError || `连续尝试 ${BATCH_PLAYTEST_MAX_ATTEMPTS} 次仍无法生成完整关卡`,
           };
+          completedResults[taskIndex] = failedResult;
+          return failedResult;
         }
         try {
           const level = createBatchPlaytestLevel(task, generated);
-          const simulation = simulateBatchPlaytestLevel(task, level);
-          return { task, level, simulation };
+          const simulationTask = startBatchPlaytestSimulation(
+            task,
+            level,
+            (completed, total) => {
+              this.batchPlaytestDetail = `${task.config.id} 第 ${task.generationNumber} 关：低中高模拟 ${completed}/${total}…`;
+              this.renderBatchPlaytestDialog();
+            },
+          );
+          this.batchSimulationTasks.add(simulationTask);
+          let simulation;
+          try {
+            simulation = await simulationTask.promise;
+          } finally {
+            this.batchSimulationTasks.delete(simulationTask);
+          }
+          const completedResult = { task, level, simulation };
+          completedResults[taskIndex] = completedResult;
+          return completedResult;
         } catch (error) {
-          return {
+          const failedResult: BatchPlaytestResult = {
             task,
             error: error instanceof Error ? error.message : '跑关模拟失败',
           };
+          completedResults[taskIndex] = failedResult;
+          return failedResult;
         }
         },
         {
-          concurrency: MAX_BATCH_PLAYTEST_CONCURRENCY,
+          concurrency,
           signal: abortController.signal,
           isFailure: ({ level, simulation }) => !level || !simulation,
           onProgress: (progress) => {
             if (run !== this.batchPlaytestRun) return;
             this.batchPlaytestProgress = progress;
             this.renderBatchPlaytestButton();
+            this.renderBatchPlaytestDialog();
             this.setStatus(
               `批量跑关：完成 ${progress.completed}/${progress.total}，运行 ${progress.running}，失败 ${progress.failed}。`,
             );
@@ -2164,13 +2207,31 @@ export class LevelEditorController {
       completionIsError = succeeded === 0;
     } catch (error) {
       if (run !== this.batchPlaytestRun) return;
-      completionMessage = error instanceof Error ? `批量跑关失败：${error.message}` : '批量跑关失败。';
-      completionIsError = true;
+      if (error instanceof Error && error.name === 'AbortError') {
+        const completedSuccessfulResults = completedResults.filter(
+          (result): result is BatchPlaytestResult => Boolean(result?.level && result.simulation),
+        );
+        if (completedSuccessfulResults.length > 0) {
+          this.downloadTxt(
+            formatBatchPlaytestResultsTsv(completedSuccessfulResults, includeHeader),
+            '批量跑关结果.txt',
+          );
+        }
+        completionMessage = completedSuccessfulResults.length === 0
+          ? '批量跑关已中止：中止前暂无已完成结果。'
+          : `批量跑关已中止：已保存 ${completedSuccessfulResults.length} 关完整结果。`;
+      } else {
+        completionMessage = error instanceof Error ? `批量跑关失败：${error.message}` : '批量跑关失败。';
+        completionIsError = true;
+      }
     } finally {
       if (run === this.batchPlaytestRun) {
         this.batchPlaytestTasks.clear();
+        this.batchSimulationTasks.clear();
         this.batchPlaytestAbortController = undefined;
         this.isBatchPlaytestRunning = false;
+        this.isBatchPlaytestCancelling = false;
+        this.closeBatchPlaytestDialog();
         this.render();
         if (completionMessage) this.setStatus(completionMessage, completionIsError);
       }
@@ -2183,7 +2244,55 @@ export class LevelEditorController {
     this.batchPlaytestAbortController = undefined;
     this.batchPlaytestTasks.forEach((task) => task.cancel());
     this.batchPlaytestTasks.clear();
+    this.batchSimulationTasks.forEach((task) => task.cancel());
+    this.batchSimulationTasks.clear();
     this.isBatchPlaytestRunning = false;
+    this.isBatchPlaytestCancelling = false;
+    this.closeBatchPlaytestDialog();
+  }
+
+  private requestBatchPlaytestCancellation(): void {
+    if (!this.isBatchPlaytestRunning || this.isBatchPlaytestCancelling) return;
+    this.isBatchPlaytestCancelling = true;
+    this.batchPlaytestDetail = '正在中止运行中的任务，完成后将自动保存已跑完结果…';
+    this.batchPlaytestAbortController?.abort();
+    this.batchPlaytestTasks.forEach((task) => task.cancel());
+    this.batchSimulationTasks.forEach((task) => task.cancel());
+    this.renderBatchPlaytestButton();
+    this.renderBatchPlaytestDialog();
+    this.setStatus('正在中止批量跑关，稍后将保存已完成的结果。');
+  }
+
+  private openBatchPlaytestDialog(): void {
+    const dialog = this.query<HTMLDialogElement>('#editor-batch-playtest-dialog');
+    this.renderBatchPlaytestDialog();
+    if (!dialog.open) dialog.showModal();
+  }
+
+  private closeBatchPlaytestDialog(): void {
+    const dialog = this.query<HTMLDialogElement>('#editor-batch-playtest-dialog');
+    if (dialog.open) dialog.close();
+  }
+
+  private renderBatchPlaytestDialog(): void {
+    const { completed, running, failed, total } = this.batchPlaytestProgress;
+    const percentage = total === 0 ? 0 : Math.round(completed / total * 100);
+    this.query('#editor-batch-playtest-dialog-title').textContent = this.isBatchPlaytestCancelling
+      ? '正在中止并保存…'
+      : '正在批量跑关';
+    this.query('#editor-batch-playtest-percent').textContent = `${percentage}%`;
+    const progress = this.query<HTMLProgressElement>('#editor-batch-playtest-progress');
+    progress.max = Math.max(1, total);
+    progress.value = completed;
+    this.query('#editor-batch-playtest-completed').textContent = `${completed} / ${total}`;
+    this.query('#editor-batch-playtest-running').textContent = String(running);
+    this.query('#editor-batch-playtest-failed').textContent = String(failed);
+    this.query('#editor-batch-playtest-detail').textContent = this.batchPlaytestDetail;
+    const cancelButton = this.query<HTMLButtonElement>('#editor-batch-playtest-cancel');
+    cancelButton.disabled = this.isBatchPlaytestCancelling;
+    cancelButton.textContent = this.isBatchPlaytestCancelling
+      ? '正在中止…'
+      : '中止并保存已完成结果';
   }
 
   private renderBatchPlaytestButton(): void {
@@ -2196,7 +2305,7 @@ export class LevelEditorController {
     button.setAttribute('aria-busy', String(this.isBatchPlaytestRunning));
     headerCheckbox.disabled = this.isBatchPlaytestRunning;
     button.textContent = this.isBatchPlaytestRunning
-      ? `取消跑关 · ${completed}/${total || '…'} · ${running} 运行${failed > 0 ? ` · ${failed} 失败` : ''}`
+      ? `${this.isBatchPlaytestCancelling ? '正在中止' : '中止跑关'} · ${completed}/${total || '…'} · ${running} 运行${failed > 0 ? ` · ${failed} 失败` : ''}`
       : '批量跑关';
     this.host.querySelectorAll<HTMLButtonElement>('.editor-level-actions .button:not(#editor-batch-playtest)')
       .forEach((action) => {

@@ -1,4 +1,4 @@
-const LEVEL_EDITOR_VIEW_VERSION = '35';
+const LEVEL_EDITOR_VIEW_VERSION = '36';
 
 export const mountLevelEditorView = (host: HTMLElement): void => {
   const hasCurrentView = host.dataset.editorViewVersion === LEVEL_EDITOR_VIEW_VERSION
@@ -215,6 +215,25 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
 
     </div>
 
+    <dialog id="editor-batch-playtest-dialog" class="editor-batch-playtest-dialog" aria-labelledby="editor-batch-playtest-dialog-title">
+      <section class="editor-batch-playtest-dialog__card">
+        <div class="editor-batch-playtest-dialog__heading">
+          <div>
+            <small>批量跑关</small>
+            <h3 id="editor-batch-playtest-dialog-title">正在准备…</h3>
+          </div>
+          <strong id="editor-batch-playtest-percent">0%</strong>
+        </div>
+        <progress id="editor-batch-playtest-progress" max="1" value="0" aria-label="批量跑关进度"></progress>
+        <div class="editor-batch-playtest-dialog__stats">
+          <div><span>已完成</span><b id="editor-batch-playtest-completed">0 / 0</b></div>
+          <div><span>运行中</span><b id="editor-batch-playtest-running">0</b></div>
+          <div><span>失败</span><b id="editor-batch-playtest-failed">0</b></div>
+        </div>
+        <p id="editor-batch-playtest-detail" class="editor-batch-playtest-dialog__detail" aria-live="polite">正在读取配置…</p>
+        <button id="editor-batch-playtest-cancel" class="button button--secondary" type="button">中止并保存已完成结果</button>
+      </section>
+    </dialog>
 
   `;
 };

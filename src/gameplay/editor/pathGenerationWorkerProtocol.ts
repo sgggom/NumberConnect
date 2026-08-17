@@ -18,11 +18,12 @@ export interface EditorPathGenerationWorkerContext {
 
 export interface EditorPathGenerationWorkerRequest {
   type: 'generate';
+  jobId: number;
   selection: EditorAlgorithmSelection;
   context: EditorPathGenerationWorkerContext;
 }
 
 export type EditorPathGenerationWorkerResponse =
-  | { type: 'progress'; progress: number }
-  | { type: 'completed'; result: EditorAlgorithmResult | null }
-  | { type: 'error'; message: string };
+  | { type: 'progress'; jobId: number; progress: number }
+  | { type: 'completed'; jobId: number; result: EditorAlgorithmResult | null }
+  | { type: 'error'; jobId: number; message: string };

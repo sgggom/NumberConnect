@@ -70,6 +70,9 @@ describe('level editor view layout', () => {
     expect(markup).toContain('id="editor-batch-playtest"');
     expect(markup).toContain('id="editor-batch-playtest-header" type="checkbox"');
     expect(markup).not.toContain('id="editor-batch-playtest-header" type="checkbox" checked');
+    expect(markup).toContain('id="editor-batch-playtest-dialog"');
+    expect(markup).toContain('id="editor-batch-playtest-progress"');
+    expect(markup).toContain('id="editor-batch-playtest-cancel"');
     expect(markup).toContain('id="editor-batch-playtest-file"');
     expect(markup).toContain('accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"');
   });

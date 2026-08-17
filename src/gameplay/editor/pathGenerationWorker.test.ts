@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createEditorAlgorithm } from './algorithms';
 import {
+  disposeEditorPathGenerationWorkerPool,
   startEditorPathGeneration,
   type EditorPathGenerationRequest,
 } from './pathGenerationWorker';
@@ -34,9 +35,10 @@ class FakePathGenerationWorker {
     FakePathGenerationWorker.lastRequest = request;
     globalThis.setTimeout(() => {
       if (this.terminated) return;
-      this.emit({ type: 'progress', progress: 0.42 });
+      this.emit({ type: 'progress', jobId: request.jobId, progress: 0.42 });
       this.emit({
         type: 'completed',
+        jobId: request.jobId,
         result: {
           path: [
             { x: 0, y: 0 },
@@ -70,6 +72,7 @@ const generationRequest = (): EditorPathGenerationRequest => ({
 
 describe('single path generation worker', () => {
   afterEach(() => {
+    disposeEditorPathGenerationWorkerPool();
     vi.unstubAllGlobals();
     FakePathGenerationWorker.instances = [];
     FakePathGenerationWorker.lastRequest = undefined;
@@ -119,7 +122,14 @@ describe('single path generation worker', () => {
     expect(FakePathGenerationWorker.lastRequest?.context.fixedPath).toEqual(request.context.fixedPath);
     expect(progress).toEqual([0.42]);
     expect(result?.path).toHaveLength(2);
-    expect(FakePathGenerationWorker.instances[0].terminated).toBe(true);
+    expect(FakePathGenerationWorker.instances[0].terminated).toBe(false);
+
+    const secondResult = await startEditorPathGeneration(
+      generationRequest(),
+      () => undefined,
+    ).promise;
+    expect(secondResult?.path).toHaveLength(2);
+    expect(FakePathGenerationWorker.instances).toHaveLength(1);
   });
 
   it('terminates an in-flight worker when generation is canceled', async () => {

@@ -52,9 +52,14 @@ export const BATCH_PLAYTEST_RESULT_HEADERS = [
 
 export const MAX_BATCH_PLAYTEST_LEVELS = 500;
 export const MAX_BATCH_PLAYTEST_SIMULATIONS = 10_000;
-export const MAX_BATCH_PLAYTEST_CONCURRENCY = 4;
+export const MAX_BATCH_PLAYTEST_CONCURRENCY = 6;
 export const BATCH_PLAYTEST_ATTEMPT_TIMEOUT_MS = 60_000;
 export const BATCH_PLAYTEST_MAX_ATTEMPTS = 4;
+
+export const batchPlaytestConcurrency = (): number => {
+  const hardwareConcurrency = globalThis.navigator?.hardwareConcurrency ?? 4;
+  return Math.max(1, Math.min(MAX_BATCH_PLAYTEST_CONCURRENCY, hardwareConcurrency - 1));
+};
 
 export interface BatchPlaytestConfig {
   sourceRow: number;
@@ -377,24 +382,27 @@ export const createBatchPlaytestLevel = (
   custom: true,
 });
 
-export const simulateBatchPlaytestLevel = (
+const BATCH_REASONING_LEVELS: ReadonlyArray<SimulationReasoningLevel> = ['low', 'medium', 'high'];
+
+const createBatchSimulationRun = (
   task: BatchPlaytestTask,
   level: LevelData,
-): BatchPlaytestSimulation => {
+  reasoningLevel: SimulationReasoningLevel,
+  runIndex: number,
+): SimulatedPlayResult => {
   const hiddenCellKeys = new Set((level.hiddenCells ?? []).map((cell) => `${cell.x},${cell.y}`));
-  const reasoningLevels: ReadonlyArray<SimulationReasoningLevel> = ['low', 'medium', 'high'];
-  const resultsByReasoning = new Map(reasoningLevels.map((reasoningLevel) => [
+  return simulateLevelPlay({
+    path: level.solutionPath,
+    hiddenCellKeys,
+    shape: task.config.shape,
     reasoningLevel,
-    Array.from({ length: task.config.simulationRunCount }, (_, runIndex) => (
-      simulateLevelPlay({
-        path: level.solutionPath,
-        hiddenCellKeys,
-        shape: task.config.shape,
-        reasoningLevel,
-        random: createRandom(mixedSeed(task, runIndex + 1000)),
-      })
-    )),
-  ]));
+    random: createRandom(mixedSeed(task, runIndex + 1000)),
+  });
+};
+
+const summarizeBatchSimulations = (
+  resultsByReasoning: ReadonlyMap<SimulationReasoningLevel, ReadonlyArray<SimulatedPlayResult>>,
+): BatchPlaytestSimulation => {
   const summarized = (reasoningLevel: SimulationReasoningLevel): SimulatedPlayResult => {
     const results = resultsByReasoning.get(reasoningLevel) ?? [];
     return results.length === 1 ? results[0] : averageSimulatedPlayResults(results);
@@ -408,6 +416,54 @@ export const simulateBatchPlaytestLevel = (
       high: summarized('high').errorCount,
     },
   };
+};
+
+export const simulateBatchPlaytestLevel = (
+  task: BatchPlaytestTask,
+  level: LevelData,
+  onProgress?: (completed: number, total: number) => void,
+): BatchPlaytestSimulation => {
+  const total = task.config.simulationRunCount * BATCH_REASONING_LEVELS.length;
+  const resultsByReasoning = new Map<SimulationReasoningLevel, SimulatedPlayResult[]>();
+  let completed = 0;
+  BATCH_REASONING_LEVELS.forEach((reasoningLevel) => {
+    const results: SimulatedPlayResult[] = [];
+    for (let runIndex = 0; runIndex < task.config.simulationRunCount; runIndex += 1) {
+      results.push(createBatchSimulationRun(task, level, reasoningLevel, runIndex));
+      completed += 1;
+      onProgress?.(completed, total);
+    }
+    resultsByReasoning.set(reasoningLevel, results);
+  });
+  return summarizeBatchSimulations(resultsByReasoning);
+};
+
+interface AsyncBatchSimulationOptions {
+  signal?: AbortSignal;
+  onProgress?: (completed: number, total: number) => void;
+}
+
+export const simulateBatchPlaytestLevelAsync = async (
+  task: BatchPlaytestTask,
+  level: LevelData,
+  options: AsyncBatchSimulationOptions = {},
+): Promise<BatchPlaytestSimulation> => {
+  const total = task.config.simulationRunCount * BATCH_REASONING_LEVELS.length;
+  const resultsByReasoning = new Map<SimulationReasoningLevel, SimulatedPlayResult[]>(
+    BATCH_REASONING_LEVELS.map((reasoningLevel) => [reasoningLevel, []]),
+  );
+  let completed = 0;
+  for (const reasoningLevel of BATCH_REASONING_LEVELS) {
+    const results = resultsByReasoning.get(reasoningLevel) as SimulatedPlayResult[];
+    for (let runIndex = 0; runIndex < task.config.simulationRunCount; runIndex += 1) {
+      await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 0));
+      if (options.signal?.aborted) throw abortedError();
+      results.push(createBatchSimulationRun(task, level, reasoningLevel, runIndex));
+      completed += 1;
+      options.onProgress?.(completed, total);
+    }
+  }
+  return summarizeBatchSimulations(resultsByReasoning);
 };
 
 const rounded = (value: number): number => Math.round(value * 100) / 100;
