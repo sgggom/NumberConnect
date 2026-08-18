@@ -132,6 +132,18 @@ describe('single path generation worker', () => {
     expect(FakePathGenerationWorker.instances).toHaveLength(1);
   });
 
+  it('scales the shared worker pool to the available logical processors', async () => {
+    vi.stubGlobal('Worker', FakePathGenerationWorker);
+    vi.stubGlobal('navigator', { hardwareConcurrency: 16 });
+
+    const tasks = Array.from({ length: 15 }, () => (
+      startEditorPathGeneration(generationRequest(), () => undefined).promise
+    ));
+
+    expect(FakePathGenerationWorker.instances).toHaveLength(15);
+    await expect(Promise.all(tasks)).resolves.toHaveLength(15);
+  });
+
   it('terminates an in-flight worker when generation is canceled', async () => {
     vi.stubGlobal('Worker', FakePathGenerationWorker);
     const task = startEditorPathGeneration(generationRequest(), () => undefined);
