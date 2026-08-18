@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { runEditorAlgorithm } from './algorithms';
 import {
   BATCH_HIDDEN_RESULT_HEADERS,
   BATCH_PATH_RESULT_HEADERS,
+  batchPlaytestConcurrency,
   createBatchPlaytestGenerationRequest,
   createBatchPlaytestLevel,
   createBatchPlaytestTasks,
@@ -27,6 +28,14 @@ const formation3x3 = JSON.stringify({
 const path3x3 = JSON.stringify({ data: [[1, -2, 3], [6, 5, 4], [7, -8, 9]] });
 
 describe('批量生成路径与隐藏', () => {
+  it('按设备逻辑线程数动态扩展并保留一个线程', () => {
+    vi.stubGlobal('navigator', { hardwareConcurrency: 16 });
+    expect(batchPlaytestConcurrency()).toBe(15);
+    vi.stubGlobal('navigator', { hardwareConcurrency: 64 });
+    expect(batchPlaytestConcurrency()).toBe(32);
+    vi.unstubAllGlobals();
+  });
+
   it('读取项目中的两个实际配置模板', async () => {
     const { readSheet } = await import('read-excel-file/node');
     const pathRows = await readSheet('excel/批量生成路径配置模板.xlsx', '路径生成配置');

@@ -8,6 +8,7 @@ import type {
   EditorPathGenerationWorkerRequest,
   EditorPathGenerationWorkerResponse,
 } from './pathGenerationWorkerProtocol';
+import { batchPlaytestConcurrency } from './batchWorkerConcurrency';
 
 export interface EditorPathGenerationRequest {
   selection: EditorAlgorithmSelection;
@@ -89,11 +90,6 @@ interface PathGenerationWorkerSlot {
   job?: PathGenerationJob;
 }
 
-const pathGenerationConcurrency = (): number => {
-  const hardwareConcurrency = globalThis.navigator?.hardwareConcurrency ?? 4;
-  return Math.max(1, Math.min(6, hardwareConcurrency - 1));
-};
-
 class PathGenerationWorkerPool {
   private readonly slots: PathGenerationWorkerSlot[] = [];
   private readonly queue: PathGenerationJob[] = [];
@@ -147,7 +143,7 @@ class PathGenerationWorkerPool {
     while (this.queue.length > 0) {
       let slot = this.slots.find((candidate) => candidate.job === undefined);
       if (!slot) {
-        if (this.slots.length >= pathGenerationConcurrency()) return;
+        if (this.slots.length >= batchPlaytestConcurrency()) return;
         try {
           slot = this.createSlot();
         } catch {

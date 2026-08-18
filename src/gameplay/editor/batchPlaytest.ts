@@ -17,6 +17,9 @@ import {
   type SimulationReasoningLevel,
 } from './simulateLevelPlay';
 import type { EditorCell, EditorShape } from './types';
+import { MAX_BATCH_PLAYTEST_CONCURRENCY } from './batchWorkerConcurrency';
+
+export { batchPlaytestConcurrency, MAX_BATCH_PLAYTEST_CONCURRENCY } from './batchWorkerConcurrency';
 
 export type BatchPlaytestMode = 'path' | 'hidden';
 
@@ -75,14 +78,8 @@ export const MAX_BATCH_PLAYTEST_LEVELS = 500;
 export const MAX_BATCH_PLAYTEST_SIMULATIONS = 10_000;
 export const MAX_BATCH_HIDDEN_LEVELS = 20_000;
 export const MAX_BATCH_HIDDEN_SIMULATIONS = 1_000_000;
-export const MAX_BATCH_PLAYTEST_CONCURRENCY = 6;
 export const BATCH_PLAYTEST_ATTEMPT_TIMEOUT_MS = 60_000;
 export const BATCH_PLAYTEST_MAX_ATTEMPTS = 4;
-
-export const batchPlaytestConcurrency = (): number => {
-  const hardwareConcurrency = globalThis.navigator?.hardwareConcurrency ?? 4;
-  return Math.max(1, Math.min(MAX_BATCH_PLAYTEST_CONCURRENCY, hardwareConcurrency - 1));
-};
 
 export interface BatchPlaytestConfig {
   mode: BatchPlaytestMode;
