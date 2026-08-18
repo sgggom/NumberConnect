@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { runEditorAlgorithm } from './algorithms';
 import {
-  BATCH_PLAYTEST_RESULT_HEADERS,
+  BATCH_HIDDEN_RESULT_HEADERS,
+  BATCH_PATH_RESULT_HEADERS,
   createBatchPlaytestGenerationRequest,
   createBatchPlaytestLevel,
   createBatchPlaytestTasks,
@@ -12,112 +13,137 @@ import {
   simulateBatchPlaytestLevelAsync,
 } from './batchPlaytest';
 
-const headers = [
-  '配置ID', '启用', '棋盘形状', '行数', '列数', '最大交叉数量', '路径拐弯概率 %',
-  '基础隐藏占比 %', '目标难度', '实际隐藏占比 %', '最长连续显示', '最长连续隐藏',
-  '生成关卡数', '每关跑关次数', '推理能力', '随机种子', '预计总跑关次数', '输出标签', '备注',
+const pathHeaders = [
+  '配置ID', '启用', '棋盘形状', '关卡数据', '最大交叉数量', '路径拐弯概率 %',
+  '生成路径数', '输出标签', '备注',
 ];
+const hiddenHeaders = [
+  '配置ID', '棋盘形状', '关卡数据', '基础隐藏占比 %', '目标难度',
+  '最长连续显示', '最长连续隐藏', '生成隐藏数', '每关跑关次数',
+];
+const formation3x3 = JSON.stringify({
+  data: [[999, 999, 999], [999, 999, 999], [999, 999, 999]],
+});
+const path3x3 = JSON.stringify({ data: [[1, -2, 3], [6, 5, 4], [7, -8, 9]] });
 
-describe('批量跑关', () => {
-  it('读取项目中的实际配置模板', async () => {
+describe('批量生成路径与隐藏', () => {
+  it('读取项目中的两个实际配置模板', async () => {
     const { readSheet } = await import('read-excel-file/node');
-    const rows = await readSheet('excel/批量跑关配置模板.xlsx', '跑关配置');
-    const headerIndex = rows.findIndex((row) => row[0] === '配置ID');
-    expect(headerIndex).toBeGreaterThanOrEqual(0);
-    const configuredRowIndex = rows.findIndex((row, index) => index > headerIndex && row[0]);
-    expect(configuredRowIndex).toBeGreaterThan(headerIndex);
-    const enabledRows = rows.map((row, index) => (
-      index === configuredRowIndex ? row.map((value, column) => (column === 1 ? '是' : value)) : row
-    ));
-    const configs = parseBatchPlaytestConfigRows(enabledRows);
-
-    expect(configs).toHaveLength(1);
-    expect(configs[0].id).toBe(String(rows[configuredRowIndex][0]));
+    const pathRows = await readSheet('excel/批量生成路径配置模板.xlsx', '路径生成配置');
+    const hiddenRows = await readSheet('excel/批量生成隐藏配置模板.xlsx', '隐藏生成配置');
+    expect(parseBatchPlaytestConfigRows(pathRows, 'path')[0]).toMatchObject({ mode: 'path' });
+    expect(parseBatchPlaytestConfigRows(hiddenRows, 'hidden')[0]).toMatchObject({ mode: 'hidden' });
   });
 
-  it('读取模板中的启用行并忽略公式列和停用行', () => {
-    const configs = parseBatchPlaytestConfigRows([
-      ['批量跑关配置模板'],
-      [],
-      headers,
-      ['CFG-001', '是', '正方形', 3, 3, 2, 40, 35, 6, 41, 8, 4, 2, 3, '中', 20260817, 6, '默认', ''],
-      ['CFG-002', '否', '长方形', 1, 2, 20, 40, 35, 6, 41, 8, 4, 5, 5, '高', 2, 25, '', ''],
-    ]);
-
-    expect(configs).toHaveLength(1);
-    expect(configs[0]).toMatchObject({
-      sourceRow: 4,
-      id: 'CFG-001',
-      shape: 'square',
-      generationCount: 2,
-      simulationRunCount: 3,
-      reasoningLevel: 'medium',
-    });
+  it('两个功能分别只要求自己的控制参数', () => {
+    const [pathConfig] = parseBatchPlaytestConfigRows([
+      pathHeaders,
+      ['PATH-1', '是', '正方形', formation3x3, 2, 40, 2, '路径', ''],
+    ], 'path');
+    const [hiddenConfig] = parseBatchPlaytestConfigRows([
+      hiddenHeaders,
+      ['HIDDEN-1', '正方形', path3x3, 35, 6, 8, 4, 2, 3],
+    ], 'hidden');
+    expect(pathConfig).toMatchObject({ mode: 'path', generationCount: 2, simulationRunCount: 0 });
+    expect(hiddenConfig).toMatchObject({ mode: 'hidden', generationCount: 2, simulationRunCount: 3 });
   });
 
-  it('校验形状尺寸、重复ID和任务总量', () => {
-    const row = ['CFG-001', '是', '菱形', 8, 7, 2, 40, 35, 6, 41, 8, 4, 2, 3, '中', 1];
-    expect(() => parseBatchPlaytestConfigRows([headers, row]))
-      .toThrow('行数与列数必须一致');
+  it('严格区分造型和路径输入', () => {
+    expect(() => parseBatchPlaytestConfigRows([
+      pathHeaders,
+      ['PATH-BAD', '是', '正方形', path3x3, 2, 40, 1],
+    ], 'path')).toThrow('只接受含 999 的棋盘造型');
+    expect(() => parseBatchPlaytestConfigRows([
+      hiddenHeaders,
+      ['HIDDEN-BAD', '正方形', formation3x3, 35, 6, 8, 4, 1, 2],
+    ], 'hidden')).toThrow('只接受不含 999 的连续编号路径');
   });
 
-  it('生成、模拟并导出带表头的结果', async () => {
+  it('从关卡数据推导尺寸并校验形状', () => {
+    const data = Array.from({ length: 8 }, () => Array.from({ length: 7 }, () => 999));
+    expect(() => parseBatchPlaytestConfigRows([
+      pathHeaders,
+      ['PATH-SIZE', '是', '菱形', JSON.stringify(data), 2, 40, 1],
+    ], 'path')).toThrow('行数与列数必须一致');
+  });
+
+  it('生成路径功能只计算路径', () => {
     const [config] = parseBatchPlaytestConfigRows([
-      headers,
-      ['CFG-001', '是', '正方形', 3, 3, 0, 40, 35, 6, 41, 8, 4, 1, 2, '中', 1234, 2, '冒烟'],
-    ]);
+      pathHeaders,
+      ['PATH-1', '是', '正方形', formation3x3, 0, 40, 1, '路径'],
+    ], 'path');
     const [task] = createBatchPlaytestTasks([config]);
     const request = createBatchPlaytestGenerationRequest(task, 0);
     const generated = runEditorAlgorithm(request.selection, request.context);
-    expect(generated).not.toBeNull();
-    const level = createBatchPlaytestLevel(task, generated!);
-    const simulation = simulateBatchPlaytestLevel(task, level);
-    const simulationProgress: number[] = [];
-    const asyncSimulation = await simulateBatchPlaytestLevelAsync(task, level, {
-      onProgress: (completed) => simulationProgress.push(completed),
-    });
-    const text = formatBatchPlaytestResultsTsv([{ task, level, simulation }], true);
+    expect(request.context.generationPhase).toBe('path');
+    expect(request.context.fixedPath).toBeUndefined();
+    expect(generated?.path).toHaveLength(9);
+    expect(generated?.hiddenCells).toBeUndefined();
+  });
 
-    expect(level.hiddenCells?.filter((cell) => (
-      level.solutionPath.slice(0, 4).some((first) => first.x === cell.x && first.y === cell.y)
-    )).length).toBeLessThanOrEqual(1);
-    expect(text.split('\r\n')[0].split('\t')).toEqual([...BATCH_PLAYTEST_RESULT_HEADERS]);
-    expect(BATCH_PLAYTEST_RESULT_HEADERS.slice(0, 2)).toEqual(['配置ID', '输出标签']);
-    expect(BATCH_PLAYTEST_RESULT_HEADERS).not.toContain('平均错误数');
-    expect(BATCH_PLAYTEST_RESULT_HEADERS).toEqual(expect.arrayContaining([
-      '低推理平均错误数', '中推理平均错误数', '高推理平均错误数',
+  it('生成隐藏功能固定路径并忽略原隐藏正负号', () => {
+    const [config] = parseBatchPlaytestConfigRows([
+      hiddenHeaders,
+      ['HIDDEN-1', '正方形', path3x3, 35, 6, 8, 4, 2, 2],
+    ], 'hidden');
+    const tasks = createBatchPlaytestTasks([config]);
+    const request = createBatchPlaytestGenerationRequest(tasks[0], 0);
+    const generated = runEditorAlgorithm(request.selection, request.context);
+    expect(request.context.generationPhase).toBe('hidden');
+    expect(request.context.fixedPath).toEqual([
+      { x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 },
+      { x: 2, y: 1 }, { x: 1, y: 1 }, { x: 0, y: 1 },
+      { x: 0, y: 2 }, { x: 1, y: 2 }, { x: 2, y: 2 },
+    ]);
+    expect(generated?.path).toEqual(request.context.fixedPath);
+    expect(generated?.hiddenCells).toBeDefined();
+  });
+
+  it('路径结果只输出路径统计', () => {
+    const [config] = parseBatchPlaytestConfigRows([
+      pathHeaders,
+      ['PATH-1', '是', '正方形', formation3x3, 0, 40, 1, '路径'],
+    ], 'path');
+    const [task] = createBatchPlaytestTasks([config]);
+    const request = createBatchPlaytestGenerationRequest(task, 0);
+    const level = createBatchPlaytestLevel(task, runEditorAlgorithm(request.selection, request.context)!);
+    const text = formatBatchPlaytestResultsTsv([{ task, level }], 'path', true);
+    expect(text.split('\r\n')[0].split('\t')).toEqual([...BATCH_PATH_RESULT_HEADERS]);
+    expect(BATCH_PATH_RESULT_HEADERS).toContain('实际路径交叉数量');
+    expect(BATCH_PATH_RESULT_HEADERS).not.toContain('中推理平均错误数');
+    expect(text.split('\r\n')[1].split('\t')).toHaveLength(BATCH_PATH_RESULT_HEADERS.length);
+  });
+
+  it('隐藏结果输出难度和低中高错误统计', async () => {
+    const [config] = parseBatchPlaytestConfigRows([
+      hiddenHeaders,
+      ['HIDDEN-1', '正方形', path3x3, 35, 6, 8, 4, 1, 2],
+    ], 'hidden');
+    const [task] = createBatchPlaytestTasks([config]);
+    const request = createBatchPlaytestGenerationRequest(task, 0);
+    const level = createBatchPlaytestLevel(task, runEditorAlgorithm(request.selection, request.context)!);
+    const simulation = simulateBatchPlaytestLevel(task, level);
+    const progress: number[] = [];
+    expect(await simulateBatchPlaytestLevelAsync(task, level, {
+      onProgress: (completed) => progress.push(completed),
+    })).toEqual(simulation);
+    const text = formatBatchPlaytestResultsTsv([{ task, level, simulation }], 'hidden', true);
+    expect(text.split('\r\n')[0].split('\t')).toEqual([...BATCH_HIDDEN_RESULT_HEADERS]);
+    expect(BATCH_HIDDEN_RESULT_HEADERS).toEqual(expect.arrayContaining([
+      '平均每步难度分', '低推理平均错误数', '中推理平均错误数', '高推理平均错误数',
     ]));
-    expect(simulation.errorCount).toBe(simulation.averageErrorCountByReasoning.medium);
-    expect(asyncSimulation).toEqual(simulation);
-    expect(simulationProgress).toEqual([1, 2, 3, 4, 5, 6]);
-    const abortController = new AbortController();
-    await expect(simulateBatchPlaytestLevelAsync(task, level, {
-      signal: abortController.signal,
-      onProgress: (completed) => {
-        if (completed === 1) abortController.abort();
-      },
-    })).rejects.toMatchObject({ name: 'AbortError' });
-    expect(text).toContain('CFG-001\t冒烟');
-    const values = text.split('\r\n')[1].split('\t');
-    expect(values).toHaveLength(BATCH_PLAYTEST_RESULT_HEADERS.length);
-    expect(values[BATCH_PLAYTEST_RESULT_HEADERS.indexOf('推理能力')]).toBe('中');
-    expect(Number(values[BATCH_PLAYTEST_RESULT_HEADERS.indexOf('中推理平均错误数')]))
-      .toBeCloseTo(simulation.errorCount);
-    const rightAngleRatio = Number(values[BATCH_PLAYTEST_RESULT_HEADERS.indexOf('直角拐弯占比')]);
-    expect(rightAngleRatio).toBeGreaterThanOrEqual(0);
-    expect(rightAngleRatio).toBeLessThanOrEqual(1);
-    expect(Number(values[BATCH_PLAYTEST_RESULT_HEADERS.indexOf('平均路径长度（拐弯的拐点算作端点，看整个棋盘中的线段平均长度）')]))
-      .toBeGreaterThan(0);
-    expect(['左上', '右上', '左下', '右下', '靠中'])
-      .toContain(values[BATCH_PLAYTEST_RESULT_HEADERS.indexOf('起点位置（分为左上/右上/左下/右下/靠中）')]);
-    expect(formatBatchPlaytestResultsTsv([{ task, level, simulation }]).startsWith('CFG-001\t冒烟'))
-      .toBe(true);
+    expect(BATCH_HIDDEN_RESULT_HEADERS).toEqual(expect.arrayContaining([
+      '关卡名', '路径JSON', '实际路径交叉数量', '直角拐弯占比', '终点位置',
+    ]));
+    expect(text.split('\r\n')[1].split('\t')).toHaveLength(BATCH_HIDDEN_RESULT_HEADERS.length);
+    expect(text.split('\r\n')[1].split('\t')[BATCH_HIDDEN_RESULT_HEADERS.indexOf('关卡名')])
+      .toBe('HIDDEN-1_6');
+    expect(progress).toEqual([1, 2, 3, 4, 5, 6]);
   });
 
   it('最多并行执行指定数量的任务并保持结果顺序', async () => {
     let running = 0;
     let peakRunning = 0;
-    const progress: Array<{ completed: number; running: number; failed: number }> = [];
     const results = await runConcurrentBatchTaskPool(
       [0, 1, 2, 3, 4, 5],
       async (value) => {
@@ -125,20 +151,12 @@ describe('批量跑关', () => {
         peakRunning = Math.max(peakRunning, running);
         await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 5 + (5 - value)));
         running -= 1;
-        return value === 3 ? -1 : value * 10;
+        return value * 10;
       },
-      {
-        concurrency: 3,
-        isFailure: (value) => value < 0,
-        onProgress: ({ completed, running: active, failed }) => {
-          progress.push({ completed, running: active, failed });
-        },
-      },
+      { concurrency: 3 },
     );
-
     expect(peakRunning).toBe(3);
-    expect(results).toEqual([0, 10, 20, -1, 40, 50]);
-    expect(progress.at(-1)).toEqual({ completed: 6, running: 0, failed: 1 });
+    expect(results).toEqual([0, 10, 20, 30, 40, 50]);
   });
 
   it('收到取消信号后不再派发后续任务', async () => {

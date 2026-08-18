@@ -1,4 +1,4 @@
-const LEVEL_EDITOR_VIEW_VERSION = '36';
+const LEVEL_EDITOR_VIEW_VERSION = '38';
 
 export const mountLevelEditorView = (host: HTMLElement): void => {
   const hasCurrentView = host.dataset.editorViewVersion === LEVEL_EDITOR_VIEW_VERSION
@@ -92,7 +92,10 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
             <button id="editor-level-export" class="button button--secondary button--small" title="按关卡 ID 导出仅包含 data 的 JSON 文本" disabled>导出 TXT</button>
             <button id="editor-level-clear" class="button button--secondary button--small" type="button" title="清空关卡列表" disabled>清空列表</button>
             <div class="editor-batch-playtest-row">
-              <button id="editor-batch-playtest" class="button button--secondary button--small editor-batch-playtest" type="button" title="读取批量跑关配置模板并导出模拟结果">批量跑关</button>
+              <div class="editor-batch-playtest-actions">
+                <button id="editor-batch-generate-path" class="button button--secondary button--small editor-batch-playtest" type="button" title="读取路径生成配置，批量生成并导出路径统计">批量生成路径</button>
+                <button id="editor-batch-generate-hidden" class="button button--secondary button--small editor-batch-playtest" type="button" title="读取隐藏生成配置，批量生成隐藏并导出难度与错误统计">批量生成隐藏</button>
+              </div>
               <label class="editor-batch-playtest-header">
                 <input id="editor-batch-playtest-header" type="checkbox">
                 <span>输出表头</span>
@@ -209,6 +212,7 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
             <span id="editor-calculate-hidden-label">计算隐藏</span>
           </button>
           <button id="editor-undo-delete-button" class="button button--secondary button--small" title="Ctrl+Z" disabled>撤销删除</button>
+          <button id="editor-copy-formation-button" class="button button--secondary button--small" type="button" title="复制为批量生成路径的“关卡数据”：999 为阵型占位格" disabled>复制阵型</button>
           <button id="editor-playtest-button" class="button button--secondary" disabled>试玩关卡</button>
         </div>
       </aside>
@@ -219,12 +223,12 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
       <section class="editor-batch-playtest-dialog__card">
         <div class="editor-batch-playtest-dialog__heading">
           <div>
-            <small>批量跑关</small>
+            <small>批量处理</small>
             <h3 id="editor-batch-playtest-dialog-title">正在准备…</h3>
           </div>
           <strong id="editor-batch-playtest-percent">0%</strong>
         </div>
-        <progress id="editor-batch-playtest-progress" max="1" value="0" aria-label="批量跑关进度"></progress>
+        <progress id="editor-batch-playtest-progress" max="1" value="0" aria-label="批量处理进度"></progress>
         <div class="editor-batch-playtest-dialog__stats">
           <div><span>已完成</span><b id="editor-batch-playtest-completed">0 / 0</b></div>
           <div><span>运行中</span><b id="editor-batch-playtest-running">0</b></div>

@@ -67,7 +67,8 @@ describe('level editor view layout', () => {
   it('provides the batch playtest workbook entry in the level panel', () => {
     const markup = renderEditorMarkup();
 
-    expect(markup).toContain('id="editor-batch-playtest"');
+    expect(markup).toContain('id="editor-batch-generate-path"');
+    expect(markup).toContain('id="editor-batch-generate-hidden"');
     expect(markup).toContain('id="editor-batch-playtest-header" type="checkbox"');
     expect(markup).not.toContain('id="editor-batch-playtest-header" type="checkbox" checked');
     expect(markup).toContain('id="editor-batch-playtest-dialog"');
@@ -94,6 +95,7 @@ describe('level editor view layout', () => {
     const generateIndex = markup.indexOf('id="editor-generate-path-button"');
     const hiddenIndex = markup.indexOf('id="editor-calculate-hidden-button"');
     const undoIndex = markup.indexOf('id="editor-undo-delete-button"');
+    const copyFormationIndex = markup.indexOf('id="editor-copy-formation-button"');
     const playtestIndex = markup.indexOf('id="editor-playtest-button"');
 
     expect(fillIndex).toBeGreaterThan(actionsIndex);
@@ -101,8 +103,17 @@ describe('level editor view layout', () => {
     expect(generateIndex).toBeGreaterThan(clearIndex);
     expect(hiddenIndex).toBeGreaterThan(generateIndex);
     expect(undoIndex).toBeGreaterThan(hiddenIndex);
-    expect(playtestIndex).toBeGreaterThan(undoIndex);
+    expect(copyFormationIndex).toBeGreaterThan(undoIndex);
+    expect(playtestIndex).toBeGreaterThan(copyFormationIndex);
     expect(markup).not.toContain('class="editor-board-actions"');
+  });
+
+  it('provides a clipboard action for the current 999-placeholder formation', () => {
+    const markup = renderEditorMarkup();
+
+    expect(markup).toContain('id="editor-copy-formation-button"');
+    expect(markup).toContain('>复制阵型</button>');
+    expect(markup).toContain('复制为批量生成路径的“关卡数据”：999 为阵型占位格');
   });
 
   it('keeps a dedicated label layer inside the path generation progress button', () => {
