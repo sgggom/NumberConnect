@@ -9,49 +9,72 @@ import type {
 } from './algorithms/types';
 import { calculateEditorLevelMetrics } from './levelMetrics';
 import { summarizeDifficultyScores } from './levelBaseDataTsv';
+import { areEditorCellsNeighbors } from './findEditorPath';
 import {
   averageSimulatedPlayResults,
   simulateLevelPlay,
   type SimulatedPlayResult,
   type SimulationReasoningLevel,
 } from './simulateLevelPlay';
-import type { EditorShape } from './types';
+import type { EditorCell, EditorShape } from './types';
 
-const REQUIRED_HEADERS = [
+export type BatchPlaytestMode = 'path' | 'hidden';
+
+const COMMON_REQUIRED_HEADERS = [
   '配置ID',
-  '启用',
   '棋盘形状',
-  '行数',
-  '列数',
+  '关卡数据',
+] as const;
+
+const PATH_REQUIRED_HEADERS = [
+  ...COMMON_REQUIRED_HEADERS,
+  '启用',
   '最大交叉数量',
   '路径拐弯概率 %',
+  '生成路径数',
+] as const;
+
+const HIDDEN_REQUIRED_HEADERS = [
+  ...COMMON_REQUIRED_HEADERS,
   '基础隐藏占比 %',
   '目标难度',
   '最长连续显示',
   '最长连续隐藏',
-  '生成关卡数',
+  '生成隐藏数',
   '每关跑关次数',
-  '推理能力',
-  '随机种子',
 ] as const;
 
-export const BATCH_PLAYTEST_RESULT_HEADERS = [
-  '配置ID', '输出标签', '配置表行号', '配置内关卡序号', '关卡JSON',
-  '棋盘形状', '行数', '列数', '格子数', '随机种子', '最大交叉数量', '路径拐弯概率 %',
-  '基础隐藏占比 %', '目标难度', '配置实际隐藏占比 %', '最长连续显示限制', '最长连续隐藏限制',
-  '实际隐藏数', '实际隐藏占比 %', '实际最长连续显示', '实际最长连续隐藏', '路径交叉数量',
-  '每关跑关次数', '推理能力', '平均总步数', '低推理平均错误数', '中推理平均错误数',
-  '高推理平均错误数', '平均可连接数量', '直接连接占比 %',
-  '平均距离下个显示数字', '平均每步难度分', '前期平均难度分', '中期平均难度分', '后期平均难度分',
-  '直角拐弯占比', '锐角拐弯占比', '钝角拐弯占比',
+export const BATCH_PATH_RESULT_HEADERS = [
+  '配置ID', '输出标签', '配置表行号', '配置内路径序号', '路径JSON',
+  '棋盘形状', '行数', '列数', '格子数', '配置最大交叉数量', '配置路径拐弯概率 %',
+  '实际路径交叉数量', '直角拐弯占比', '锐角拐弯占比', '钝角拐弯占比',
   '平均路径长度（拐弯的拐点算作端点，看整个棋盘中的线段平均长度）',
   '向上移动占比', '向下移动占比', '向左移动占比', '向右移动占比',
   '向左上移动占比', '向右上移动占比', '向左下移动占比', '向右下移动占比',
   '起点位置（分为左上/右上/左下/右下/靠中）', '终点位置',
 ] as const;
 
+export const BATCH_HIDDEN_RESULT_HEADERS = [
+  '关卡名', '配置ID', '配置表行号', '配置内隐藏序号', '关卡JSON', '路径JSON',
+  '棋盘形状', '行数', '列数', '格子数',
+  '基础隐藏占比 %', '目标难度', '配置实际隐藏占比 %', '最长连续显示限制', '最长连续隐藏限制',
+  '实际隐藏数', '实际隐藏占比 %', '实际最长连续显示', '实际最长连续隐藏',
+  '实际路径交叉数量', '直角拐弯占比', '锐角拐弯占比', '钝角拐弯占比',
+  '平均路径长度（拐弯的拐点算作端点，看整个棋盘中的线段平均长度）',
+  '向上移动占比', '向下移动占比', '向左移动占比', '向右移动占比',
+  '向左上移动占比', '向右上移动占比', '向左下移动占比', '向右下移动占比',
+  '起点位置（分为左上/右上/左下/右下/靠中）', '终点位置',
+  '每关跑关次数', '推理能力', '平均总步数', '低推理平均错误数', '中推理平均错误数',
+  '高推理平均错误数', '平均可连接数量', '直接连接占比 %',
+  '平均距离下个显示数字', '平均每步难度分', '前期平均难度分', '中期平均难度分', '后期平均难度分',
+] as const;
+
+export const BATCH_PLAYTEST_RESULT_HEADERS = BATCH_HIDDEN_RESULT_HEADERS;
+
 export const MAX_BATCH_PLAYTEST_LEVELS = 500;
 export const MAX_BATCH_PLAYTEST_SIMULATIONS = 10_000;
+export const MAX_BATCH_HIDDEN_LEVELS = 20_000;
+export const MAX_BATCH_HIDDEN_SIMULATIONS = 1_000_000;
 export const MAX_BATCH_PLAYTEST_CONCURRENCY = 6;
 export const BATCH_PLAYTEST_ATTEMPT_TIMEOUT_MS = 60_000;
 export const BATCH_PLAYTEST_MAX_ATTEMPTS = 4;
@@ -62,6 +85,7 @@ export const batchPlaytestConcurrency = (): number => {
 };
 
 export interface BatchPlaytestConfig {
+  mode: BatchPlaytestMode;
   sourceRow: number;
   id: string;
   enabled: boolean;
@@ -79,6 +103,8 @@ export interface BatchPlaytestConfig {
   reasoningLevel: SimulationReasoningLevel;
   seed: number;
   outputLabel: string;
+  presetActiveCells?: EditorCell[];
+  presetPath?: EditorCell[];
 }
 
 export interface BatchPlaytestTask {
@@ -113,7 +139,7 @@ export interface BatchTaskPoolOptions<Result> {
 }
 
 const abortedError = (): Error => {
-  const error = new Error('批量跑关已取消。');
+  const error = new Error('批量任务已取消。');
   error.name = 'AbortError';
   return error;
 };
@@ -166,7 +192,7 @@ export const runConcurrentBatchTaskPool = async <Task, Result>(
   return results;
 };
 
-type Header = typeof REQUIRED_HEADERS[number];
+type Header = string;
 
 const normalizedHeader = (value: unknown): string => String(value ?? '')
   .trim()
@@ -200,14 +226,6 @@ const parseShape = (value: unknown, sourceRow: number): EditorShape => {
   throw new Error(`第 ${sourceRow} 行“棋盘形状”只支持正方形、长方形、菱形或六边形蜂窝。`);
 };
 
-const parseReasoningLevel = (value: unknown, sourceRow: number): SimulationReasoningLevel => {
-  const normalized = String(value ?? '').trim().toLowerCase();
-  if (normalized === '低' || normalized === 'low') return 'low';
-  if (normalized === '中' || normalized === 'medium') return 'medium';
-  if (normalized === '高' || normalized === 'high') return 'high';
-  throw new Error(`第 ${sourceRow} 行“推理能力”只支持低、中、高。`);
-};
-
 const parseEnabled = (value: unknown, sourceRow: number): boolean => {
   const normalized = String(value ?? '').trim().toLowerCase();
   if (normalized === '是' || normalized === 'yes' || normalized === 'true' || normalized === '1') return true;
@@ -221,6 +239,9 @@ const validateDimensions = (
   columns: number,
   sourceRow: number,
 ): void => {
+  if (rows > 20 || columns > 20) {
+    throw new Error(`第 ${sourceRow} 行：“关卡数据”的尺寸不能超过 20×20。`);
+  }
   const minimum = shape === 'rectangle' ? 1 : 3;
   if (rows < minimum || columns < minimum) {
     throw new Error(`第 ${sourceRow} 行：${shape === 'rectangle' ? '长方形' : '当前'}棋盘每边至少 ${minimum} 格。`);
@@ -232,13 +253,100 @@ const validateDimensions = (
   if (shape === 'hex' && rows > 10) throw new Error(`第 ${sourceRow} 行：六边形蜂窝不能超过 10×10。`);
 };
 
+const presetData = (
+  value: unknown,
+  sourceRow: number,
+  header: string,
+): number[][] | undefined => {
+  if (value === null || value === undefined || String(value).trim() === '') return undefined;
+  let parsed: unknown;
+  try {
+    parsed = typeof value === 'string' ? JSON.parse(value.trim()) : value;
+  } catch {
+    throw new Error(`第 ${sourceRow} 行“${header}”不是有效的 JSON。`);
+  }
+  const data = parsed && typeof parsed === 'object' && !Array.isArray(parsed) && 'data' in parsed
+    ? (parsed as { data?: unknown }).data
+    : parsed;
+  if (!Array.isArray(data) || data.length === 0) {
+    throw new Error(`第 ${sourceRow} 行“${header}”必须是非空二维数组。`);
+  }
+  const columns = Array.isArray(data[0]) ? data[0].length : 0;
+  if (columns === 0) throw new Error(`第 ${sourceRow} 行“${header}”每行至少包含 1 个整数。`);
+  return data.map((row, y) => {
+    if (!Array.isArray(row) || row.length !== columns) {
+      throw new Error(`第 ${sourceRow} 行“${header}”第 ${y + 1} 行必须包含 ${columns} 个整数。`);
+    }
+    return row.map((cell, x) => {
+      if (!Number.isSafeInteger(cell)) {
+        throw new Error(`第 ${sourceRow} 行“${header}”data[${y}][${x}] 必须是整数。`);
+      }
+      return cell as number;
+    });
+  });
+};
+
+const activeCellsFromPreset = (data: ReadonlyArray<ReadonlyArray<number>>): EditorCell[] => data
+  .flatMap((row, y) => row.flatMap((value, x) => (value === 0 ? [] : [{ x, y }])));
+
+const formationCellsFromPreset = (
+  data: ReadonlyArray<ReadonlyArray<number>>,
+  sourceRow: number,
+): EditorCell[] => data.flatMap((row, y) => row.flatMap((value, x) => {
+  if (value === 0) return [];
+  if (value !== 999) {
+    throw new Error(`第 ${sourceRow} 行“关卡数据”包含 999 时只允许使用 0（空位）和 999（占位格）。`);
+  }
+  return [{ x, y }];
+}));
+
+const pathFromPreset = (
+  data: ReadonlyArray<ReadonlyArray<number>>,
+  sourceRow: number,
+  shape: EditorShape,
+): EditorCell[] => {
+  const activeCells = activeCellsFromPreset(data);
+  if (activeCells.length === 0) throw new Error(`第 ${sourceRow} 行“关卡数据”中没有关卡格子。`);
+  const path: Array<EditorCell | undefined> = [];
+  data.forEach((row, y) => row.forEach((value, x) => {
+    if (value === 0) return;
+    const number = Math.abs(value);
+    if (number > data.length * row.length || path[number - 1]) {
+      throw new Error(`第 ${sourceRow} 行“关卡数据”的路径数字绝对值必须不重复且连续。`);
+    }
+    path[number - 1] = { x, y };
+  }));
+  if (path.length !== activeCells.length || path.some((cell) => cell === undefined)) {
+    throw new Error(`第 ${sourceRow} 行“关卡数据”的路径数字绝对值必须连续覆盖 1–${activeCells.length}。`);
+  }
+  const fixedPath = path as EditorCell[];
+  fixedPath.forEach((cell, index) => {
+    if (index > 0 && !areEditorCellsNeighbors(fixedPath[index - 1], cell, shape)) {
+      throw new Error(`第 ${sourceRow} 行“关卡数据”中的路径数字 ${index} 与 ${index + 1} 不相邻。`);
+    }
+  });
+  return fixedPath;
+};
+
 export const parseBatchPlaytestConfigRows = (
   rows: ReadonlyArray<ReadonlyArray<unknown>>,
+  mode: BatchPlaytestMode,
 ): BatchPlaytestConfig[] => {
+  const requiredHeaders = mode === 'path' ? PATH_REQUIRED_HEADERS : HIDDEN_REQUIRED_HEADERS;
   const headerRowIndex = rows.findIndex((row) => (
-    REQUIRED_HEADERS.every((header) => row.map(normalizedHeader).includes(header))
+    requiredHeaders.every((header) => row.map(normalizedHeader).includes(header))
   ));
-  if (headerRowIndex < 0) throw new Error('找不到“跑关配置”表头，请使用项目提供的批量跑关配置模板。');
+  if (headerRowIndex < 0) {
+    const likelyHeader = rows.find((row) => COMMON_REQUIRED_HEADERS.some(
+      (header) => row.map(normalizedHeader).includes(header),
+    ));
+    const missing = likelyHeader
+      ? requiredHeaders.filter((header) => !likelyHeader.map(normalizedHeader).includes(header))
+      : [];
+    throw new Error(missing.length > 0
+      ? `批量配置表头缺少：${missing.join('、')}。`
+      : `找不到“${mode === 'path' ? '路径生成配置' : '隐藏生成配置'}”表头，请使用对应的批量配置模板。`);
+  }
 
   const headerIndexes = new Map<string, number>(
     rows[headerRowIndex].map((value, index) => [normalizedHeader(value), index]),
@@ -247,63 +355,114 @@ export const parseBatchPlaytestConfigRows = (
   const optionalIndex = (header: string): number => headerIndexes.get(header) ?? -1;
   const configs: BatchPlaytestConfig[] = [];
   const seenIds = new Set<string>();
+  const automaticSeed = (Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0;
 
   rows.slice(headerRowIndex + 1).forEach((row, offset) => {
     if (isBlankRow(row)) return;
     const sourceRow = headerRowIndex + offset + 2;
-    const enabled = parseEnabled(row[indexOf('启用')], sourceRow);
+    const enabled = mode === 'path' ? parseEnabled(row[indexOf('启用')], sourceRow) : true;
     if (!enabled) return;
     const id = String(row[indexOf('配置ID')] ?? '').trim();
     if (!id) throw new Error(`第 ${sourceRow} 行“配置ID”不能为空。`);
-    if (seenIds.has(id)) throw new Error(`第 ${sourceRow} 行“配置ID”${id}重复。`);
+    if (mode === 'path' && seenIds.has(id)) {
+      throw new Error(`第 ${sourceRow} 行“配置ID”${id}重复。`);
+    }
     seenIds.add(id);
     const shape = parseShape(row[indexOf('棋盘形状')], sourceRow);
-    const parsedRows = integerCell(row[indexOf('行数')], sourceRow, '行数', 1, 20);
-    const columns = integerCell(row[indexOf('列数')], sourceRow, '列数', 1, 20);
+    const configuredData = presetData(row[indexOf('关卡数据')], sourceRow, '关卡数据');
+    if (!configuredData) throw new Error(`第 ${sourceRow} 行“关卡数据”不能为空。`);
+    const parsedRows = configuredData.length;
+    const columns = configuredData[0].length;
     validateDimensions(shape, parsedRows, columns, sourceRow);
-    const outputLabelIndex = optionalIndex('输出标签');
+    const outputLabelIndex = mode === 'path' ? optionalIndex('输出标签') : -1;
+    const isPresetFormation = configuredData.some((dataRow) => dataRow.includes(999));
+    if (mode === 'path' && !isPresetFormation) {
+      throw new Error(`第 ${sourceRow} 行：批量生成路径只接受含 999 的棋盘造型。`);
+    }
+    if (mode === 'hidden' && isPresetFormation) {
+      throw new Error(`第 ${sourceRow} 行：批量生成隐藏只接受不含 999 的连续编号路径。`);
+    }
+    const presetActiveCells = mode === 'path'
+      ? formationCellsFromPreset(configuredData, sourceRow)
+      : undefined;
+    if (presetActiveCells?.length === 0) {
+      throw new Error(`第 ${sourceRow} 行“关卡数据”的阵型中没有占位格。`);
+    }
+    const presetPath = mode === 'hidden'
+      ? pathFromPreset(configuredData, sourceRow, shape)
+      : undefined;
     configs.push({
+      mode,
       sourceRow,
       id,
       enabled,
       shape,
       rows: parsedRows,
       columns,
-      targetCrossings: shape === 'hex'
+      targetCrossings: mode === 'hidden' || shape === 'hex'
         ? 0
         : integerCell(row[indexOf('最大交叉数量')], sourceRow, '最大交叉数量', 0, 99),
-      turnProbability: integerCell(row[indexOf('路径拐弯概率 %')], sourceRow, '路径拐弯概率 %', 0, 100),
-      hiddenPercent: integerCell(row[indexOf('基础隐藏占比 %')], sourceRow, '基础隐藏占比 %', 0, 100),
-      targetDifficulty: integerCell(row[indexOf('目标难度')], sourceRow, '目标难度', 1, 10),
-      maxVisibleRun: integerCell(row[indexOf('最长连续显示')], sourceRow, '最长连续显示', 1, 99),
-      maxHiddenRun: integerCell(row[indexOf('最长连续隐藏')], sourceRow, '最长连续隐藏', 1, 99),
-      generationCount: integerCell(row[indexOf('生成关卡数')], sourceRow, '生成关卡数', 1, 100),
-      simulationRunCount: integerCell(row[indexOf('每关跑关次数')], sourceRow, '每关跑关次数', 1, 100),
-      reasoningLevel: parseReasoningLevel(row[indexOf('推理能力')], sourceRow),
-      seed: integerCell(row[indexOf('随机种子')], sourceRow, '随机种子', 0, 2147483647),
+      turnProbability: mode === 'path'
+        ? integerCell(row[indexOf('路径拐弯概率 %')], sourceRow, '路径拐弯概率 %', 0, 100)
+        : 0,
+      hiddenPercent: mode === 'hidden'
+        ? integerCell(row[indexOf('基础隐藏占比 %')], sourceRow, '基础隐藏占比 %', 0, 100)
+        : 0,
+      targetDifficulty: mode === 'hidden'
+        ? integerCell(row[indexOf('目标难度')], sourceRow, '目标难度', 1, 10)
+        : 1,
+      maxVisibleRun: mode === 'hidden'
+        ? integerCell(row[indexOf('最长连续显示')], sourceRow, '最长连续显示', 1, 99)
+        : 99,
+      maxHiddenRun: mode === 'hidden'
+        ? integerCell(row[indexOf('最长连续隐藏')], sourceRow, '最长连续隐藏', 1, 99)
+        : 99,
+      generationCount: integerCell(
+        row[indexOf(mode === 'path' ? '生成路径数' : '生成隐藏数')],
+        sourceRow,
+        mode === 'path' ? '生成路径数' : '生成隐藏数',
+        1,
+        100,
+      ),
+      simulationRunCount: mode === 'hidden'
+        ? integerCell(row[indexOf('每关跑关次数')], sourceRow, '每关跑关次数', 1, 100)
+        : 0,
+      reasoningLevel: 'medium',
+      seed: (automaticSeed ^ Math.imul(sourceRow, 2654435761)) >>> 0,
       outputLabel: outputLabelIndex < 0 ? '' : String(row[outputLabelIndex] ?? '').trim(),
+      presetActiveCells,
+      presetPath,
     });
   });
 
-  if (configs.length === 0) throw new Error('没有启用的跑关配置，请至少将一行“启用”设为“是”。');
+  if (configs.length === 0) throw new Error(mode === 'path'
+    ? '没有启用的跑关配置，请至少将一行“启用”设为“是”。'
+    : '没有可生成的隐藏配置。');
   const totalLevels = configs.reduce((sum, config) => sum + config.generationCount, 0);
-  const totalSimulations = configs.reduce(
+  const totalSimulations = mode === 'hidden' ? configs.reduce(
     (sum, config) => sum + config.generationCount * config.simulationRunCount * 3,
     0,
-  );
-  if (totalLevels > MAX_BATCH_PLAYTEST_LEVELS) {
-    throw new Error(`一次最多生成 ${MAX_BATCH_PLAYTEST_LEVELS} 关，当前配置为 ${totalLevels} 关。`);
+  ) : 0;
+  const maximumLevels = mode === 'hidden' ? MAX_BATCH_HIDDEN_LEVELS : MAX_BATCH_PLAYTEST_LEVELS;
+  const maximumSimulations = mode === 'hidden'
+    ? MAX_BATCH_HIDDEN_SIMULATIONS
+    : MAX_BATCH_PLAYTEST_SIMULATIONS;
+  if (totalLevels > maximumLevels) {
+    throw new Error(`一次最多生成 ${maximumLevels} 关，当前配置为 ${totalLevels} 关。`);
   }
-  if (totalSimulations > MAX_BATCH_PLAYTEST_SIMULATIONS) {
-    throw new Error(`一次最多执行 ${MAX_BATCH_PLAYTEST_SIMULATIONS} 次模拟，当前配置为 ${totalSimulations} 次。`);
+  if (totalSimulations > maximumSimulations) {
+    throw new Error(`一次最多执行 ${maximumSimulations} 次模拟，当前配置为 ${totalSimulations} 次。`);
   }
   return configs;
 };
 
-export const readBatchPlaytestConfigFile = async (file: Blob): Promise<BatchPlaytestConfig[]> => {
+export const readBatchPlaytestConfigFile = async (
+  file: Blob,
+  mode: BatchPlaytestMode,
+): Promise<BatchPlaytestConfig[]> => {
   const { readSheet } = await import('read-excel-file/browser');
-  const rows = await readSheet(file, '跑关配置');
-  return parseBatchPlaytestConfigRows(rows);
+  const rows = await readSheet(file, mode === 'path' ? '路径生成配置' : '隐藏生成配置');
+  return parseBatchPlaytestConfigRows(rows, mode);
 };
 
 export const createBatchPlaytestTasks = (
@@ -329,9 +488,12 @@ export const createBatchPlaytestGenerationRequest = (
   attempt: number,
 ): { selection: Algorithm1Selection; context: Omit<EditorAlgorithmContext, 'onProgress'> } => {
   const defaults = createAlgorithm1Selection();
-  const activeCells = new Set<string>();
-  for (let y = 0; y < task.config.rows; y += 1) {
-    for (let x = 0; x < task.config.columns; x += 1) activeCells.add(`${x},${y}`);
+  const presetCells = task.config.presetPath ?? task.config.presetActiveCells;
+  const activeCells = new Set<string>(presetCells?.map((cell) => `${cell.x},${cell.y}`));
+  if (!presetCells) {
+    for (let y = 0; y < task.config.rows; y += 1) {
+      for (let x = 0; x < task.config.columns; x += 1) activeCells.add(`${x},${y}`);
+    }
   }
   return {
     selection: {
@@ -352,6 +514,8 @@ export const createBatchPlaytestGenerationRequest = (
       activeCells,
       shape: task.config.shape,
       generationIndex: mixedSeed(task, attempt),
+      generationPhase: task.config.mode,
+      fixedPath: task.config.presetPath?.map((cell) => ({ ...cell })),
     },
   };
 };
@@ -483,20 +647,27 @@ const safeTsv = (value: unknown): string => String(value ?? '').replace(/[\t\r\n
 
 export const formatBatchPlaytestResultsTsv = (
   results: ReadonlyArray<BatchPlaytestResult>,
+  mode: BatchPlaytestMode,
   includeHeader = false,
 ): string => {
+  const headers = mode === 'path' ? BATCH_PATH_RESULT_HEADERS : BATCH_HIDDEN_RESULT_HEADERS;
   const rows = results.map((result) => {
     const { task, level, simulation } = result;
     const config = task.config;
-    if (!level || !simulation) {
-      const failureRow = Array.from({ length: BATCH_PLAYTEST_RESULT_HEADERS.length }, () => '');
-      failureRow.splice(
-        0,
-        8,
-        config.id, config.outputLabel, String(config.sourceRow), String(task.generationNumber),
-        '', shapeLabel(config.shape),
-        String(config.rows), String(config.columns),
-      );
+    if (!level || (mode === 'hidden' && !simulation)) {
+      const failureRow = Array.from({ length: headers.length }, () => '');
+      if (mode === 'path') {
+        failureRow.splice(
+          0, 8, config.id, config.outputLabel, String(config.sourceRow), String(task.generationNumber),
+          '', shapeLabel(config.shape), String(config.rows), String(config.columns),
+        );
+      } else {
+        failureRow.splice(
+          0, 10, `${config.id}_${config.targetDifficulty}`, config.id, String(config.sourceRow),
+          String(task.generationNumber), '', '', shapeLabel(config.shape),
+          String(config.rows), String(config.columns), '',
+        );
+      }
       return failureRow;
     }
     const hiddenCellKeys = new Set((level.hiddenCells ?? []).map((cell) => `${cell.x},${cell.y}`));
@@ -505,34 +676,50 @@ export const formatBatchPlaytestResultsTsv = (
       hiddenCellKeys,
       shape: config.shape,
     });
-    const difficulty = summarizeDifficultyScores(simulation.steps.map((step) => step.difficultyScore));
+    if (mode === 'path') {
+      return [
+        config.id, config.outputLabel, config.sourceRow, task.generationNumber,
+        JSON.stringify(encodeCompactLevelCollection([level])[0]), shapeLabel(config.shape),
+        config.rows, config.columns, level.activeCells.length, config.targetCrossings,
+        config.turnProbability, metrics.pathCrossings, rounded(metrics.rightAngleTurnRatio),
+        rounded(metrics.acuteAngleTurnRatio), rounded(metrics.obtuseAngleTurnRatio),
+        rounded(metrics.averageSegmentLength), rounded(metrics.upwardMoveRatio),
+        rounded(metrics.downwardMoveRatio), rounded(metrics.leftwardMoveRatio),
+        rounded(metrics.rightwardMoveRatio), rounded(metrics.upperLeftMoveRatio),
+        rounded(metrics.upperRightMoveRatio), rounded(metrics.lowerLeftMoveRatio),
+        rounded(metrics.lowerRightMoveRatio), metrics.startRegion, metrics.endRegion,
+      ];
+    }
+    const hiddenSimulation = simulation as BatchPlaytestSimulation;
+    const difficulty = summarizeDifficultyScores(hiddenSimulation.steps.map((step) => step.difficultyScore));
     const configuredHiddenPercent = Math.min(100, config.hiddenPercent + config.targetDifficulty);
+    const pathJson = JSON.stringify(encodeCompactLevelCollection([{ ...level, hiddenCells: [] }])[0]);
     return [
-      config.id, config.outputLabel, config.sourceRow, task.generationNumber,
-      JSON.stringify(encodeCompactLevelCollection([level])[0]), shapeLabel(config.shape),
-      config.rows, config.columns, level.activeCells.length, config.seed, config.targetCrossings,
-      config.turnProbability, config.hiddenPercent, config.targetDifficulty, configuredHiddenPercent,
+      `${config.id}_${config.targetDifficulty}`, config.id, config.sourceRow, task.generationNumber,
+      JSON.stringify(encodeCompactLevelCollection([level])[0]), pathJson, shapeLabel(config.shape),
+      config.rows, config.columns, level.activeCells.length,
+      config.hiddenPercent, config.targetDifficulty, configuredHiddenPercent,
       config.maxVisibleRun, config.maxHiddenRun, metrics.hiddenCount, rounded(metrics.hiddenRatio * 100),
-      metrics.longestVisibleRun, metrics.longestHiddenRun, metrics.pathCrossings,
-      config.simulationRunCount, reasoningLabel('medium'), rounded(simulation.totalSteps),
-      rounded(simulation.averageErrorCountByReasoning.low),
-      rounded(simulation.averageErrorCountByReasoning.medium),
-      rounded(simulation.averageErrorCountByReasoning.high),
-      rounded(average(simulation.steps.map((step) => step.connectableCount))),
-      rounded(average(simulation.steps.map((step) => step.directConnectRate ?? Number(step.directConnect))) * 100),
-      rounded(average(simulation.steps.map((step) => step.distanceToNextVisibleNumber))),
+      metrics.longestVisibleRun, metrics.longestHiddenRun,
+      metrics.pathCrossings, rounded(metrics.rightAngleTurnRatio), rounded(metrics.acuteAngleTurnRatio),
+      rounded(metrics.obtuseAngleTurnRatio), rounded(metrics.averageSegmentLength),
+      rounded(metrics.upwardMoveRatio), rounded(metrics.downwardMoveRatio),
+      rounded(metrics.leftwardMoveRatio), rounded(metrics.rightwardMoveRatio),
+      rounded(metrics.upperLeftMoveRatio), rounded(metrics.upperRightMoveRatio),
+      rounded(metrics.lowerLeftMoveRatio), rounded(metrics.lowerRightMoveRatio),
+      metrics.startRegion, metrics.endRegion,
+      config.simulationRunCount, reasoningLabel('medium'), rounded(hiddenSimulation.totalSteps),
+      rounded(hiddenSimulation.averageErrorCountByReasoning.low),
+      rounded(hiddenSimulation.averageErrorCountByReasoning.medium),
+      rounded(hiddenSimulation.averageErrorCountByReasoning.high),
+      rounded(average(hiddenSimulation.steps.map((step) => step.connectableCount))),
+      rounded(average(hiddenSimulation.steps.map((step) => step.directConnectRate ?? Number(step.directConnect))) * 100),
+      rounded(average(hiddenSimulation.steps.map((step) => step.distanceToNextVisibleNumber))),
       rounded(difficulty.averageStepDifficultyScore), rounded(difficulty.earlyAverageDifficultyScore),
       rounded(difficulty.middleAverageDifficultyScore), rounded(difficulty.lateAverageDifficultyScore),
-      rounded(metrics.rightAngleTurnRatio), rounded(metrics.acuteAngleTurnRatio),
-      rounded(metrics.obtuseAngleTurnRatio),
-      rounded(metrics.averageSegmentLength), rounded(metrics.upwardMoveRatio),
-      rounded(metrics.downwardMoveRatio), rounded(metrics.leftwardMoveRatio),
-      rounded(metrics.rightwardMoveRatio), rounded(metrics.upperLeftMoveRatio),
-      rounded(metrics.upperRightMoveRatio), rounded(metrics.lowerLeftMoveRatio),
-      rounded(metrics.lowerRightMoveRatio), metrics.startRegion, metrics.endRegion,
     ];
   });
-  return [...(includeHeader ? [BATCH_PLAYTEST_RESULT_HEADERS] : []), ...rows]
+  return [...(includeHeader ? [headers] : []), ...rows]
     .map((row) => row.map(safeTsv).join('\t'))
     .join('\r\n');
 };

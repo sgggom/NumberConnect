@@ -31,6 +31,7 @@ import {
   decodeClipboardLevelJson,
   looksLikeClipboardLevelJson,
 } from './clipboardLevelJson';
+import { encodeFormationClipboardJson } from './formationClipboardJson';
 import {
   averageSimulatedPlayResults,
   simulateLevelPlay,
@@ -59,6 +60,7 @@ import {
   formatBatchPlaytestResultsTsv,
   readBatchPlaytestConfigFile,
   runConcurrentBatchTaskPool,
+  type BatchPlaytestMode,
   type BatchPlaytestResult,
 } from './batchPlaytest';
 import {
@@ -125,6 +127,7 @@ export class LevelEditorController {
   private isBatchPlaytestRunning = false;
   private isBatchPlaytestCancelling = false;
   private batchPlaytestDetail = '正在读取配置…';
+  private batchPlaytestMode?: BatchPlaytestMode;
   private imageRecognitionRun = 0;
   private isImageRecognizing = false;
   private imageRecognitionMode: ImageRecognitionMode = 'complete-level';
@@ -262,6 +265,10 @@ export class LevelEditorController {
     this.query('#editor-image-hidden-button').addEventListener('click', () => void this.readRecognitionInputFromClipboard('hidden-layout'));
     this.query('#editor-image-formation-button').addEventListener('click', () => void this.readRecognitionInputFromClipboard('initial-formation'));
     this.query('#editor-undo-delete-button').addEventListener('click', () => this.undoLastDeletion());
+    this.query('#editor-copy-formation-button').addEventListener(
+      'click',
+      () => void this.copyFormationToClipboard(window),
+    );
     this.query('#editor-generate-path-button').addEventListener('click', () => void this.generatePath());
     this.query('#editor-calculate-hidden-button').addEventListener('click', () => void this.calculateHiddenLayout());
     this.query<HTMLInputElement>('#editor-simulation-count').addEventListener('change', (event) => {
@@ -294,13 +301,16 @@ export class LevelEditorController {
     this.query('#editor-level-export').addEventListener('click', () => this.exportLevels());
     this.query('#editor-level-clear').addEventListener('click', () => this.clearLevels());
     this.query<HTMLInputElement>('#editor-level-file').addEventListener('change', (event) => void this.importLevels(event));
-    this.query('#editor-batch-playtest').addEventListener('click', () => {
+    const openBatchConfig = (mode: BatchPlaytestMode): void => {
       if (this.isBatchPlaytestRunning) {
         this.requestBatchPlaytestCancellation();
         return;
       }
+      this.batchPlaytestMode = mode;
       this.query<HTMLInputElement>('#editor-batch-playtest-file').click();
-    });
+    };
+    this.query('#editor-batch-generate-path').addEventListener('click', () => openBatchConfig('path'));
+    this.query('#editor-batch-generate-hidden').addEventListener('click', () => openBatchConfig('hidden'));
     this.query<HTMLInputElement>('#editor-batch-playtest-file').addEventListener(
       'change',
       (event) => void this.runBatchPlaytest(event),
@@ -504,6 +514,9 @@ export class LevelEditorController {
     );
     this.renderPathGenerationButton();
     this.query<HTMLButtonElement>('#editor-undo-delete-button').disabled = !this.model.canUndoDeletion || pathBusy;
+    this.query<HTMLButtonElement>('#editor-copy-formation-button').disabled = (
+      this.model.activeCells.size === 0 || pathBusy
+    );
     const sizeLimits = this.model.sizeLimits();
     const isRectangle = this.model.shape === 'rectangle';
     this.query<HTMLElement>('#editor-uniform-size').hidden = isRectangle;
@@ -631,6 +644,21 @@ export class LevelEditorController {
       if (!clipboardDocument.execCommand('copy')) throw new Error('Copy command was rejected');
     } finally {
       textarea.remove();
+    }
+  }
+
+  private async copyFormationToClipboard(clipboardWindow: Window): Promise<void> {
+    if (this.model.activeCells.size === 0) {
+      this.setStatus('请先绘制造型，再复制阵型。', true);
+      return;
+    }
+    const { rows, columns } = this.model.size();
+    const text = encodeFormationClipboardJson(rows, columns, this.model.activeCells);
+    try {
+      await this.writeClipboardText(text, clipboardWindow);
+      this.setStatus(`阵型关卡数据已复制：${columns}×${rows}，${this.model.activeCells.size} 个占位格。`);
+    } catch {
+      this.setStatus('复制阵型失败，请允许浏览器访问剪贴板后重试。', true);
     }
   }
 
@@ -2064,7 +2092,8 @@ export class LevelEditorController {
     const input = event.target as HTMLInputElement;
     const file = input.files?.[0];
     input.value = '';
-    if (!file || this.isBatchPlaytestRunning) return;
+    const mode = this.batchPlaytestMode;
+    if (!file || this.isBatchPlaytestRunning || !mode) return;
     const includeHeader = this.query<HTMLInputElement>('#editor-batch-playtest-header').checked;
 
     this.cancelPathAnimation();
@@ -2083,7 +2112,7 @@ export class LevelEditorController {
     let completionIsError = false;
     let completedResults: Array<BatchPlaytestResult | undefined> = [];
     try {
-      const configs = await readBatchPlaytestConfigFile(file);
+      const configs = await readBatchPlaytestConfigFile(file, mode);
       if (run !== this.batchPlaytestRun) return;
       const tasks = createBatchPlaytestTasks(configs);
       const concurrency = batchPlaytestConcurrency();
@@ -2092,13 +2121,15 @@ export class LevelEditorController {
       this.renderBatchPlaytestButton();
       this.batchPlaytestDetail = `已读取 ${configs.length} 组配置，正在启动 ${tasks.length} 关…`;
       this.renderBatchPlaytestDialog();
-      this.setStatus(`已读取 ${configs.length} 组配置，使用 ${Math.min(concurrency, tasks.length)} 个线程并行处理 ${tasks.length} 关，每关分别跑低中高三档推理。`);
+      this.setStatus(mode === 'path'
+        ? `已读取 ${configs.length} 组路径配置，使用 ${Math.min(concurrency, tasks.length)} 个线程并行生成 ${tasks.length} 条路径。`
+        : `已读取 ${configs.length} 组隐藏配置，使用 ${Math.min(concurrency, tasks.length)} 个线程并行生成 ${tasks.length} 组隐藏，并分别跑低中高三档推理。`);
 
       const results = await runConcurrentBatchTaskPool(
         tasks,
         async (task, taskIndex): Promise<BatchPlaytestResult> => {
           if (run !== this.batchPlaytestRun || abortController.signal.aborted) {
-            const error = new Error('批量跑关已取消。');
+            const error = new Error('批量任务已取消。');
             error.name = 'AbortError';
             throw error;
           }
@@ -2112,7 +2143,7 @@ export class LevelEditorController {
             this.batchPlaytestDetail = `${task.config.id} 第 ${task.generationNumber} 关：第 ${attempt + 1}/${BATCH_PLAYTEST_MAX_ATTEMPTS} 次尝试，生成 ${percentage}%…`;
             this.renderBatchPlaytestDialog();
             this.setStatus(
-              `批量跑关：完成 ${this.batchPlaytestProgress.completed}/${tasks.length}，运行 ${this.batchPlaytestProgress.running}，失败 ${this.batchPlaytestProgress.failed}；${task.config.id} 第 ${task.generationNumber} 关尝试 ${attempt + 1}/${BATCH_PLAYTEST_MAX_ATTEMPTS}，生成 ${percentage}%…`,
+              `${mode === 'path' ? '批量生成路径' : '批量生成隐藏'}：完成 ${this.batchPlaytestProgress.completed}/${tasks.length}，运行 ${this.batchPlaytestProgress.running}，失败 ${this.batchPlaytestProgress.failed}；${task.config.id} 第 ${task.generationNumber} 组尝试 ${attempt + 1}/${BATCH_PLAYTEST_MAX_ATTEMPTS}，生成 ${percentage}%…`,
             );
           });
           this.batchPlaytestTasks.add(generationTask);
@@ -2133,7 +2164,7 @@ export class LevelEditorController {
               || abortController.signal.aborted
               || (error instanceof Error && error.name === 'AbortError' && !timedOut)
             ) {
-              const aborted = new Error('批量跑关已取消。');
+              const aborted = new Error('批量任务已取消。');
               aborted.name = 'AbortError';
               throw aborted;
             }
@@ -2156,6 +2187,11 @@ export class LevelEditorController {
         }
         try {
           const level = createBatchPlaytestLevel(task, generated);
+          if (mode === 'path') {
+            const completedResult = { task, level };
+            completedResults[taskIndex] = completedResult;
+            return completedResult;
+          }
           const simulationTask = startBatchPlaytestSimulation(
             task,
             level,
@@ -2186,42 +2222,47 @@ export class LevelEditorController {
         {
           concurrency,
           signal: abortController.signal,
-          isFailure: ({ level, simulation }) => !level || !simulation,
+          isFailure: ({ level, simulation }) => !level || (mode === 'hidden' && !simulation),
           onProgress: (progress) => {
             if (run !== this.batchPlaytestRun) return;
             this.batchPlaytestProgress = progress;
             this.renderBatchPlaytestButton();
             this.renderBatchPlaytestDialog();
             this.setStatus(
-              `批量跑关：完成 ${progress.completed}/${progress.total}，运行 ${progress.running}，失败 ${progress.failed}。`,
+              `${mode === 'path' ? '批量生成路径' : '批量生成隐藏'}：完成 ${progress.completed}/${progress.total}，运行 ${progress.running}，失败 ${progress.failed}。`,
             );
           },
         },
       );
 
       if (run !== this.batchPlaytestRun) return;
-      const succeeded = results.filter(({ level, simulation }) => level && simulation).length;
+      const succeeded = results.filter(({ level, simulation }) => (
+        level && (mode === 'path' || simulation)
+      )).length;
       const failed = results.length - succeeded;
-      this.downloadTxt(formatBatchPlaytestResultsTsv(results, includeHeader), '批量跑关结果.txt');
-      completionMessage = `批量跑关完成：成功 ${succeeded} 关${failed > 0 ? `，失败 ${failed} 关` : ''}；结果已导出。`;
+      const outputName = mode === 'path' ? '批量路径生成结果.txt' : '批量隐藏生成结果.txt';
+      this.downloadTxt(formatBatchPlaytestResultsTsv(results, mode, includeHeader), outputName);
+      completionMessage = `${mode === 'path' ? '批量生成路径' : '批量生成隐藏'}完成：成功 ${succeeded} 组${failed > 0 ? `，失败 ${failed} 组` : ''}；结果已导出。`;
       completionIsError = succeeded === 0;
     } catch (error) {
       if (run !== this.batchPlaytestRun) return;
       if (error instanceof Error && error.name === 'AbortError') {
         const completedSuccessfulResults = completedResults.filter(
-          (result): result is BatchPlaytestResult => Boolean(result?.level && result.simulation),
+          (result): result is BatchPlaytestResult => Boolean(
+            result?.level && (mode === 'path' || result.simulation),
+          ),
         );
         if (completedSuccessfulResults.length > 0) {
           this.downloadTxt(
-            formatBatchPlaytestResultsTsv(completedSuccessfulResults, includeHeader),
-            '批量跑关结果.txt',
+            formatBatchPlaytestResultsTsv(completedSuccessfulResults, mode, includeHeader),
+            mode === 'path' ? '批量路径生成结果.txt' : '批量隐藏生成结果.txt',
           );
         }
         completionMessage = completedSuccessfulResults.length === 0
-          ? '批量跑关已中止：中止前暂无已完成结果。'
-          : `批量跑关已中止：已保存 ${completedSuccessfulResults.length} 关完整结果。`;
+          ? '批量任务已中止：中止前暂无已完成结果。'
+          : `批量任务已中止：已保存 ${completedSuccessfulResults.length} 组完整结果。`;
       } else {
-        completionMessage = error instanceof Error ? `批量跑关失败：${error.message}` : '批量跑关失败。';
+        completionMessage = error instanceof Error ? `批量任务失败：${error.message}` : '批量任务失败。';
         completionIsError = true;
       }
     } finally {
@@ -2260,7 +2301,7 @@ export class LevelEditorController {
     this.batchSimulationTasks.forEach((task) => task.cancel());
     this.renderBatchPlaytestButton();
     this.renderBatchPlaytestDialog();
-    this.setStatus('正在中止批量跑关，稍后将保存已完成的结果。');
+    this.setStatus('正在中止批量任务，稍后将保存已完成的结果。');
   }
 
   private openBatchPlaytestDialog(): void {
@@ -2279,7 +2320,7 @@ export class LevelEditorController {
     const percentage = total === 0 ? 0 : Math.round(completed / total * 100);
     this.query('#editor-batch-playtest-dialog-title').textContent = this.isBatchPlaytestCancelling
       ? '正在中止并保存…'
-      : '正在批量跑关';
+      : this.batchPlaytestMode === 'path' ? '正在批量生成路径' : '正在批量生成隐藏';
     this.query('#editor-batch-playtest-percent').textContent = `${percentage}%`;
     const progress = this.query<HTMLProgressElement>('#editor-batch-playtest-progress');
     progress.max = Math.max(1, total);
@@ -2296,18 +2337,21 @@ export class LevelEditorController {
   }
 
   private renderBatchPlaytestButton(): void {
-    const button = this.query<HTMLButtonElement>('#editor-batch-playtest');
+    const pathButton = this.query<HTMLButtonElement>('#editor-batch-generate-path');
+    const hiddenButton = this.query<HTMLButtonElement>('#editor-batch-generate-hidden');
     const headerCheckbox = this.query<HTMLInputElement>('#editor-batch-playtest-header');
     const { completed, running, failed, total } = this.batchPlaytestProgress;
-    button.disabled = !this.isBatchPlaytestRunning
-      && (this.isPathCalculating || this.isPathAnimating || this.isImageRecognizing);
-    button.classList.toggle('is-running', this.isBatchPlaytestRunning);
-    button.setAttribute('aria-busy', String(this.isBatchPlaytestRunning));
+    const busy = this.isPathCalculating || this.isPathAnimating || this.isImageRecognizing;
+    for (const [mode, button] of [['path', pathButton], ['hidden', hiddenButton]] as const) {
+      button.disabled = this.isBatchPlaytestRunning ? mode !== this.batchPlaytestMode : busy;
+      button.classList.toggle('is-running', this.isBatchPlaytestRunning && mode === this.batchPlaytestMode);
+      button.setAttribute('aria-busy', String(this.isBatchPlaytestRunning && mode === this.batchPlaytestMode));
+      button.textContent = this.isBatchPlaytestRunning && mode === this.batchPlaytestMode
+        ? `${this.isBatchPlaytestCancelling ? '正在中止' : '中止'} · ${completed}/${total || '…'} · ${running} 运行${failed > 0 ? ` · ${failed} 失败` : ''}`
+        : mode === 'path' ? '批量生成路径' : '批量生成隐藏';
+    }
     headerCheckbox.disabled = this.isBatchPlaytestRunning;
-    button.textContent = this.isBatchPlaytestRunning
-      ? `${this.isBatchPlaytestCancelling ? '正在中止' : '中止跑关'} · ${completed}/${total || '…'} · ${running} 运行${failed > 0 ? ` · ${failed} 失败` : ''}`
-      : '批量跑关';
-    this.host.querySelectorAll<HTMLButtonElement>('.editor-level-actions .button:not(#editor-batch-playtest)')
+    this.host.querySelectorAll<HTMLButtonElement>('.editor-level-actions .button:not(.editor-batch-playtest)')
       .forEach((action) => {
         if (this.isBatchPlaytestRunning) action.disabled = true;
       });

@@ -57,6 +57,7 @@ const task: BatchPlaytestTask = {
   taskIndex: 0,
   generationNumber: 1,
   config: {
+    mode: 'hidden',
     sourceRow: 2,
     id: 'CFG-001',
     enabled: true,
