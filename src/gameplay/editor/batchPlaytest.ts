@@ -22,6 +22,7 @@ import { MAX_BATCH_PLAYTEST_CONCURRENCY } from './batchWorkerConcurrency';
 export { batchPlaytestConcurrency, MAX_BATCH_PLAYTEST_CONCURRENCY } from './batchWorkerConcurrency';
 
 export type BatchPlaytestMode = 'path' | 'hidden';
+export type BatchHiddenDifficultySelection = number | 'all';
 
 const COMMON_REQUIRED_HEADERS = [
   '配置ID',
@@ -40,7 +41,6 @@ const PATH_REQUIRED_HEADERS = [
 const HIDDEN_REQUIRED_HEADERS = [
   ...COMMON_REQUIRED_HEADERS,
   '基础隐藏占比 %',
-  '目标难度',
   '最长连续显示',
   '最长连续隐藏',
   '生成隐藏数',
@@ -76,8 +76,8 @@ export const BATCH_PLAYTEST_RESULT_HEADERS = BATCH_HIDDEN_RESULT_HEADERS;
 
 export const MAX_BATCH_PLAYTEST_LEVELS = 500;
 export const MAX_BATCH_PLAYTEST_SIMULATIONS = 10_000;
-export const MAX_BATCH_HIDDEN_LEVELS = 20_000;
-export const MAX_BATCH_HIDDEN_SIMULATIONS = 1_000_000;
+export const MAX_BATCH_HIDDEN_LEVELS = 200_000;
+export const MAX_BATCH_HIDDEN_SIMULATIONS = 5_000_000;
 export const BATCH_PLAYTEST_ATTEMPT_TIMEOUT_MS = 60_000;
 export const BATCH_PLAYTEST_MAX_ATTEMPTS = 4;
 
@@ -405,9 +405,7 @@ export const parseBatchPlaytestConfigRows = (
       hiddenPercent: mode === 'hidden'
         ? integerCell(row[indexOf('基础隐藏占比 %')], sourceRow, '基础隐藏占比 %', 0, 100)
         : 0,
-      targetDifficulty: mode === 'hidden'
-        ? integerCell(row[indexOf('目标难度')], sourceRow, '目标难度', 1, 10)
-        : 1,
+      targetDifficulty: mode === 'hidden' ? 6 : 1,
       maxVisibleRun: mode === 'hidden'
         ? integerCell(row[indexOf('最长连续显示')], sourceRow, '最长连续显示', 1, 99)
         : 99,
@@ -464,19 +462,48 @@ export const readBatchPlaytestConfigFile = async (
 
 export const createBatchPlaytestTasks = (
   configs: ReadonlyArray<BatchPlaytestConfig>,
-): BatchPlaytestTask[] => configs.flatMap((config) => Array.from(
-  { length: config.generationCount },
-  (_, index) => ({
-    taskIndex: 0,
-    generationNumber: index + 1,
-    config,
-  }),
-)).map((task, taskIndex) => ({ ...task, taskIndex }));
+  hiddenDifficultySelection: BatchHiddenDifficultySelection = 6,
+): BatchPlaytestTask[] => {
+  const tasks = configs.flatMap((config) => {
+    const selectedDifficulty = hiddenDifficultySelection === 'all'
+      ? 6
+      : Math.max(1, Math.min(10, Math.floor(hiddenDifficultySelection)));
+    const difficulties = config.mode === 'hidden'
+      ? hiddenDifficultySelection === 'all'
+        ? Array.from({ length: 10 }, (_, index) => index + 1)
+        : [selectedDifficulty]
+      : [config.targetDifficulty];
+    return difficulties.flatMap((targetDifficulty) => Array.from(
+      { length: config.generationCount },
+      (_, index) => ({
+        taskIndex: 0,
+        generationNumber: index + 1,
+        config: targetDifficulty === config.targetDifficulty
+          ? config
+          : { ...config, targetDifficulty },
+      }),
+    ));
+  }).map((task, taskIndex) => ({ ...task, taskIndex }));
+
+  const hiddenTasks = tasks.filter((task) => task.config.mode === 'hidden');
+  if (hiddenTasks.length > MAX_BATCH_HIDDEN_LEVELS) {
+    throw new Error(`一次最多生成 ${MAX_BATCH_HIDDEN_LEVELS} 关，当前难度范围展开后为 ${hiddenTasks.length} 关。`);
+  }
+  const totalSimulations = hiddenTasks.reduce(
+    (sum, task) => sum + task.config.simulationRunCount * 3,
+    0,
+  );
+  if (totalSimulations > MAX_BATCH_HIDDEN_SIMULATIONS) {
+    throw new Error(`一次最多执行 ${MAX_BATCH_HIDDEN_SIMULATIONS} 次模拟，当前难度范围展开后为 ${totalSimulations} 次。`);
+  }
+  return tasks;
+};
 
 const mixedSeed = (task: BatchPlaytestTask, attempt: number): number => (
   task.config.seed
   ^ Math.imul(task.config.sourceRow + 1, 73856093)
   ^ Math.imul(task.generationNumber + 1, 19349663)
+  ^ Math.imul(task.config.targetDifficulty + 1, 49979687)
   ^ Math.imul(attempt + 1, 83492791)
 ) >>> 0;
 

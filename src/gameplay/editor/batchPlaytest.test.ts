@@ -19,7 +19,7 @@ const pathHeaders = [
   '生成路径数', '输出标签', '备注',
 ];
 const hiddenHeaders = [
-  '配置ID', '棋盘形状', '关卡数据', '基础隐藏占比 %', '目标难度',
+  '配置ID', '棋盘形状', '关卡数据', '基础隐藏占比 %',
   '最长连续显示', '最长连续隐藏', '生成隐藏数', '每关跑关次数',
 ];
 const formation3x3 = JSON.stringify({
@@ -51,10 +51,37 @@ describe('批量生成路径与隐藏', () => {
     ], 'path');
     const [hiddenConfig] = parseBatchPlaytestConfigRows([
       hiddenHeaders,
-      ['HIDDEN-1', '正方形', path3x3, 35, 6, 8, 4, 2, 3],
+      ['HIDDEN-1', '正方形', path3x3, 35, 8, 4, 2, 3],
     ], 'hidden');
     expect(pathConfig).toMatchObject({ mode: 'path', generationCount: 2, simulationRunCount: 0 });
     expect(hiddenConfig).toMatchObject({ mode: 'hidden', generationCount: 2, simulationRunCount: 3 });
+  });
+
+  it('全部难度按 1–10 分别乘以配置生成数量', () => {
+    const [config] = parseBatchPlaytestConfigRows([
+      hiddenHeaders,
+      ['HIDDEN-ALL', '正方形', path3x3, 35, 8, 4, 2, 1],
+    ], 'hidden');
+    const tasks = createBatchPlaytestTasks([config], 'all');
+
+    expect(tasks).toHaveLength(20);
+    expect(tasks.map((task) => task.config.targetDifficulty)).toEqual([
+      1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10,
+    ]);
+    expect(tasks.map((task) => task.generationNumber)).toEqual([
+      1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2,
+    ]);
+  });
+
+  it('单个目标难度完全由界面选择，不读取配置表', () => {
+    const [config] = parseBatchPlaytestConfigRows([
+      hiddenHeaders,
+      ['HIDDEN-ONE', '正方形', path3x3, 35, 8, 4, 2, 1],
+    ], 'hidden');
+    const tasks = createBatchPlaytestTasks([config], 9);
+
+    expect(tasks).toHaveLength(2);
+    expect(tasks.every((task) => task.config.targetDifficulty === 9)).toBe(true);
   });
 
   it('严格区分造型和路径输入', () => {
@@ -64,7 +91,7 @@ describe('批量生成路径与隐藏', () => {
     ], 'path')).toThrow('只接受含 999 的棋盘造型');
     expect(() => parseBatchPlaytestConfigRows([
       hiddenHeaders,
-      ['HIDDEN-BAD', '正方形', formation3x3, 35, 6, 8, 4, 1, 2],
+      ['HIDDEN-BAD', '正方形', formation3x3, 35, 8, 4, 1, 2],
     ], 'hidden')).toThrow('只接受不含 999 的连续编号路径');
   });
 
@@ -93,7 +120,7 @@ describe('批量生成路径与隐藏', () => {
   it('生成隐藏功能固定路径并忽略原隐藏正负号', () => {
     const [config] = parseBatchPlaytestConfigRows([
       hiddenHeaders,
-      ['HIDDEN-1', '正方形', path3x3, 35, 6, 8, 4, 2, 2],
+      ['HIDDEN-1', '正方形', path3x3, 35, 8, 4, 2, 2],
     ], 'hidden');
     const tasks = createBatchPlaytestTasks([config]);
     const request = createBatchPlaytestGenerationRequest(tasks[0], 0);
@@ -126,7 +153,7 @@ describe('批量生成路径与隐藏', () => {
   it('隐藏结果输出难度和低中高错误统计', async () => {
     const [config] = parseBatchPlaytestConfigRows([
       hiddenHeaders,
-      ['HIDDEN-1', '正方形', path3x3, 35, 6, 8, 4, 1, 2],
+      ['HIDDEN-1', '正方形', path3x3, 35, 8, 4, 1, 2],
     ], 'hidden');
     const [task] = createBatchPlaytestTasks([config]);
     const request = createBatchPlaytestGenerationRequest(task, 0);

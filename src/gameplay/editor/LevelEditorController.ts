@@ -61,6 +61,7 @@ import {
   readBatchPlaytestConfigFile,
   runConcurrentBatchTaskPool,
   type BatchPlaytestMode,
+  type BatchHiddenDifficultySelection,
   type BatchPlaytestResult,
 } from './batchPlaytest';
 import {
@@ -2114,7 +2115,13 @@ export class LevelEditorController {
     try {
       const configs = await readBatchPlaytestConfigFile(file, mode);
       if (run !== this.batchPlaytestRun) return;
-      const tasks = createBatchPlaytestTasks(configs);
+      const hiddenDifficultyValue = mode === 'hidden'
+        ? this.query<HTMLSelectElement>('#editor-batch-hidden-difficulty-mode').value
+        : '6';
+      const hiddenDifficultySelection: BatchHiddenDifficultySelection = hiddenDifficultyValue === 'all'
+        ? 'all'
+        : Number(hiddenDifficultyValue);
+      const tasks = createBatchPlaytestTasks(configs, hiddenDifficultySelection);
       const concurrency = batchPlaytestConcurrency();
       completedResults = new Array(tasks.length);
       this.batchPlaytestProgress.total = tasks.length;
@@ -2123,7 +2130,7 @@ export class LevelEditorController {
       this.renderBatchPlaytestDialog();
       this.setStatus(mode === 'path'
         ? `已读取 ${configs.length} 组路径配置，使用 ${Math.min(concurrency, tasks.length)} 个线程并行生成 ${tasks.length} 条路径。`
-        : `已读取 ${configs.length} 组隐藏配置，使用 ${Math.min(concurrency, tasks.length)} 个线程并行生成 ${tasks.length} 组隐藏，并分别跑低中高三档推理。`);
+        : `已读取 ${configs.length} 组隐藏配置，${hiddenDifficultySelection === 'all' ? '难度 1–10 全部生成，' : `生成难度 ${hiddenDifficultySelection}，`}使用 ${Math.min(concurrency, tasks.length)} 个线程并行生成 ${tasks.length} 组隐藏，并分别跑低中高三档推理。`);
 
       const results = await runConcurrentBatchTaskPool(
         tasks,
@@ -2339,6 +2346,7 @@ export class LevelEditorController {
   private renderBatchPlaytestButton(): void {
     const pathButton = this.query<HTMLButtonElement>('#editor-batch-generate-path');
     const hiddenButton = this.query<HTMLButtonElement>('#editor-batch-generate-hidden');
+    const hiddenDifficultyMode = this.query<HTMLSelectElement>('#editor-batch-hidden-difficulty-mode');
     const headerCheckbox = this.query<HTMLInputElement>('#editor-batch-playtest-header');
     const { completed, running, failed, total } = this.batchPlaytestProgress;
     const busy = this.isPathCalculating || this.isPathAnimating || this.isImageRecognizing;
@@ -2351,6 +2359,7 @@ export class LevelEditorController {
         : mode === 'path' ? '批量生成路径' : '批量生成隐藏';
     }
     headerCheckbox.disabled = this.isBatchPlaytestRunning;
+    hiddenDifficultyMode.disabled = this.isBatchPlaytestRunning;
     this.host.querySelectorAll<HTMLButtonElement>('.editor-level-actions .button:not(.editor-batch-playtest)')
       .forEach((action) => {
         if (this.isBatchPlaytestRunning) action.disabled = true;
