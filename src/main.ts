@@ -67,6 +67,7 @@ import {
   type VideoViewRecord,
 } from './game/videoStats';
 import { LevelEditorController } from './gameplay/editor';
+import { LevelArrangementController } from './gameplay/arranger';
 import {
   advanceBeadProgress,
   advanceBeadSequence,
@@ -431,6 +432,7 @@ class NumberConnectApp {
   private readonly settingsDialog = query<HTMLDialogElement>('#settings-dialog');
   private readonly settingsRestartButton = query<HTMLButtonElement>('#settings-restart-button');
   private readonly videoStatsDialog = query<HTMLDialogElement>('#video-stats-dialog');
+  private readonly lobbyToolsDialog = query<HTMLDialogElement>('#lobby-tools-dialog');
   private readonly videoStatsCount = query<HTMLElement>('#video-stats-count');
   private readonly videoStatsTotal = query<HTMLElement>('#video-stats-total');
   private readonly videoStatsEmpty = query<HTMLElement>('#video-stats-empty');
@@ -502,6 +504,7 @@ class NumberConnectApp {
   private coinRewardCleanupTimer?: number;
   private coinRewardAnimationFrame?: number;
   private editorPlaytestErrorCount = 0;
+  private editorPlaytestReturnScreen: 'editor' | 'arranger' = 'editor';
   private mode3DifficultyState = loadDynamicDifficultyState();
   private mode4DifficultyState = loadMode4DynamicDifficultyState();
   private mode5DifficultyState = loadMode5DynamicDifficultyState();
@@ -601,6 +604,7 @@ class NumberConnectApp {
   private readonly boardScene = new BoardScene();
   private readonly game: Phaser.Game;
   private readonly editor: LevelEditorController;
+  private readonly arranger: LevelArrangementController;
 
   public constructor() {
     applyUiTheme(this.settings.uiTheme);
@@ -637,6 +641,10 @@ class NumberConnectApp {
       },
       onPlaytest: (level) => void this.startEditorPlaytest(level),
       onBack: () => this.backToLobby(),
+    });
+    this.arranger = new LevelArrangementController(query<HTMLElement>('#arranger-screen'), {
+      onBack: () => this.backToLobby(),
+      onPlaytest: (level) => void this.startEditorPlaytest(level, 'arranger'),
     });
     window.addEventListener('resize', () => requestAnimationFrame(() => {
       this.syncBeadCellSize();
@@ -678,6 +686,7 @@ class NumberConnectApp {
     this.bindPlayControls();
     this.bindSettings();
     this.editor.bind();
+    this.arranger.bind();
     this.refreshLevelOptions();
     this.renderVideoStats();
     this.renderBeadScreen();
@@ -727,13 +736,24 @@ class NumberConnectApp {
       if (event.target === this.beadGalleryDialog) this.beadGalleryDialog.close();
     });
     query('#challenge-button').addEventListener('click', () => this.openDailyChallenge());
-    query('#night-editor-button').addEventListener('click', () => this.openEditor());
+    query('#night-editor-button').addEventListener('click', () => this.openLobbyToolsDialog());
     query('#lobby-settings-button').addEventListener('click', () => this.openSettings('lobby'));
     query('#default-start-button').addEventListener('click', () => void this.startNormalMode());
     query('#default-bead-mode-button').addEventListener('click', () => this.openBeadMode());
     query('#default-daily-challenge-button').addEventListener('click', () => this.openDailyChallenge());
     query('#default-gallery-button').addEventListener('click', () => this.openFavorites());
-    query('#default-editor-button').addEventListener('click', () => this.openEditor());
+    query('#default-editor-button').addEventListener('click', () => this.openLobbyToolsDialog());
+    query('#lobby-open-editor-button').addEventListener('click', () => {
+      this.lobbyToolsDialog.close();
+      this.openEditor();
+    });
+    query('#lobby-open-arranger-button').addEventListener('click', () => {
+      this.lobbyToolsDialog.close();
+      this.openArrangementTool();
+    });
+    this.lobbyToolsDialog.addEventListener('click', (event) => {
+      if (event.target === this.lobbyToolsDialog) this.lobbyToolsDialog.close();
+    });
     query('#default-lobby-settings-button').addEventListener('click', () => this.openSettings('lobby'));
     query('#daily-back-button').addEventListener('click', () => this.backToLobby());
     query('#favorites-back-button').addEventListener('click', () => this.backToLobby());
@@ -2011,7 +2031,11 @@ class NumberConnectApp {
     this.setCurrentBoard(level);
   }
 
-  private async startEditorPlaytest(level: LevelData): Promise<void> {
+  private async startEditorPlaytest(
+    level: LevelData,
+    returnScreen: 'editor' | 'arranger' = 'editor',
+  ): Promise<void> {
+    this.editorPlaytestReturnScreen = returnScreen;
     this.playContext = 'editor-playtest';
     this.mode = 'normal';
     this.editorPlaytestErrorCount = 0;
@@ -2964,13 +2988,14 @@ class NumberConnectApp {
   }
 
   private showEditorPlaytestResult(): void {
+    const returnsToArranger = this.editorPlaytestReturnScreen === 'arranger';
     this.resultContext = 'editor-playtest';
     this.resultTitle.textContent = '试玩完成';
-    this.resultMessage.textContent = `当前编辑器关卡可以完整通关，本次错误 ${this.editorPlaytestErrorCount} 次。`;
+    this.resultMessage.textContent = `${returnsToArranger ? '当前排布关卡' : '当前编辑器关卡'}可以完整通关，本次错误 ${this.editorPlaytestErrorCount} 次。`;
     this.resultReward.hidden = true;
     this.restartButton.textContent = '再试一次';
     this.nextButton.hidden = true;
-    this.resultLobbyButton.textContent = '返回编辑器';
+    this.resultLobbyButton.textContent = returnsToArranger ? '返回排布工具' : '返回编辑器';
     this.resultActions.classList.add('is-single');
     this.setResultActionsDisabled(false);
     this.resultOverlay.hidden = false;
@@ -3837,8 +3862,13 @@ class NumberConnectApp {
       return;
     }
     if (this.playContext === 'editor-playtest') {
-      this.showScreen('editor');
-      this.editor.resumeFromPlaytest();
+      if (this.editorPlaytestReturnScreen === 'arranger') {
+        this.showScreen('arranger');
+        this.arranger.open();
+      } else {
+        this.showScreen('editor');
+        this.editor.resumeFromPlaytest();
+      }
       return;
     }
     if (this.playContext === 'collection') {
@@ -3877,7 +3907,7 @@ class NumberConnectApp {
     leaveButton.textContent = this.mode === 'endless'
       ? '返回无尽模式'
       : this.playContext === 'editor-playtest'
-        ? '返回编辑器'
+        ? this.editorPlaytestReturnScreen === 'arranger' ? '返回排布工具' : '返回编辑器'
         : this.playContext === 'bead'
           ? '返回拼豆图纸'
           : this.playContext === 'collection'
@@ -4095,6 +4125,16 @@ class NumberConnectApp {
     this.playContext = 'normal';
     this.showScreen('editor');
     this.editor.open();
+  }
+
+  private openLobbyToolsDialog(): void {
+    if (!this.lobbyToolsDialog.open) this.lobbyToolsDialog.showModal();
+  }
+
+  private openArrangementTool(): void {
+    this.playContext = 'normal';
+    this.showScreen('arranger');
+    this.arranger.open();
   }
 
   private openDailyChallenge(): void {

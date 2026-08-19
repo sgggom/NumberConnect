@@ -27,4 +27,11 @@ describe('migrated product scope', () => {
     expect(EDITOR_ALGORITHMS.map(({ id }) => id)).toEqual(['algorithm-1']);
     expect(indexMarkup).toContain('id="default-editor-button"');
   });
+
+  it('opens level tools from the lobby logo and exposes both destinations', () => {
+    expect(indexMarkup).toContain('id="lobby-tools-dialog"');
+    expect(indexMarkup).toContain('id="lobby-open-editor-button"');
+    expect(indexMarkup).toContain('id="lobby-open-arranger-button"');
+    expect(indexMarkup).toContain('id="arranger-screen"');
+  });
 });

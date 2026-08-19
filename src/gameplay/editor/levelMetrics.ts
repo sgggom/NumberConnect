@@ -20,6 +20,10 @@ export interface EditorLevelMetrics {
   upperRightMoveRatio: number;
   lowerLeftMoveRatio: number;
   lowerRightMoveRatio: number;
+  consecutiveRightCount: number;
+  consecutiveDownCount: number;
+  consecutiveLowerRightCount: number;
+  consecutiveOcclusionCount: number;
   startRegion: EditorEndpointRegion;
   endRegion: EditorEndpointRegion;
   pathCrossings: number;
@@ -143,6 +147,14 @@ export const calculateEditorLevelMetrics = ({
   let upperRightMoves = 0;
   let lowerLeftMoves = 0;
   let lowerRightMoves = 0;
+  let previousWasRight = false;
+  let previousWasDown = false;
+  let previousWasLowerRight = false;
+  let consecutiveRightCount = 0;
+  let consecutiveDownCount = 0;
+  let consecutiveLowerRightCount = 0;
+  let previousWasOccluding = false;
+  let consecutiveOcclusionCount = 0;
   for (let index = 1; index < projectedPath.length; index += 1) {
     const deltaX = projectedPath[index].x - projectedPath[index - 1].x;
     const deltaY = projectedPath[index].y - projectedPath[index - 1].y;
@@ -167,6 +179,18 @@ export const calculateEditorLevelMetrics = ({
     } else {
       lowerRightMoves += 1;
     }
+    const isRight = horizontalDirection === 'right' && verticalDirection === 'center';
+    const isDown = horizontalDirection === 'center' && verticalDirection === 'down';
+    const isLowerRight = horizontalDirection === 'right' && verticalDirection === 'down';
+    if (isRight && previousWasRight) consecutiveRightCount += 1;
+    if (isDown && previousWasDown) consecutiveDownCount += 1;
+    if (isLowerRight && previousWasLowerRight) consecutiveLowerRightCount += 1;
+    const isOccluding = isRight || isDown || isLowerRight;
+    if (isOccluding && previousWasOccluding) consecutiveOcclusionCount += 1;
+    previousWasRight = isRight;
+    previousWasDown = isDown;
+    previousWasLowerRight = isLowerRight;
+    previousWasOccluding = isOccluding;
   }
   const moveCount = Math.max(0, path.length - 1);
   const segmentCount = moveCount === 0
@@ -209,6 +233,10 @@ export const calculateEditorLevelMetrics = ({
     upperRightMoveRatio: moveCount === 0 ? 0 : upperRightMoves / moveCount,
     lowerLeftMoveRatio: moveCount === 0 ? 0 : lowerLeftMoves / moveCount,
     lowerRightMoveRatio: moveCount === 0 ? 0 : lowerRightMoves / moveCount,
+    consecutiveRightCount,
+    consecutiveDownCount,
+    consecutiveLowerRightCount,
+    consecutiveOcclusionCount,
     startRegion: endpointRegion(projectedPath[0], projectedPath),
     endRegion: endpointRegion(projectedPath.at(-1), projectedPath),
     pathCrossings: countEditorPathCrossings(path, shape),
