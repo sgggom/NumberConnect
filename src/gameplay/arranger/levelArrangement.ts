@@ -76,10 +76,33 @@ export interface ArrangementLevelGroup {
   levelIds: string[];
 }
 
+export interface ArrangementLevelLocation {
+  boardIndex: number;
+  pathIndex: number;
+  difficultyIndex: number;
+}
+
 export interface ArrangementLibraryParseResult {
   levels: ArrangementLibraryLevel[];
   skippedRows: number;
 }
+
+export const findArrangementLevelLocation = (
+  families: ReadonlyArray<ArrangementBoardFamily>,
+  levelId: string,
+): ArrangementLevelLocation | undefined => {
+  for (let boardIndex = 0; boardIndex < families.length; boardIndex += 1) {
+    const board = families[boardIndex];
+    for (let pathIndex = 0; pathIndex < board.paths.length; pathIndex += 1) {
+      const path = board.paths[pathIndex];
+      const difficultyIndex = path.difficulties.findIndex((difficulty) => (
+        difficulty.variants.some((variant) => variant.id === levelId)
+      ));
+      if (difficultyIndex >= 0) return { boardIndex, pathIndex, difficultyIndex };
+    }
+  }
+  return undefined;
+};
 
 const REQUIRED_HEADERS = [
   '关卡名', '关卡JSON', '路径JSON', '棋盘形状', '目标难度',

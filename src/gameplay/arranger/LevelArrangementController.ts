@@ -5,6 +5,7 @@ import {
   arrangementBoardFamilies,
   arrangementLevelDataJson,
   arrangementRows,
+  findArrangementLevelLocation,
   parseArrangementClipboardText,
   type ArrangementBoardFamily,
   type ArrangementLevelGroup,
@@ -413,8 +414,7 @@ export class LevelArrangementController {
     }
     const level = target.closest<HTMLElement>('[data-preview-level]');
     if (level?.dataset.previewLevel) {
-      this.previewLevelId = level.dataset.previewLevel;
-      this.renderPreview();
+      this.navigateToLibraryLevel(level.dataset.previewLevel);
     }
     const group = target.closest<HTMLElement>('[data-group-id]');
     if (group) {
@@ -422,6 +422,19 @@ export class LevelArrangementController {
       this.renderGroups();
       this.renderLibrary();
     }
+  }
+
+  private navigateToLibraryLevel(levelId: string): void {
+    const location = findArrangementLevelLocation(this.families, levelId);
+    if (!location) return;
+    const search = this.query<HTMLInputElement>('#arranger-search');
+    search.value = '';
+    this.page = Math.floor(location.boardIndex / PAGE_SIZE);
+    this.activeBoardIndex = location.boardIndex;
+    this.activePathIndex = location.pathIndex;
+    this.activeDifficultyIndex = location.difficultyIndex;
+    this.libraryParameterTarget = location;
+    this.previewLevelId = levelId;
   }
 
   private handleGroupHover(event: Event): void {

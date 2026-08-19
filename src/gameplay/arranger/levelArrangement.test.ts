@@ -4,6 +4,7 @@ import {
   arrangementBoardFamilies,
   arrangementLevelDataJson,
   arrangementRows,
+  findArrangementLevelLocation,
   parseArrangementClipboardText,
   parseArrangementLibraryRows,
   removeArrangementLevel,
@@ -114,6 +115,23 @@ describe('level arrangement data', () => {
     expect(families[0].paths[0].difficulties.map(({ difficulty }) => difficulty)).toEqual([1, 5]);
     expect(families[0].paths[0].difficulties[1].variants.map(({ id }) => id)).toEqual(['board_5_a', 'board_5_b']);
     expect(families[1].representative).toMatchObject({ id: 'other_board', shapeName: '自定义' });
+  });
+
+  it('locates an arranged level in its board, path, and difficulty hierarchy', () => {
+    const secondPathJson = JSON.stringify({ data: [[1, 4], [2, 3]] });
+    const result = parseArrangementLibraryRows([
+      headers,
+      ['level_44_9_3', 'same', 2, 1, levelJson, pathJson, '正方形', 3, 0],
+      ['level_44_10_5', 'other-path', 3, 1, levelJson, secondPathJson, '正方形', 5, 0],
+    ]);
+    const families = arrangementBoardFamilies(result.levels);
+
+    expect(findArrangementLevelLocation(families, 'level_44_10_5')).toEqual({
+      boardIndex: 0,
+      pathIndex: 1,
+      difficultyIndex: 0,
+    });
+    expect(findArrangementLevelLocation(families, 'missing')).toBeUndefined();
   });
 
   it('sorts formation and path columns by numeric ids', () => {
