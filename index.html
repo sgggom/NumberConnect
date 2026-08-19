@@ -72,7 +72,7 @@
             </button>
           </div>
 
-          <button id="default-editor-button" class="default-brand-lockup" type="button" aria-label="打开关卡编辑器">
+          <button id="default-editor-button" class="default-brand-lockup" type="button" aria-label="打开关卡工具">
             <img src="./theme-default/logo.png" alt="" />
           </button>
 
@@ -83,7 +83,7 @@
         </div>
 
         <div class="lobby-theme-panel lobby-theme-panel--night">
-        <button id="night-editor-button" class="brand-lockup" type="button" aria-label="打开关卡编辑器">
+        <button id="night-editor-button" class="brand-lockup" type="button" aria-label="打开关卡工具">
           <span class="brand-mark" aria-hidden="true"><i>1</i><i>2</i><i>3</i></span>
           <h1 id="lobby-title">Number Connect</h1>
         </button>
@@ -252,6 +252,8 @@
 
       <section id="editor-screen" class="screen editor-screen" hidden></section>
 
+      <section id="arranger-screen" class="screen arranger-screen" hidden></section>
+
       <section id="collection-screen" class="screen collection-screen" hidden aria-labelledby="collection-screen-title">
         <header class="collection-screen-header">
           <button id="collection-back-button" class="icon-button" type="button" aria-label="返回大厅">←</button>
@@ -395,6 +397,27 @@
       </button>
 
     </main>
+
+    <dialog id="lobby-tools-dialog" class="lobby-tools-dialog" aria-labelledby="lobby-tools-title">
+      <form method="dialog" class="lobby-tools-card">
+        <header>
+          <div><small>LEVEL TOOLS</small><h2 id="lobby-tools-title">选择关卡工具</h2></div>
+          <button class="icon-button" value="cancel" aria-label="关闭关卡工具菜单">×</button>
+        </header>
+        <div class="lobby-tools-options">
+          <button id="lobby-open-editor-button" class="lobby-tool-option lobby-tool-option--editor" type="button">
+            <span class="lobby-tool-option__icon" aria-hidden="true">✎</span>
+            <span><strong>关卡编辑器</strong><small>绘制造型、生成路径与隐藏</small></span>
+            <i aria-hidden="true">›</i>
+          </button>
+          <button id="lobby-open-arranger-button" class="lobby-tool-option lobby-tool-option--arranger" type="button">
+            <span class="lobby-tool-option__icon" aria-hidden="true">▦</span>
+            <span><strong>关卡排布工具</strong><small>独立整理关卡顺序与布局</small></span>
+            <i aria-hidden="true">›</i>
+          </button>
+        </div>
+      </form>
+    </dialog>
 
     <dialog id="bead-gallery-dialog" class="bead-gallery-dialog" aria-labelledby="bead-gallery-title">
       <section class="bead-gallery-card">

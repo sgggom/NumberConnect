@@ -146,6 +146,9 @@ describe('批量生成路径与隐藏', () => {
     const text = formatBatchPlaytestResultsTsv([{ task, level }], 'path', true);
     expect(text.split('\r\n')[0].split('\t')).toEqual([...BATCH_PATH_RESULT_HEADERS]);
     expect(BATCH_PATH_RESULT_HEADERS).toContain('实际路径交叉数量');
+    expect(BATCH_PATH_RESULT_HEADERS).toEqual(expect.arrayContaining([
+      '连续向右数量', '连续向下数量', '连续向右下数量', '连续遮挡计数',
+    ]));
     expect(BATCH_PATH_RESULT_HEADERS).not.toContain('中推理平均错误数');
     expect(text.split('\r\n')[1].split('\t')).toHaveLength(BATCH_PATH_RESULT_HEADERS.length);
   });

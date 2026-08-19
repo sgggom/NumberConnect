@@ -553,8 +553,28 @@ describe('level editor path generation', () => {
     expect(metrics.upperRightMoveRatio).toBe(0);
     expect(metrics.lowerLeftMoveRatio).toBe(0);
     expect(metrics.lowerRightMoveRatio).toBeCloseTo(1 / 3);
+    expect(metrics.consecutiveRightCount).toBe(0);
+    expect(metrics.consecutiveDownCount).toBe(0);
+    expect(metrics.consecutiveLowerRightCount).toBe(0);
+    expect(metrics.consecutiveOcclusionCount).toBe(2);
     expect(metrics.startRegion).toBe('左上');
     expect(metrics.endRegion).toBe('右下');
+  });
+
+  it('counts repeated right, down, and lower-right moves across interrupted runs', () => {
+    const metrics = calculateEditorLevelMetrics({
+      path: [
+        { x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 },
+        { x: 2, y: 1 }, { x: 2, y: 2 }, { x: 3, y: 2 }, { x: 4, y: 2 },
+        { x: 5, y: 3 }, { x: 6, y: 4 },
+      ],
+      hiddenCellKeys: new Set(),
+      shape: 'square',
+    });
+    expect(metrics.consecutiveRightCount).toBe(2);
+    expect(metrics.consecutiveDownCount).toBe(1);
+    expect(metrics.consecutiveLowerRightCount).toBe(1);
+    expect(metrics.consecutiveOcclusionCount).toBe(7);
   });
 
   it('calculates crossings, hidden ratio, and longest visibility runs', () => {

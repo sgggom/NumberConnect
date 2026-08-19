@@ -54,6 +54,7 @@ export const BATCH_PATH_RESULT_HEADERS = [
   '平均路径长度（拐弯的拐点算作端点，看整个棋盘中的线段平均长度）',
   '向上移动占比', '向下移动占比', '向左移动占比', '向右移动占比',
   '向左上移动占比', '向右上移动占比', '向左下移动占比', '向右下移动占比',
+  '连续向右数量', '连续向下数量', '连续向右下数量', '连续遮挡计数',
   '起点位置（分为左上/右上/左下/右下/靠中）', '终点位置',
 ] as const;
 
@@ -66,6 +67,7 @@ export const BATCH_HIDDEN_RESULT_HEADERS = [
   '平均路径长度（拐弯的拐点算作端点，看整个棋盘中的线段平均长度）',
   '向上移动占比', '向下移动占比', '向左移动占比', '向右移动占比',
   '向左上移动占比', '向右上移动占比', '向左下移动占比', '向右下移动占比',
+  '连续向右数量', '连续向下数量', '连续向右下数量', '连续遮挡计数',
   '起点位置（分为左上/右上/左下/右下/靠中）', '终点位置',
   '每关跑关次数', '推理能力', '平均总步数', '低推理平均错误数', '中推理平均错误数',
   '高推理平均错误数', '平均可连接数量', '直接连接占比 %',
@@ -711,7 +713,10 @@ export const formatBatchPlaytestResultsTsv = (
         rounded(metrics.downwardMoveRatio), rounded(metrics.leftwardMoveRatio),
         rounded(metrics.rightwardMoveRatio), rounded(metrics.upperLeftMoveRatio),
         rounded(metrics.upperRightMoveRatio), rounded(metrics.lowerLeftMoveRatio),
-        rounded(metrics.lowerRightMoveRatio), metrics.startRegion, metrics.endRegion,
+        rounded(metrics.lowerRightMoveRatio), metrics.consecutiveRightCount,
+        metrics.consecutiveDownCount, metrics.consecutiveLowerRightCount,
+        metrics.consecutiveOcclusionCount,
+        metrics.startRegion, metrics.endRegion,
       ];
     }
     const hiddenSimulation = simulation as BatchPlaytestSimulation;
@@ -731,6 +736,8 @@ export const formatBatchPlaytestResultsTsv = (
       rounded(metrics.leftwardMoveRatio), rounded(metrics.rightwardMoveRatio),
       rounded(metrics.upperLeftMoveRatio), rounded(metrics.upperRightMoveRatio),
       rounded(metrics.lowerLeftMoveRatio), rounded(metrics.lowerRightMoveRatio),
+      metrics.consecutiveRightCount, metrics.consecutiveDownCount, metrics.consecutiveLowerRightCount,
+      metrics.consecutiveOcclusionCount,
       metrics.startRegion, metrics.endRegion,
       config.simulationRunCount, reasoningLabel('medium'), rounded(hiddenSimulation.totalSteps),
       rounded(hiddenSimulation.averageErrorCountByReasoning.low),
