@@ -12,11 +12,13 @@
 .arranger-panel h3 { margin: 3px 0 0; font-size: .98rem; }
 .arranger-panel > header > strong { color: var(--green); font-size: .72rem; }
 .arranger-groups-panel { display: grid; grid-template-rows: auto minmax(0,1fr); }
-.arranger-group-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
-.arranger-groups-panel > header button { padding: 7px 9px; border: 1px solid rgba(88,208,170,.22); border-radius: 9px; color: var(--green); background: rgba(88,208,170,.08); font-size: .65rem; font-weight: 850; }
+.arranger-groups-panel > header { min-height: 0; display: grid; grid-template-columns: minmax(0,1fr); align-items: start; gap: 10px; }
+.arranger-groups-panel > header h3 { white-space: nowrap; }
+.arranger-group-actions { width: 100%; display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 6px; }
+.arranger-groups-panel > header button { min-width: 0; padding: 7px 8px; border: 1px solid rgba(88,208,170,.22); border-radius: 9px; color: var(--green); background: rgba(88,208,170,.08); font-size: .62rem; font-weight: 850; white-space: nowrap; }
 .arranger-groups-panel > header button:disabled { opacity: .34; cursor: default; }
-.arranger-group-list { min-height: 0; padding: 10px; display: grid; align-content: start; gap: 8px; overflow-y: auto; }
-.arranger-group { overflow: hidden; border: 1px solid rgba(255,255,255,.08); border-radius: 13px; background: rgba(255,255,255,.035); }
+.arranger-group-list { min-height: 0; padding: 10px; display: grid; grid-auto-rows: max-content; align-content: start; gap: 8px; overflow-y: auto; }
+.arranger-group { min-height: 70px; overflow: hidden; border: 1px solid rgba(255,255,255,.08); border-radius: 13px; background: rgba(255,255,255,.035); }
 .arranger-group.is-selected { border-color: rgba(88,208,170,.42); box-shadow: 0 0 0 2px rgba(88,208,170,.08); }
 .arranger-group-heading { width: 100%; padding: 11px 12px; display: flex; align-items: center; justify-content: space-between; color: var(--ink); background: transparent; text-align: left; }
 .arranger-group-heading span { font-size: .78rem; font-weight: 900; }

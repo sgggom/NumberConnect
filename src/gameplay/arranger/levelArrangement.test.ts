@@ -154,6 +154,14 @@ describe('level arrangement data', () => {
       { id: 1, levelIds: ['level_56_44_3', 'level_67_8_5'] },
       { id: 2, levelIds: ['level_68_10_6'] },
     ]);
+    expect(parseArrangementClipboardText([
+      'id\t"levelName"',
+      '1\t"[level_56_44_3,level_67_8_5]"',
+      '2\t[level_68_10_6]',
+    ].join('\r\n'))).toEqual([
+      { id: 1, levelIds: ['level_56_44_3', 'level_67_8_5'] },
+      { id: 2, levelIds: ['level_68_10_6'] },
+    ]);
     expect(() => parseArrangementClipboardText('1\t[level_1]\n2\t[level_1]')).toThrow('重复');
   });
 
