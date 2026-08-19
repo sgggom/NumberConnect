@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   addArrangementLevels,
   arrangementBoardFamilies,
+  arrangementLevelDataJson,
   arrangementRows,
+  parseArrangementClipboardText,
   parseArrangementLibraryRows,
   removeArrangementLevel,
 } from './levelArrangement';
@@ -141,5 +143,39 @@ describe('level arrangement data', () => {
       [2, '[level_3]'],
     ]);
     expect(removeArrangementLevel(groups, 1, 'level_1')[0].levelIds).toEqual(['level_2']);
+  });
+
+  it('reads copied id and levelName arrangement rows from the clipboard', () => {
+    expect(parseArrangementClipboardText([
+      'id\tlevelName',
+      '1\t[level_56_44_3,level_67_8_5]',
+      '2\t[level_68_10_6]',
+    ].join('\r\n'))).toEqual([
+      { id: 1, levelIds: ['level_56_44_3', 'level_67_8_5'] },
+      { id: 2, levelIds: ['level_68_10_6'] },
+    ]);
+    expect(() => parseArrangementClipboardText('1\t[level_1]\n2\t[level_1]')).toThrow('重复');
+  });
+
+  it('keeps every arranged level and adds dynamic difficulties 1 to 10 for each used path', () => {
+    const otherPathJson = JSON.stringify({ data: [[1, 4], [2, 3]] });
+    const result = parseArrangementLibraryRows([
+      headers,
+      ['level_56_44_1', 'same', 2, 1, levelJson, pathJson, '正方形', 1, 0],
+      ['level_56_44_3', 'same', 3, 1, levelJson, pathJson, '正方形', 3, 0],
+      ['level_56_44_10', 'same', 4, 1, levelJson, pathJson, '正方形', 10, 0],
+      ['level_56_44_11', 'same', 5, 1, levelJson, pathJson, '正方形', 11, 0],
+      ['level_56_45_1', 'other', 6, 1, levelJson, otherPathJson, '正方形', 1, 0],
+    ]);
+    const exported = JSON.parse(arrangementLevelDataJson([
+      { id: 1, levelIds: ['level_56_44_11'] },
+    ], result.levels));
+    expect(Object.keys(exported)).toEqual([
+      'level_56_44_1',
+      'level_56_44_3',
+      'level_56_44_10',
+      'level_56_44_11',
+    ]);
+    expect(exported.level_56_44_1).toEqual(JSON.parse(levelJson));
   });
 });

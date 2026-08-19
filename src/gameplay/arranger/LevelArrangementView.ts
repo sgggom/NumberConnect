@@ -1,3 +1,5 @@
+import { DEFAULT_AUTO_ARRANGEMENT_FORM } from './autoArrangement';
+
 export const mountLevelArrangementView = (host: HTMLElement): void => {
   host.setAttribute('aria-labelledby', 'arranger-screen-title');
   host.innerHTML = `
@@ -15,7 +17,7 @@ export const mountLevelArrangementView = (host: HTMLElement): void => {
     </header>
     <div class="arranger-layout">
       <aside class="arranger-panel arranger-groups-panel" aria-labelledby="arranger-groups-title">
-        <header><div><small>关卡列表</small><h3 id="arranger-groups-title">游戏关卡</h3></div><div class="arranger-group-actions"><button id="arranger-auto-layout" type="button" disabled>自动排布</button><button id="arranger-copy-groups" type="button" disabled>复制</button><button id="arranger-add-group" type="button">＋ 新增</button></div></header>
+        <header><div><small>关卡列表</small><h3 id="arranger-groups-title">游戏关卡</h3></div><div class="arranger-group-actions"><button id="arranger-auto-layout" type="button" disabled>自动排布</button><button id="arranger-copy-groups" type="button" disabled>复制关卡列表</button><button id="arranger-copy-level-data" type="button" disabled>复制关卡数据</button><button id="arranger-add-group" type="button">＋ 新增</button></div></header>
         <div id="arranger-group-list" class="arranger-group-list"></div>
       </aside>
       <section class="arranger-panel arranger-library-panel" aria-labelledby="arranger-library-title">
@@ -63,16 +65,18 @@ export const mountLevelArrangementView = (host: HTMLElement): void => {
           <button id="arranger-auto-close" class="icon-button" type="button" aria-label="关闭">×</button>
         </header>
         <div class="arranger-auto-fields">
-          <label><span>每关棋盘数量</span><input id="arranger-auto-board-count" type="number" min="1" max="20" step="1" value="1"></label>
-          <label><span>相同路径重复出现间隔</span><input id="arranger-auto-path-gap" type="number" min="0" step="1" value="100"></label>
+          <label><span>生成关卡数</span><input id="arranger-auto-level-count" type="number" min="1" step="1" value="${DEFAULT_AUTO_ARRANGEMENT_FORM.levelCount}"></label>
+          <label><span>每关棋盘数量</span><input id="arranger-auto-board-count" type="number" min="1" max="20" step="1" value="${DEFAULT_AUTO_ARRANGEMENT_FORM.boardsPerLevel}"></label>
+          <label><span>相同路径重复出现间隔</span><input id="arranger-auto-path-gap" type="number" min="0" step="1" value="${DEFAULT_AUTO_ARRANGEMENT_FORM.pathRepeatInterval}"></label>
+          <label><span>连续遮挡计数倾向</span><select id="arranger-auto-occlusion-preference"><option value="large">大</option><option value="medium">中</option><option value="small">小</option><option value="random" selected>随机</option></select></label>
         </div>
         <section class="arranger-auto-stages">
-          <header><div><strong>阶段配置</strong><small>阵型范围支持 1-20,25,30-35</small></div><button id="arranger-auto-add-stage" type="button">＋ 添加阶段</button></header>
-          <div class="arranger-auto-stage-head"><span>阶段</span><span>起始关</span><span>结束关</span><span>阵型 ID 范围</span><span></span></div>
+          <header><div><strong>棋盘阶段配置</strong><small>阶段数量随每关棋盘数量自动变化；范围支持 1-20,25,30-35</small></div></header>
+          <div class="arranger-auto-stage-head"><span>棋盘阶段</span><span>可选阵型 ID 范围</span><span>难度范围</span></div>
           <div id="arranger-auto-stage-list" class="arranger-auto-stage-list"></div>
         </section>
         <p id="arranger-auto-status" class="arranger-auto-status" aria-live="polite"></p>
-        <footer><button id="arranger-auto-cancel" class="button button--secondary" type="button">取消</button><button id="arranger-auto-generate" class="button button--primary" type="button">生成并替换关卡列表</button></footer>
+        <footer><button id="arranger-auto-read-layout" class="button button--secondary" type="button">读取剪贴板排布</button><button id="arranger-auto-cancel" class="button button--secondary" type="button">取消</button><button id="arranger-auto-generate" class="button button--primary" type="button">生成并替换关卡列表</button></footer>
       </section>
     </dialog>
   `;

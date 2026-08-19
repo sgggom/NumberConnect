@@ -3,7 +3,9 @@ import type { LevelData } from '../../game/types';
 import {
   addArrangementLevels,
   arrangementBoardFamilies,
+  arrangementLevelDataJson,
   arrangementRows,
+  parseArrangementClipboardText,
   type ArrangementBoardFamily,
   type ArrangementLevelGroup,
   type ArrangementLibraryLevel,
@@ -12,7 +14,13 @@ import {
 } from './levelArrangement';
 import { mountLevelArrangementView } from './LevelArrangementView';
 import { buildPathTrend, pathTrendColorAt } from './pathTrend';
-import { generateAutoArrangement, parseFormationIdRange } from './autoArrangement';
+import {
+  DEFAULT_AUTO_ARRANGEMENT_FORM,
+  generateAutoArrangement,
+  parseDifficultyIdRange,
+  parseFormationIdRange,
+  type AutoArrangementOcclusionPreference,
+} from './autoArrangement';
 import {
   clearArrangementLibraryFile,
   loadArrangementLibraryFile,
@@ -87,19 +95,15 @@ export class LevelArrangementController {
     this.query('#arranger-auto-layout').addEventListener('click', () => this.openAutoArrangementDialog());
     this.query('#arranger-auto-close').addEventListener('click', () => this.closeAutoArrangementDialog());
     this.query('#arranger-auto-cancel').addEventListener('click', () => this.closeAutoArrangementDialog());
-    this.query('#arranger-auto-add-stage').addEventListener('click', () => this.addAutoArrangementStage());
+    this.query('#arranger-auto-read-layout').addEventListener('click', () => void this.readArrangementFromClipboard());
     this.query('#arranger-auto-generate').addEventListener('click', () => this.generateAutomaticArrangement());
-    this.query('#arranger-auto-stage-list').addEventListener('click', (event) => {
-      const remove = (event.target as HTMLElement).closest<HTMLElement>('[data-remove-auto-stage]');
-      if (!remove) return;
-      remove.closest('.arranger-auto-stage')?.remove();
-      this.renumberAutoArrangementStages();
-    });
+    this.query('#arranger-auto-board-count').addEventListener('input', () => this.syncAutoArrangementStages());
     this.query<HTMLDialogElement>('#arranger-auto-dialog').addEventListener('cancel', (event) => {
       event.preventDefault();
       this.closeAutoArrangementDialog();
     });
     this.query('#arranger-copy-groups').addEventListener('click', () => void this.copyGroups());
+    this.query('#arranger-copy-level-data').addEventListener('click', () => void this.copyLevelData());
     this.query<HTMLInputElement>('#arranger-search').addEventListener('input', () => {
       this.page = 0;
       this.renderLibrary();
@@ -219,7 +223,7 @@ export class LevelArrangementController {
     const status = this.query('#arranger-auto-status');
     status.textContent = '';
     status.classList.remove('is-error');
-    if (this.autoStageList.children.length === 0) this.addAutoArrangementStage(true);
+    this.syncAutoArrangementStages();
     const dialog = this.query<HTMLDialogElement>('#arranger-auto-dialog');
     if (!dialog.open) dialog.showModal();
   }
@@ -229,38 +233,49 @@ export class LevelArrangementController {
     if (dialog.open) dialog.close();
   }
 
-  private addAutoArrangementStage(initial = false): void {
-    const previous = this.autoStageList.lastElementChild as HTMLElement | null;
-    const previousEnd = Number(previous?.querySelector<HTMLInputElement>('[data-stage-end]')?.value ?? 0);
-    const startLevel = initial ? 1 : Math.max(1, previousEnd + 1);
-    const endLevel = startLevel + 99;
-    const rangeValue = previous?.querySelector<HTMLInputElement>('[data-stage-formations]')?.value
-      || this.availableFormationRange();
+  private addAutoArrangementStage(
+    rangeValue?: string,
+    difficultyRangeValue?: string,
+  ): void {
     const row = document.createElement('div');
     row.className = 'arranger-auto-stage';
     const index = this.autoStageList.children.length + 1;
+    const fixedDefault = DEFAULT_AUTO_ARRANGEMENT_FORM.stages[index - 1];
+    const previous = this.autoStageList.lastElementChild;
+    const resolvedFormationRange = rangeValue
+      ?? fixedDefault?.formationRange
+      ?? previous?.querySelector<HTMLInputElement>('[data-stage-formations]')?.value
+      ?? this.availableFormationRange();
+    const resolvedDifficultyRange = difficultyRangeValue
+      ?? fixedDefault?.difficultyRange
+      ?? previous?.querySelector<HTMLInputElement>('[data-stage-difficulties]')?.value
+      ?? this.availableDifficultyRange();
     row.innerHTML = `
       <b data-stage-number>阶段 ${index}</b>
-      <input data-stage-start type="number" min="1" step="1" value="${startLevel}" aria-label="阶段 ${index} 起始关">
-      <input data-stage-end type="number" min="1" step="1" value="${endLevel}" aria-label="阶段 ${index} 结束关">
       <input data-stage-formations type="text" placeholder="例如 1-20,25" aria-label="阶段 ${index} 阵型范围">
-      <button class="arranger-auto-stage-remove" data-remove-auto-stage type="button" aria-label="删除阶段 ${index}">×</button>
+      <input data-stage-difficulties type="text" placeholder="例如 1-5,8" aria-label="阶段 ${index} 难度范围">
     `;
-    row.querySelector<HTMLInputElement>('[data-stage-formations]')!.value = rangeValue;
+    row.querySelector<HTMLInputElement>('[data-stage-formations]')!.value = resolvedFormationRange;
+    row.querySelector<HTMLInputElement>('[data-stage-difficulties]')!.value = resolvedDifficultyRange;
     this.autoStageList.append(row);
   }
 
-  private renumberAutoArrangementStages(): void {
+  private syncAutoArrangementStages(): void {
+    const requestedCount = Number(this.query<HTMLInputElement>('#arranger-auto-board-count').value);
+    if (!Number.isInteger(requestedCount) || requestedCount < 1 || requestedCount > 20) return;
+    while (this.autoStageList.children.length < requestedCount) {
+      this.addAutoArrangementStage();
+    }
+    while (this.autoStageList.children.length > requestedCount) this.autoStageList.lastElementChild?.remove();
     [...this.autoStageList.children].forEach((child, index) => {
       const row = child as HTMLElement;
       const number = index + 1;
       const label = row.querySelector('[data-stage-number]');
       if (label) label.textContent = `阶段 ${number}`;
-      row.querySelectorAll<HTMLInputElement>('input').forEach((input) => {
-        input.setAttribute('aria-label', input.hasAttribute('data-stage-start')
-          ? `阶段 ${number} 起始关`
-          : input.hasAttribute('data-stage-end') ? `阶段 ${number} 结束关` : `阶段 ${number} 阵型范围`);
-      });
+      row.querySelector<HTMLInputElement>('[data-stage-formations]')
+        ?.setAttribute('aria-label', `阶段 ${number} 阵型范围`);
+      row.querySelector<HTMLInputElement>('[data-stage-difficulties]')
+        ?.setAttribute('aria-label', `阶段 ${number} 难度范围`);
     });
   }
 
@@ -272,20 +287,54 @@ export class LevelArrangementController {
       .join(',');
   }
 
+  private async readArrangementFromClipboard(): Promise<void> {
+    const status = this.query('#arranger-auto-status');
+    try {
+      if (!navigator.clipboard?.readText) throw new Error('当前浏览器无法读取剪贴板文本。');
+      const groups = parseArrangementClipboardText(await navigator.clipboard.readText());
+      const unknownLevelIds = [...new Set(groups.flatMap((group) => group.levelIds)
+        .filter((levelId) => !this.libraryById.has(levelId)))];
+      if (unknownLevelIds.length > 0) {
+        const preview = unknownLevelIds.slice(0, 5).join('、');
+        throw new Error(`当前关卡库中找不到：${preview}${unknownLevelIds.length > 5 ? ` 等 ${unknownLevelIds.length} 条` : ''}。`);
+      }
+      this.groups = groups;
+      this.selectedGroupId = groups[0].id;
+      this.selectedLibraryLevelIds.clear();
+      this.selectedPoolLevelIds = groups.flatMap((group) => group.levelIds);
+      this.selectedPoolLevelIdSet = new Set(this.selectedPoolLevelIds);
+      this.renderGroups();
+      this.renderLibrary();
+      this.query('#arranger-file-status').textContent = `已从剪贴板读取 ${groups.length} 关排布`;
+      this.closeAutoArrangementDialog();
+    } catch (error) {
+      status.textContent = error instanceof Error ? error.message : '读取剪贴板排布失败。';
+      status.classList.add('is-error');
+    }
+  }
+
+  private availableDifficultyRange(): string {
+    return [...new Set(this.library.map((level) => level.difficultyId ?? level.difficulty)
+      .filter((id): id is number => id !== undefined))]
+      .sort((left, right) => left - right)
+      .join(',');
+  }
+
   private generateAutomaticArrangement(): void {
     const status = this.query('#arranger-auto-status');
     try {
       const stages = [...this.autoStageList.children].map((child) => {
         const row = child as HTMLElement;
         return {
-          startLevel: Number(row.querySelector<HTMLInputElement>('[data-stage-start]')?.value),
-          endLevel: Number(row.querySelector<HTMLInputElement>('[data-stage-end]')?.value),
           formationIds: parseFormationIdRange(row.querySelector<HTMLInputElement>('[data-stage-formations]')?.value ?? ''),
+          difficultyIds: parseDifficultyIdRange(row.querySelector<HTMLInputElement>('[data-stage-difficulties]')?.value ?? ''),
         };
       });
       const groups = generateAutoArrangement(this.families, {
+        levelCount: Number(this.query<HTMLInputElement>('#arranger-auto-level-count').value),
         boardsPerLevel: Number(this.query<HTMLInputElement>('#arranger-auto-board-count').value),
         pathRepeatInterval: Number(this.query<HTMLInputElement>('#arranger-auto-path-gap').value),
+        occlusionPreference: this.query<HTMLSelectElement>('#arranger-auto-occlusion-preference').value as AutoArrangementOcclusionPreference,
         stages,
       });
       this.groups = groups;
@@ -312,6 +361,18 @@ export class LevelArrangementController {
     try {
       await navigator.clipboard.writeText(text);
       this.query('#arranger-file-status').textContent = `已复制 ${this.groups.length} 关排布配置`;
+    } catch {
+      this.query('#arranger-file-status').textContent = '复制失败，请允许浏览器访问剪贴板。';
+    }
+  }
+
+  private async copyLevelData(): Promise<void> {
+    if (this.groups.some((group) => group.levelIds.length === 0)) return;
+    const text = arrangementLevelDataJson(this.groups, this.library);
+    const levelCount = Object.keys(JSON.parse(text) as Record<string, unknown>).length;
+    try {
+      await navigator.clipboard.writeText(text);
+      this.query('#arranger-file-status').textContent = `已复制 ${levelCount} 条关卡数据（所用路径的动态难度 1～10）`;
     } catch {
       this.query('#arranger-file-status').textContent = '复制失败，请允许浏览器访问剪贴板。';
     }
@@ -506,6 +567,7 @@ export class LevelArrangementController {
     const hasEmptyGroup = this.groups.some((group) => group.levelIds.length === 0);
     this.query<HTMLButtonElement>('#arranger-add-group').disabled = hasEmptyGroup;
     this.query<HTMLButtonElement>('#arranger-copy-groups').disabled = hasEmptyGroup;
+    this.query<HTMLButtonElement>('#arranger-copy-level-data').disabled = hasEmptyGroup;
   }
 
   private renderLibrary(): void {
