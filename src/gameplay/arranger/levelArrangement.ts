@@ -1,4 +1,4 @@
-import { decodeCompactLevelData } from '../../game/levelDataFormat';
+import { decodeCompactLevelData, encodeCompactLevelData } from '../../game/levelDataFormat';
 import type { LevelData } from '../../game/types';
 
 export interface ArrangementLibraryLevel {
@@ -353,3 +353,59 @@ export const removeArrangementLevel = (
 export const arrangementRows = (
   groups: ReadonlyArray<ArrangementLevelGroup>,
 ): Array<[number, string]> => groups.map((group) => [group.id, `[${group.levelIds.join(',')}]`]);
+
+export const parseArrangementClipboardText = (text: string): ArrangementLevelGroup[] => {
+  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (lines.length === 0) throw new Error('剪贴板中没有排布数据。');
+  const dataLines = /^(id\s+levelName|id\tlevelName)$/i.test(lines[0]) ? lines.slice(1) : lines;
+  if (dataLines.length === 0) throw new Error('剪贴板中只有表头，没有排布数据。');
+  const groupIds = new Set<number>();
+  const usedLevelIds = new Set<string>();
+  return dataLines.map((line, index) => {
+    const match = /^(\d+)\s+\[([^\]]*)\]$/.exec(line);
+    if (!match) throw new Error(`排布第 ${index + 1} 行格式错误，应为“关卡ID [关卡列表]”。`);
+    const id = Number(match[1]);
+    if (!Number.isInteger(id) || id < 1) throw new Error(`排布第 ${index + 1} 行的关卡ID无效。`);
+    if (groupIds.has(id)) throw new Error(`排布中的关卡ID ${id} 重复。`);
+    groupIds.add(id);
+    const levelIds = match[2].split(',').map((value) => value.trim()).filter(Boolean);
+    if (levelIds.length === 0) throw new Error(`排布第 ${index + 1} 行没有棋盘关卡。`);
+    levelIds.forEach((levelId) => {
+      if (usedLevelIds.has(levelId)) throw new Error(`排布中的棋盘关卡 ${levelId} 重复。`);
+      usedLevelIds.add(levelId);
+    });
+    return { id, levelIds };
+  });
+};
+
+export const arrangementLevelDataJson = (
+  groups: ReadonlyArray<ArrangementLevelGroup>,
+  library: ReadonlyArray<ArrangementLibraryLevel>,
+): string => {
+  const libraryById = new Map(library.map((level) => [level.id, level]));
+  const usedLevelIds = new Set(groups.flatMap((group) => group.levelIds));
+  const usedPathKeys = new Set([...usedLevelIds].flatMap((levelId) => {
+    const level = libraryById.get(levelId);
+    if (!level) return [];
+    return [level.formationId !== undefined && level.pathId !== undefined
+      ? `id:${level.formationId}:${level.pathId}`
+      : `path:${level.pathKey}`];
+  }));
+  const selected = library.filter((level) => {
+    if (usedLevelIds.has(level.id)) return true;
+    if (level.difficultyId === undefined || level.difficultyId < 1 || level.difficultyId > 10) return false;
+    const pathKey = level.formationId !== undefined && level.pathId !== undefined
+      ? `id:${level.formationId}:${level.pathId}`
+      : `path:${level.pathKey}`;
+    return usedPathKeys.has(pathKey);
+  }).sort((left, right) => (
+    (left.formationId ?? Number.MAX_SAFE_INTEGER) - (right.formationId ?? Number.MAX_SAFE_INTEGER)
+    || (left.pathId ?? Number.MAX_SAFE_INTEGER) - (right.pathId ?? Number.MAX_SAFE_INTEGER)
+    || (left.difficultyId ?? Number.MAX_SAFE_INTEGER) - (right.difficultyId ?? Number.MAX_SAFE_INTEGER)
+    || left.sourceRow - right.sourceRow
+  ));
+  return JSON.stringify(Object.fromEntries(selected.map((level) => [
+    level.id,
+    encodeCompactLevelData(level.level),
+  ])));
+};
