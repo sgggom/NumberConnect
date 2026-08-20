@@ -144,6 +144,7 @@ export class LevelEditorController {
   private simulationWindow?: Window;
   private editorPresets: LevelEditorPreset[] = [];
   private selectedPresetId?: string;
+  private editingLevelId?: number;
   private levelContextMenu?: HTMLElement;
   private levelContextMenuCleanup?: () => void;
 
@@ -297,7 +298,11 @@ export class LevelEditorController {
     );
     this.query('#editor-simulation-open-button').addEventListener('click', () => this.openSimulationWindow());
     this.query('#editor-playtest-button').addEventListener('click', () => this.playtest());
-    this.query('#editor-level-add').addEventListener('click', () => this.save());
+    this.query('#editor-level-add').addEventListener('click', () => {
+      if (this.editingLevelId === undefined) this.save();
+      else this.updateLevel();
+    });
+    this.query('#editor-level-edit-cancel').addEventListener('click', () => this.cancelLevelEditing());
     this.query('#editor-level-import').addEventListener('click', () => this.query<HTMLInputElement>('#editor-level-file').click());
     this.query('#editor-level-export').addEventListener('click', () => this.exportLevels());
     this.query('#editor-level-clear').addEventListener('click', () => this.clearLevels());
@@ -378,6 +383,7 @@ export class LevelEditorController {
     this.clearRecognitionAmbiguity();
     this.clearSimulationResult();
     this.selectedLevelId = undefined;
+    this.editingLevelId = undefined;
     this.model.reset();
     this.render();
     this.setStatus('在左侧棋盘拖动绘制形状，然后选择算法生成路径。');
@@ -552,9 +558,16 @@ export class LevelEditorController {
       activeButton.textContent = '识别中…';
     }
     const nextId = this.options.getNextLevelId();
-    this.query<HTMLElement>('#editor-preview').style.backgroundImage = `url('./level-backgrounds/${this.model.previewName(nextId)}.png')`;
+    const previewLevelId = this.editingLevelId ?? nextId;
+    this.query<HTMLElement>('#editor-preview').style.backgroundImage = `url('./level-backgrounds/${this.model.previewName(previewLevelId)}.png')`;
     this.query<HTMLButtonElement>('#editor-playtest-button').disabled = !this.model.hasGeneratedPath || pathBusy;
-    this.query<HTMLButtonElement>('#editor-level-add').disabled = !this.model.hasGeneratedPath || pathBusy;
+    const levelAdd = this.query<HTMLButtonElement>('#editor-level-add');
+    const levelEditCancel = this.query<HTMLButtonElement>('#editor-level-edit-cancel');
+    const isEditingLevel = this.editingLevelId !== undefined;
+    levelAdd.textContent = isEditingLevel ? '修改' : '添加当前';
+    levelAdd.disabled = !this.model.hasGeneratedPath || pathBusy;
+    levelEditCancel.hidden = !isEditingLevel;
+    levelEditCancel.disabled = pathBusy;
     this.renderLevelMetrics(rows, columns);
     this.renderSimulationPanel();
     this.renderLevelList();
@@ -1464,7 +1477,7 @@ export class LevelEditorController {
       this.cancelPathAnimation();
       this.clearRecognitionAmbiguity();
       this.clearSimulationResult();
-      this.selectedLevelId = undefined;
+      if (this.editingLevelId === undefined) this.selectedLevelId = undefined;
       this.model.applyRecognizedLevel(level);
       this.persistPreferences();
       this.render();
@@ -1532,7 +1545,7 @@ export class LevelEditorController {
       if (error) throw new Error(error);
       if (mode !== 'hidden-layout') this.persistPreferences();
       if (mode !== 'hidden-layout') this.setRecognitionAmbiguity(ambiguousCells);
-      this.selectedLevelId = undefined;
+      if (this.editingLevelId === undefined) this.selectedLevelId = undefined;
       this.isImageRecognizing = false;
       this.render();
       this.setStatus(message, false, ambiguousCells.length > 0);
@@ -1861,6 +1874,56 @@ export class LevelEditorController {
     this.setStatus(`关卡 ${level.levelId} 已添加到列表。`);
   }
 
+  private updateLevel(): void {
+    const levelId = this.editingLevelId;
+    if (levelId === undefined) return;
+    const updatedLevel = this.model.createLevel(levelId);
+    if (!updatedLevel) {
+      this.setStatus('请先生成路径。', true);
+      return;
+    }
+    const levels = this.options.getLevels();
+    const index = levels.findIndex((level) => level.levelId === levelId);
+    if (index < 0) {
+      this.editingLevelId = undefined;
+      this.render();
+      this.setStatus(`关卡 ${levelId} 已不在列表中。`, true);
+      return;
+    }
+    const nextLevels = [...levels];
+    nextLevels[index] = updatedLevel;
+    this.editingLevelId = undefined;
+    this.selectedLevelId = levelId;
+    this.options.onLevelsChange(nextLevels);
+    this.persistPreferences();
+    this.render();
+    this.setStatus(`关卡 ${levelId} 已修改。`);
+  }
+
+  private beginLevelEditing(level: LevelData): void {
+    this.closeLevelContextMenu();
+    this.editingLevelId = level.levelId;
+    this.selectedLevelId = level.levelId;
+    this.model.applyLevel(level);
+    this.persistPreferences();
+    this.render();
+    this.setStatus(`正在编辑关卡 ${level.levelId}，修改完成后请选择“修改”或“取消”。`);
+  }
+
+  private cancelLevelEditing(): void {
+    const levelId = this.editingLevelId;
+    if (levelId === undefined) return;
+    const originalLevel = this.options.getLevels().find((level) => level.levelId === levelId);
+    this.editingLevelId = undefined;
+    if (originalLevel) {
+      this.selectedLevelId = levelId;
+      this.model.applyLevel(originalLevel);
+      this.persistPreferences();
+    }
+    this.render();
+    this.setStatus(`已取消编辑关卡 ${levelId}，列表内容未修改。`);
+  }
+
   private renderLevelList(): void {
     this.closeLevelContextMenu();
     const levels = this.options.getLevels();
@@ -1884,7 +1947,7 @@ export class LevelEditorController {
       item.tabIndex = 0;
       item.setAttribute('role', 'button');
       item.setAttribute('aria-label', `应用关卡 ${level.levelId}`);
-      item.title = '右键可调整关卡顺序';
+      item.title = '右键可编辑关卡或调整顺序';
 
       const info = document.createElement('div');
       info.className = 'editor-level-item__info';
@@ -1940,7 +2003,14 @@ export class LevelEditorController {
     const menu = document.createElement('div');
     menu.className = 'editor-level-context-menu';
     menu.setAttribute('role', 'menu');
-    menu.setAttribute('aria-label', `调整关卡 ${level.levelId} 的顺序`);
+    menu.setAttribute('aria-label', `关卡 ${level.levelId} 操作`);
+
+    const edit = document.createElement('button');
+    edit.type = 'button';
+    edit.className = 'editor-level-context-menu__action';
+    edit.textContent = '编辑关卡';
+    edit.setAttribute('role', 'menuitem');
+    edit.addEventListener('click', () => this.beginLevelEditing(level));
 
     const reorder = document.createElement('button');
     reorder.type = 'button';
@@ -1948,7 +2018,7 @@ export class LevelEditorController {
     reorder.textContent = '调整关卡顺序';
     reorder.setAttribute('role', 'menuitem');
     reorder.addEventListener('click', () => this.promptLevelPosition(level.levelId));
-    menu.append(reorder);
+    menu.append(edit, reorder);
     document.body.append(menu);
     this.levelContextMenu = menu;
 
@@ -2011,11 +2081,16 @@ export class LevelEditorController {
     }
 
     const selectedLevel = levels.find((level) => level.levelId === this.selectedLevelId);
+    const editingLevel = levels.find((level) => level.levelId === this.editingLevelId);
     const reordered = reorderLevelCollection(levels, levelId, targetPosition);
     const selectedIndex = selectedLevel
       ? reordered.findIndex((level) => level.activeCells === selectedLevel.activeCells)
       : -1;
     this.selectedLevelId = selectedIndex >= 0 ? selectedIndex + 1 : undefined;
+    const editingIndex = editingLevel
+      ? reordered.findIndex((level) => level.activeCells === editingLevel.activeCells)
+      : -1;
+    this.editingLevelId = editingIndex >= 0 ? editingIndex + 1 : undefined;
     this.options.onLevelsChange(reordered);
     this.render();
     this.setStatus(
@@ -2024,6 +2099,7 @@ export class LevelEditorController {
   }
 
   private applyLevel(level: LevelData): void {
+    this.editingLevelId = undefined;
     this.selectedLevelId = level.levelId;
     this.model.applyLevel(level);
     this.persistPreferences();
@@ -2052,6 +2128,8 @@ export class LevelEditorController {
     const levels = this.options.getLevels()
       .filter((level) => level.levelId !== levelId)
       .map((level, index) => ({ ...level, levelId: index + 1 }));
+    if (this.editingLevelId === levelId) this.editingLevelId = undefined;
+    else if (this.editingLevelId && this.editingLevelId > levelId) this.editingLevelId -= 1;
     if (this.selectedLevelId === levelId) this.selectedLevelId = undefined;
     else if (this.selectedLevelId && this.selectedLevelId > levelId) this.selectedLevelId -= 1;
     this.options.onLevelsChange(levels);
@@ -2067,6 +2145,7 @@ export class LevelEditorController {
     }
     if (!window.confirm(`确定清空列表中的 ${levelCount} 个关卡吗？此操作无法撤销。`)) return;
     this.selectedLevelId = undefined;
+    this.editingLevelId = undefined;
     this.options.onLevelsChange([]);
     this.render();
     this.setStatus(`已清空列表中的 ${levelCount} 个关卡。`);
@@ -2081,6 +2160,7 @@ export class LevelEditorController {
       const parsed = JSON.parse(await file.text()) as unknown;
       const levels = decodeCompactLevelCollection(parsed, true);
       this.selectedLevelId = undefined;
+      this.editingLevelId = undefined;
       this.options.onLevelsChange(levels);
       this.render();
       this.setStatus(`已读取 ${levels.length} 个关卡。`);

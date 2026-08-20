@@ -61,6 +61,8 @@ describe('level editor view layout', () => {
     const markup = renderEditorMarkup();
 
     expect(markup).toContain('id="editor-level-add"');
+    expect(markup).toContain('id="editor-level-edit-cancel"');
+    expect(markup).toContain('id="editor-level-edit-cancel" class="button button--secondary button--small" type="button" hidden>取消</button>');
     expect(markup).not.toContain('id="editor-save-button"');
   });
 
