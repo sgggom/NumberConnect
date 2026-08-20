@@ -1,4 +1,4 @@
-const LEVEL_EDITOR_VIEW_VERSION = '38';
+const LEVEL_EDITOR_VIEW_VERSION = '39';
 
 export const mountLevelEditorView = (host: HTMLElement): void => {
   const hasCurrentView = host.dataset.editorViewVersion === LEVEL_EDITOR_VIEW_VERSION
@@ -88,6 +88,7 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
           </div>
           <div class="editor-level-actions">
             <button id="editor-level-add" class="button button--primary button--small" disabled>添加当前</button>
+            <button id="editor-level-edit-cancel" class="button button--secondary button--small" type="button" hidden>取消</button>
             <button id="editor-level-import" class="button button--secondary button--small">读取 JSON</button>
             <button id="editor-level-export" class="button button--secondary button--small" title="按关卡 ID 导出仅包含 data 的 JSON 文本" disabled>导出 TXT</button>
             <button id="editor-level-clear" class="button button--secondary button--small" type="button" title="清空关卡列表" disabled>清空列表</button>
