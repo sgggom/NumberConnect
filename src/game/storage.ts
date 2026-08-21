@@ -2,6 +2,7 @@ import {
   BoardShape,
   DEFAULT_SETTINGS,
   isInputMode,
+  isChargeProgressMode,
   isMainGameplay,
   isMainGameplayDifficulty,
   isTouchPreviewSize,
@@ -97,6 +98,9 @@ export const loadSettings = (): GameSettings => {
     }
     const uiTheme = isUiTheme(stored.uiTheme) ? stored.uiTheme : DEFAULT_SETTINGS.uiTheme;
     const inputMode = isInputMode(stored.inputMode) ? stored.inputMode : DEFAULT_SETTINGS.inputMode;
+    const chargeProgressMode = isChargeProgressMode(stored.chargeProgressMode)
+      ? stored.chargeProgressMode
+      : DEFAULT_SETTINGS.chargeProgressMode;
     const mainGameplay = isMainGameplay(stored.mainGameplay)
       ? stored.mainGameplay
       : DEFAULT_SETTINGS.mainGameplay;
@@ -125,6 +129,7 @@ export const loadSettings = (): GameSettings => {
       ...DEFAULT_SETTINGS,
       ...currentSettings,
       inputMode,
+      chargeProgressMode,
       mainGameplay,
       mainGameplayDifficulty,
       beadMainLevelId,

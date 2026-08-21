@@ -63,6 +63,7 @@ describe('game settings migration', () => {
         showNextNumber: false,
         showDifficultyScore: false,
         inputMode: DEFAULT_SETTINGS.inputMode,
+        chargeProgressMode: 'coins',
         touchPreviewSize: DEFAULT_SETTINGS.touchPreviewSize,
         touchPreviewFollowsPointer: DEFAULT_SETTINGS.touchPreviewFollowsPointer,
       });
@@ -151,6 +152,22 @@ describe('game settings migration', () => {
       expect(loadSettings().inputMode).toBe('auto-click');
       expect(loadSettings().inputMode).toBe('click');
       expect(loadSettings().inputMode).toBe('drag');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('loads a valid charge progress mode and keeps the current coin mode as the fallback', () => {
+    const getItem = vi.fn()
+      .mockReturnValueOnce(JSON.stringify({ chargeProgressMode: 'off' }))
+      .mockReturnValueOnce(JSON.stringify({ chargeProgressMode: 'progress' }))
+      .mockReturnValueOnce(JSON.stringify({ chargeProgressMode: 'unknown' }));
+    vi.stubGlobal('window', { localStorage: { getItem } });
+
+    try {
+      expect(loadSettings().chargeProgressMode).toBe('off');
+      expect(loadSettings().chargeProgressMode).toBe('progress');
+      expect(loadSettings().chargeProgressMode).toBe('coins');
     } finally {
       vi.unstubAllGlobals();
     }
