@@ -1783,7 +1783,7 @@ html[data-theme="default"] .primary-action-button[data-action-theme="lobby"]:act
   display: block;
   width: 220px;
   height: 57px;
-  background: url('./ui/number-connect-watermark-logo.png') center / contain no-repeat;
+  background: url('./assets/number-connect-watermark-logo.png') center / contain no-repeat;
 }
 .connection-combo-logo-grid > i:nth-child(9n + 2),
 .connection-combo-logo-grid > i:nth-child(9n + 4),
