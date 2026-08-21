@@ -15,6 +15,9 @@ export type UiTheme = typeof UI_THEMES[number];
 export const INPUT_MODES = ['drag', 'click', 'auto-click'] as const;
 export type InputMode = typeof INPUT_MODES[number];
 
+export const CHARGE_PROGRESS_MODES = ['off', 'coins', 'progress'] as const;
+export type ChargeProgressMode = typeof CHARGE_PROGRESS_MODES[number];
+
 export const MAIN_GAMEPLAYS = ['beads', 'puzzle', 'mode3', 'mode4', 'mode5'] as const;
 export type MainGameplay = typeof MAIN_GAMEPLAYS[number];
 
@@ -31,6 +34,10 @@ export const isUiTheme = (value: unknown): value is UiTheme => (
 
 export const isInputMode = (value: unknown): value is InputMode => (
   typeof value === 'string' && (INPUT_MODES as readonly string[]).includes(value)
+);
+
+export const isChargeProgressMode = (value: unknown): value is ChargeProgressMode => (
+  typeof value === 'string' && (CHARGE_PROGRESS_MODES as readonly string[]).includes(value)
 );
 
 export const isMainGameplay = (value: unknown): value is MainGameplay => (
@@ -95,6 +102,7 @@ export interface GameSettings {
   showDifficultyScore: boolean;
   soundEnabled: boolean;
   inputMode: InputMode;
+  chargeProgressMode: ChargeProgressMode;
   uiTheme: UiTheme;
   touchPreviewSize: TouchPreviewSize;
   touchPreviewFollowsPointer: boolean;
@@ -183,6 +191,7 @@ export interface BoardSessionInput {
   showDifficultyScore?: boolean;
   soundEnabled: boolean;
   inputMode: InputMode;
+  chargeProgressMode: ChargeProgressMode;
   touchPreviewRingDepth: 1 | 2;
   boardZoomEnabled: boolean;
   mode: GameMode;
@@ -223,6 +232,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   showDifficultyScore: false,
   soundEnabled: true,
   inputMode: 'drag',
+  chargeProgressMode: 'coins',
   uiTheme: 'default',
   touchPreviewSize: 'off',
   touchPreviewFollowsPointer: false,

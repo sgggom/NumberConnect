@@ -39,6 +39,7 @@ import {
   BoardShape,
   cellKey,
   isInputMode,
+  isChargeProgressMode,
   isMainGameplay,
   isMainGameplayDifficulty,
   isTouchPreviewSize,
@@ -47,6 +48,7 @@ import {
   type BoardNeighborhoodPreview,
   type BoardHoldScore,
   type BoardSessionInput,
+  type ChargeProgressMode,
   type Cell,
   type EndlessStageSettings,
   type GameMode,
@@ -415,6 +417,7 @@ class NumberConnectApp {
   private readonly touchPreviewViewport = query<HTMLElement>('#touch-preview-viewport');
   private readonly touchPreviewSizeControl = query<HTMLElement>('#touch-preview-size');
   private readonly inputModeControl = query<HTMLElement>('#settings-input-mode');
+  private readonly chargeProgressModeControl = query<HTMLElement>('#settings-charge-progress-mode');
   private readonly mainGameplayControl = query<HTMLElement>('#settings-main-gameplay');
   private readonly mainGameplayDifficultyRow = query<HTMLElement>('#settings-main-difficulty-row');
   private readonly mainGameplayDifficultyControl = query<HTMLSelectElement>('#settings-main-difficulty');
@@ -1644,6 +1647,21 @@ class NumberConnectApp {
     });
   }
 
+  private selectedChargeProgressMode(): ChargeProgressMode {
+    const value = this.chargeProgressModeControl.querySelector<HTMLInputElement>(
+      'input[name="charge-progress-mode"]:checked',
+    )?.value;
+    return isChargeProgressMode(value) ? value : 'coins';
+  }
+
+  private setChargeProgressModeControl(mode: ChargeProgressMode): void {
+    this.chargeProgressModeControl.querySelectorAll<HTMLInputElement>(
+      'input[name="charge-progress-mode"]',
+    ).forEach((input) => {
+      input.checked = input.value === mode;
+    });
+  }
+
   private selectedMainGameplay(): MainGameplay {
     const value = this.mainGameplayControl.querySelector<HTMLInputElement>(
       'input[name="main-gameplay"]:checked',
@@ -2174,6 +2192,7 @@ class NumberConnectApp {
       showDifficultyScore: this.settings.showDifficultyScore,
       soundEnabled: this.settings.soundEnabled,
       inputMode: this.settings.inputMode,
+      chargeProgressMode: this.settings.chargeProgressMode,
       touchPreviewRingDepth: this.settings.touchPreviewSize === 'large' ? 2 : 1,
       boardZoomEnabled: this.isTouchPreviewZoomMode(),
       mode: this.mode,
@@ -2406,8 +2425,9 @@ class NumberConnectApp {
     const bucketActive = this.activePowerUp === 'paint-bucket';
     const animationBusy = this.animatingPowerUp !== undefined;
     const undoAvailable = !this.solutionRevealed && this.boardScene.canUndoStep();
+    const undoControlAvailable = !this.solutionRevealed && this.boardScene.canUseUndoControl();
 
-    this.undoStepButton.disabled = !undoAvailable || animationBusy;
+    this.undoStepButton.disabled = !undoControlAvailable || animationBusy;
     this.watercolorBrushButton.disabled = noRevealTargets || animationBusy;
     this.paintBucketButton.disabled = noRevealTargets || animationBusy;
     this.paintBucketButton.classList.toggle('is-active', bucketActive);
@@ -2426,7 +2446,9 @@ class NumberConnectApp {
     );
     this.undoStepButton.setAttribute(
       'aria-label',
-      undoAvailable ? '撤回道具，撤回上一步连接' : '撤回道具，当前没有可撤回的连接',
+      undoAvailable
+        ? '撤回道具，撤回上一步连接'
+        : '撤回道具，当前没有可撤回的连接，点击直接完成当前阶段',
     );
     this.playScreen.classList.toggle('is-paint-targeting', bucketActive);
     this.playScreen.classList.toggle('is-power-up-animating', animationBusy);
@@ -2439,7 +2461,7 @@ class NumberConnectApp {
       tone = 'active';
     } else if (!message && this.solutionRevealed) {
       message = '答案显示时，道具暂不可用。';
-    } else if (!message && concealedCount === 0 && !undoAvailable) {
+    } else if (!message && concealedCount === 0 && !undoControlAvailable) {
       message = '当前没有可用的道具目标。';
     } else if (!message) {
       message = '道具可重复使用';
@@ -2451,11 +2473,17 @@ class NumberConnectApp {
 
   private undoLastConnectionStep(): void {
     if (this.activePowerUp === 'paint-bucket') this.cancelPowerUpTargeting();
-    if (!this.boardScene.undoLastStep()) {
-      this.setPowerUpMessage('当前没有可撤回的连接。');
+    if (!this.boardScene.canUndoStep()) {
+      if (this.isAdaptiveGameplaySession()) this.currentAdaptiveAttemptEligible = false;
+      if (this.boardScene.quickComplete()) {
+        this.setPowerUpMessage('已直接完成当前阶段。', 'success');
+      } else {
+        this.setPowerUpMessage('当前无法完成阶段。');
+      }
       this.renderPowerUps();
       return;
     }
+    if (!this.boardScene.undoLastStep()) return;
     this.setPowerUpMessage('已撤回一步。', 'success');
     this.renderPowerUps();
   }
@@ -3339,14 +3367,15 @@ class NumberConnectApp {
     }
   }
 
-  private async showPlayPuzzleFinale(): Promise<void> {
+  private async showPlayPuzzleFinale(onChargePanel = false): Promise<void> {
     if (this.playPuzzleFinaleBusy) return;
     this.playPuzzleFinaleBusy = true;
     this.resetPlayPuzzleCornerPress();
     this.stopPlayPuzzlePieceFloats();
     this.boardScene.setPaused(true);
     renderPlayPuzzleFinale(this.playPuzzleFinaleArt, this.playPuzzlePattern);
-    this.playPuzzleFinale.classList.remove('is-visible', 'is-floating', 'is-assembling', 'is-assembled', 'is-leaving');
+    this.playPuzzleFinale.classList.remove('is-visible', 'is-floating', 'is-assembling', 'is-assembled', 'is-leaving', 'is-charge-panel');
+    this.playPuzzleFinale.classList.toggle('is-charge-panel', onChargePanel);
     this.playPuzzleFinaleButton.hidden = true;
     this.playPuzzleFinale.hidden = false;
     await nextFrame();
@@ -3531,7 +3560,7 @@ class NumberConnectApp {
     this.playPuzzleFinale.classList.add('is-leaving');
     if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) await waitFor(220);
     this.playPuzzleFinale.hidden = true;
-    this.playPuzzleFinale.classList.remove('is-visible', 'is-floating', 'is-assembling', 'is-assembled', 'is-leaving');
+    this.playPuzzleFinale.classList.remove('is-visible', 'is-floating', 'is-assembling', 'is-assembled', 'is-leaving', 'is-charge-panel');
     this.playPuzzleFinaleButton.hidden = true;
     this.playPuzzleFinaleButton.disabled = false;
     this.playPuzzleFinaleBusy = false;
@@ -3685,12 +3714,18 @@ class NumberConnectApp {
         this.showAdaptiveResult(decision);
       }
     } else if (this.activeMainGameplay === 'puzzle') {
+      const advancesToAnotherPuzzleStage = (
+        this.playPuzzleProgress.revealed + 1 < puzzlePieceCount(this.playPuzzlePattern)
+      );
+      if (advancesToAnotherPuzzleStage) this.boardScene.beginStageCompletionEdge();
       const patternComplete = await this.showPlayPuzzleCompletion();
       if (!patternComplete) {
         this.nextPuzzleStage();
+        await this.boardScene.finishStageCompletionEdge();
         return;
       }
-      await this.showPlayPuzzleFinale();
+      const onChargePanel = await this.boardScene.fillChargeProgressScreen();
+      await this.showPlayPuzzleFinale(onChargePanel);
     } else {
       const patternComplete = await this.showPlayBeadCompletion();
       if (!patternComplete) {
@@ -3964,6 +3999,7 @@ class NumberConnectApp {
     this.setMainGameplayControl(this.settings.mainGameplay);
     this.setMainGameplayDifficultyControl(this.settings.mainGameplayDifficulty);
     this.setInputModeControl(this.settings.inputMode);
+    this.setChargeProgressModeControl(this.settings.chargeProgressMode);
     query<HTMLInputElement>('#settings-next').checked = this.settings.showNextNumber;
     query<HTMLInputElement>('#settings-difficulty-score').checked = this.settings.showDifficultyScore;
     query<HTMLInputElement>('#settings-sound').checked = this.settings.soundEnabled;
@@ -4087,6 +4123,7 @@ class NumberConnectApp {
     this.settings.mainGameplay = nextMainGameplay;
     this.settings.mainGameplayDifficulty = nextMainGameplayDifficulty;
     this.settings.inputMode = this.selectedInputMode();
+    this.settings.chargeProgressMode = this.selectedChargeProgressMode();
     this.settings.showNextNumber = query<HTMLInputElement>('#settings-next').checked;
     this.settings.showDifficultyScore = query<HTMLInputElement>('#settings-difficulty-score').checked;
     this.settings.soundEnabled = query<HTMLInputElement>('#settings-sound').checked;
@@ -4104,6 +4141,7 @@ class NumberConnectApp {
       showNextNumber: this.settings.showNextNumber,
       soundEnabled: this.settings.soundEnabled,
       inputMode: this.settings.inputMode,
+      chargeProgressMode: this.settings.chargeProgressMode,
       touchPreviewRingDepth: this.settings.touchPreviewSize === 'large' ? 2 : 1,
       boardZoomEnabled: this.isTouchPreviewZoomMode(),
     });
