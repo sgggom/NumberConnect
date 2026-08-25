@@ -4,6 +4,7 @@ import {
   isComboSoundPattern,
   isComboSoundArrangement,
   isComboSoundSet,
+  isChargeProgressMode,
   isInputMode,
   isLobbyTheme,
   isMainGameplay,
@@ -50,6 +51,9 @@ export const loadSettings = (): GameSettings => {
       }
     }
     const inputMode = isInputMode(stored.inputMode) ? stored.inputMode : DEFAULT_SETTINGS.inputMode;
+    const chargeProgressMode = isChargeProgressMode(stored.chargeProgressMode)
+      ? stored.chargeProgressMode
+      : DEFAULT_SETTINGS.chargeProgressMode;
     const mainGameplay = isMainGameplay(stored.mainGameplay)
       ? stored.mainGameplay
       : DEFAULT_SETTINGS.mainGameplay;
@@ -93,6 +97,7 @@ export const loadSettings = (): GameSettings => {
       ...DEFAULT_SETTINGS,
       ...currentSettings,
       inputMode,
+      chargeProgressMode,
       comboSoundSet: isComboSoundSet(stored.comboSoundSet)
         ? stored.comboSoundSet
         : DEFAULT_SETTINGS.comboSoundSet,

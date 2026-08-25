@@ -34,6 +34,7 @@ import {
   BoardShape,
   cellKey,
   comboSoundBracketGroupRange,
+  isChargeProgressMode,
   isComboSoundArrangement,
   isComboSoundPattern,
   isLobbyTheme,
@@ -43,6 +44,7 @@ import {
   type BoardNeighborhoodPreview,
   type BoardHoldScore,
   type BoardSessionInput,
+  type ChargeProgressMode,
   type Cell,
   type ComboSoundSet,
   type EndlessStageSettings,
@@ -434,6 +436,7 @@ class NumberConnectApp {
   private readonly soundDebugPatternAdd = query<HTMLButtonElement>('#sound-debug-pattern-add');
   private readonly soundDebugArrangement = query<HTMLInputElement>('#sound-debug-arrangement');
   private readonly soundDebugArrangementBrackets = query<HTMLButtonElement>('#sound-debug-arrangement-brackets');
+  private readonly chargeProgressModeControl = query<HTMLElement>('#settings-charge-progress-mode');
   private readonly ratingDialog = query<HTMLDialogElement>('#rating-dialog');
   private readonly ratingSubmitButton = query<HTMLButtonElement>('#rating-submit-button');
   private readonly videoStatsDialog = query<HTMLDialogElement>('#video-stats-dialog');
@@ -1602,6 +1605,21 @@ class NumberConnectApp {
     return isLobbyTheme(value) ? value : 'cool';
   }
 
+  private selectedChargeProgressMode(): ChargeProgressMode {
+    const value = this.chargeProgressModeControl.querySelector<HTMLInputElement>(
+      'input[name="charge-progress-mode"]:checked',
+    )?.value;
+    return isChargeProgressMode(value) ? value : 'coins';
+  }
+
+  private setChargeProgressModeControl(mode: ChargeProgressMode): void {
+    this.chargeProgressModeControl.querySelectorAll<HTMLInputElement>(
+      'input[name="charge-progress-mode"]',
+    ).forEach((input) => {
+      input.checked = input.value === mode;
+    });
+  }
+
   private setLobbyThemeControl(theme: LobbyTheme): void {
     document.querySelectorAll<HTMLInputElement>('input[name="lobby-theme"]').forEach((input) => {
       input.checked = input.value === theme;
@@ -2425,6 +2443,7 @@ class NumberConnectApp {
       showDifficultyScore: this.settings.showDifficultyScore,
       soundEnabled: this.settings.soundEnabled,
       inputMode: this.settings.inputMode,
+      chargeProgressMode: this.settings.chargeProgressMode,
       touchPreviewRingDepth: this.settings.touchPreviewSize === 'large' ? 2 : 1,
       boardZoomEnabled: this.isTouchPreviewZoomMode(),
       inactiveNumberFillColor: this.settings.lobbyTheme === 'warm' ? 0xede6d9 : 0xdee4f3,
@@ -3442,7 +3461,7 @@ class NumberConnectApp {
     }
   }
 
-  private async showPlayPuzzleFinale(): Promise<void> {
+  private async showPlayPuzzleFinale(onChargePanel = false): Promise<void> {
     if (this.playPuzzleFinaleBusy) return;
     this.playPuzzleFinaleBusy = true;
     this.resetPlayPuzzleCornerPress();
@@ -3460,7 +3479,8 @@ class NumberConnectApp {
       segment.classList.toggle('is-filled', Number(segment.dataset.rewardStep) <= completedRewardSteps);
     });
     this.playPuzzleFinaleButton.textContent = `Level ${this.settings.puzzleMainLevelId + 1}`;
-    this.playPuzzleFinale.classList.remove('is-visible', 'is-floating', 'is-assembling', 'is-assembled', 'is-leaving');
+    this.playPuzzleFinale.classList.remove('is-visible', 'is-floating', 'is-assembling', 'is-assembled', 'is-leaving', 'is-charge-panel');
+    this.playPuzzleFinale.classList.toggle('is-charge-panel', onChargePanel);
     this.playPuzzleFinaleButton.hidden = true;
     this.playPuzzleFinale.hidden = false;
     await nextFrame();
@@ -3678,7 +3698,7 @@ class NumberConnectApp {
     this.playPuzzleFinale.classList.add('is-leaving');
     if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) await waitFor(220);
     this.playPuzzleFinale.hidden = true;
-    this.playPuzzleFinale.classList.remove('is-visible', 'is-floating', 'is-assembling', 'is-assembled', 'is-leaving');
+    this.playPuzzleFinale.classList.remove('is-visible', 'is-floating', 'is-assembling', 'is-assembled', 'is-leaving', 'is-charge-panel');
     this.playPuzzleFinaleButton.hidden = true;
     this.playPuzzleFinaleButton.disabled = false;
     this.playPuzzleFinaleBusy = false;
@@ -3827,12 +3847,18 @@ class NumberConnectApp {
         this.showAdaptiveResult(decision);
       }
     } else if (this.activeMainGameplay === 'puzzle') {
+      const advancesToAnotherPuzzleStage = (
+        this.playPuzzleProgress.revealed + 1 < puzzlePieceCount(this.playPuzzlePattern)
+      );
+      if (advancesToAnotherPuzzleStage) this.boardScene.beginStageCompletionEdge();
       const patternComplete = await this.showPlayPuzzleCompletion();
       if (!patternComplete) {
         this.nextPuzzleStage();
+        await this.boardScene.finishStageCompletionEdge();
         return;
       }
-      await this.showPlayPuzzleFinale();
+      const onChargePanel = await this.boardScene.fillChargeProgressScreen();
+      await this.showPlayPuzzleFinale(onChargePanel);
       this.selectNextNormalLevel();
     } else {
       const patternComplete = await this.showPlayBeadCompletion();
@@ -4098,6 +4124,7 @@ class NumberConnectApp {
 
   private populateSettingsForm(): void {
     this.setLobbyThemeControl(this.settings.lobbyTheme);
+    this.setChargeProgressModeControl(this.settings.chargeProgressMode);
     query<HTMLInputElement>('#settings-sound').checked = this.settings.soundEnabled;
     this.solutionToggle.checked = this.solutionRevealed;
     this.setTouchPreviewSizeControl(this.settings.touchPreviewSize);
@@ -4182,6 +4209,7 @@ class NumberConnectApp {
 
   private applySettingsChange(): void {
     this.settings.lobbyTheme = this.selectedLobbyTheme();
+    this.settings.chargeProgressMode = this.selectedChargeProgressMode();
     this.settings.soundEnabled = query<HTMLInputElement>('#settings-sound').checked;
     this.settings.touchPreviewSize = this.selectedTouchPreviewSize();
     this.settings.touchPreviewFollowsPointer = query<HTMLInputElement>('#settings-touch-preview-follow').checked;
@@ -4195,6 +4223,7 @@ class NumberConnectApp {
       showNextNumber: this.settings.showNextNumber,
       soundEnabled: this.settings.soundEnabled,
       inputMode: this.settings.inputMode,
+      chargeProgressMode: this.settings.chargeProgressMode,
       touchPreviewRingDepth: this.settings.touchPreviewSize === 'large' ? 2 : 1,
       boardZoomEnabled: this.isTouchPreviewZoomMode(),
       inactiveNumberFillColor: this.settings.lobbyTheme === 'warm' ? 0xede6d9 : 0xdee4f3,

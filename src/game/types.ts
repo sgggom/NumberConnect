@@ -15,6 +15,9 @@ export type LobbyTheme = typeof LOBBY_THEMES[number];
 export const INPUT_MODES = ['drag', 'click', 'auto-click'] as const;
 export type InputMode = typeof INPUT_MODES[number];
 
+export const CHARGE_PROGRESS_MODES = ['off', 'coins', 'progress'] as const;
+export type ChargeProgressMode = typeof CHARGE_PROGRESS_MODES[number];
+
 export const COMBO_SOUND_SETS = ['combo1', 'combo2'] as const;
 export type ComboSoundSet = typeof COMBO_SOUND_SETS[number];
 
@@ -34,6 +37,10 @@ export const isLobbyTheme = (value: unknown): value is LobbyTheme => (
 
 export const isInputMode = (value: unknown): value is InputMode => (
   typeof value === 'string' && (INPUT_MODES as readonly string[]).includes(value)
+);
+
+export const isChargeProgressMode = (value: unknown): value is ChargeProgressMode => (
+  typeof value === 'string' && (CHARGE_PROGRESS_MODES as readonly string[]).includes(value)
 );
 
 export const isComboSoundSet = (value: unknown): value is ComboSoundSet => (
@@ -196,6 +203,7 @@ export interface GameSettings {
   comboSoundArrangement: string;
   lobbyTheme: LobbyTheme;
   inputMode: InputMode;
+  chargeProgressMode: ChargeProgressMode;
   touchPreviewSize: TouchPreviewSize;
   touchPreviewFollowsPointer: boolean;
 }
@@ -283,6 +291,7 @@ export interface BoardSessionInput {
   showDifficultyScore?: boolean;
   soundEnabled: boolean;
   inputMode: InputMode;
+  chargeProgressMode: ChargeProgressMode;
   touchPreviewRingDepth: 1 | 2;
   boardZoomEnabled: boolean;
   inactiveNumberFillColor: number;
@@ -331,6 +340,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   comboSoundArrangement: '1',
   lobbyTheme: 'cool',
   inputMode: 'drag',
+  chargeProgressMode: 'coins',
   touchPreviewSize: 'off',
   touchPreviewFollowsPointer: false,
 };

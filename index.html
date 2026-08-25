@@ -63,6 +63,22 @@
       </section>
 
       <section id="play-screen" class="screen play-screen" hidden aria-label="游戏界面">
+        <div id="connection-combo-edge" class="connection-combo-edge" aria-hidden="true">
+          <i class="connection-combo-segment connection-combo-segment--top-left"></i>
+          <i class="connection-combo-segment connection-combo-segment--top-right"></i>
+          <i class="connection-combo-segment connection-combo-segment--bottom-left"></i>
+          <i class="connection-combo-segment connection-combo-segment--bottom-right"></i>
+          <i class="connection-combo-segment connection-combo-segment--left-top"></i>
+          <i class="connection-combo-segment connection-combo-segment--left-bottom"></i>
+          <i class="connection-combo-segment connection-combo-segment--right-top"></i>
+          <i class="connection-combo-segment connection-combo-segment--right-bottom"></i>
+        </div>
+        <div id="stage-completion-edge" class="stage-completion-edge" aria-hidden="true">
+          <i class="stage-completion-edge__side stage-completion-edge__side--top"></i>
+          <i class="stage-completion-edge__side stage-completion-edge__side--right"></i>
+          <i class="stage-completion-edge__side stage-completion-edge__side--bottom"></i>
+          <i class="stage-completion-edge__side stage-completion-edge__side--left"></i>
+        </div>
         <div id="play-coin-frame" class="play-coin-frame" role="status" aria-live="polite" aria-label="金币 0">
           <img src="./ui/coins/coin.png" alt="" draggable="false" />
           <strong id="play-coin-count">0</strong>
@@ -400,6 +416,7 @@
         <header><div><h2>游戏设置</h2></div><button id="settings-close-button" class="icon-button" value="cancel" aria-label="关闭">×</button></header>
         <div class="settings-list">
           <div class="setting-row"><span><b>大厅主题</b><small>切换大厅背景、Logo 和开始按钮</small></span><div id="lobby-theme" class="setting-segmented setting-theme-control" role="radiogroup" aria-label="大厅主题"><label><input type="radio" name="lobby-theme" value="cool" checked /><span>冷色</span></label><label><input type="radio" name="lobby-theme" value="warm" /><span>暖色</span></label></div></div>
+          <div class="setting-row setting-row--charge-progress"><span><b>充能进度条</b><small>连续操作可充能，进度模式中断后不清空</small></span><div id="settings-charge-progress-mode" class="setting-segmented setting-charge-progress-control" role="radiogroup" aria-label="充能进度条"><label><input type="radio" name="charge-progress-mode" value="off" /><span>关闭</span></label><label><input type="radio" name="charge-progress-mode" value="coins" checked /><span>金币</span></label><label><input type="radio" name="charge-progress-mode" value="progress" /><span>进度</span></label></div></div>
           <label class="setting-row"><span><b>游戏声音</b><small>连击、错误和胜利反馈</small></span><input id="settings-sound" class="switch" type="checkbox" checked /></label>
           <button id="sound-debug-toggle" class="setting-row setting-row--button setting-row--sound-debug" type="button" aria-controls="sound-debug-panel" aria-expanded="false"><span><b>音效调试面板</b><small>逐个试听游戏内的反馈音效</small></span><strong>打开 ›</strong></button>
           <label id="settings-solution-row" class="setting-row" hidden><span><b>显示答案</b><small>显示隐藏数字和完整连线</small></span><input id="solution-toggle" class="switch" type="checkbox" /></label>

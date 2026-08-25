@@ -342,7 +342,7 @@ export class BoardScene extends Phaser.Scene {
   };
 
   public setBoard(session: BoardSessionInput): void {
-    this.resetConnectionRewardCombo();
+    this.resetConnectionRewardCombo(true);
     this.resetConnectionSoundComposition();
     this.cancelAutoClickSequence();
     this.cancelBoardEntrance();
@@ -351,6 +351,7 @@ export class BoardScene extends Phaser.Scene {
     this.view?.root.destroy(true);
     this.session = session;
     this.connection = this.createConnectionProgress(session);
+    this.renderLevelProgressEdge();
     this.isDrawing = false;
     this.drawingPointerId = undefined;
     this.drawingNativePointerId = undefined;
@@ -429,6 +430,7 @@ export class BoardScene extends Phaser.Scene {
     this.paused = false;
     this.locked = false;
     this.connection = this.createConnectionProgress(this.session);
+    this.renderLevelProgressEdge();
     this.session.onProgress(0, this.session.level.solutionPath.length);
     this.handleConnectionAction(this.connection.begin(0, true), false);
     for (let nextIndex = 1; nextIndex < this.session.level.solutionPath.length; nextIndex += 1) {
@@ -552,11 +554,12 @@ export class BoardScene extends Phaser.Scene {
     preferences: Pick<
       BoardSessionInput,
       'showNextNumber' | 'soundEnabled' | 'inputMode' | 'touchPreviewRingDepth' | 'boardZoomEnabled'
-      | 'inactiveNumberFillColor' | 'inactiveNumberTextColor'
+      | 'inactiveNumberFillColor' | 'inactiveNumberTextColor' | 'chargeProgressMode'
     >,
   ): void {
     if (!this.session) return;
     const boardZoomChanged = this.session.boardZoomEnabled !== preferences.boardZoomEnabled;
+    const chargeProgressModeChanged = this.session.chargeProgressMode !== preferences.chargeProgressMode;
     if (this.session.inputMode !== preferences.inputMode) {
       this.cancelAutoClickSequence();
       this.finishPointerInteraction();
@@ -566,10 +569,15 @@ export class BoardScene extends Phaser.Scene {
     this.session.showNextNumber = preferences.showNextNumber;
     this.session.soundEnabled = preferences.soundEnabled;
     this.session.inputMode = preferences.inputMode;
+    this.session.chargeProgressMode = preferences.chargeProgressMode;
     this.session.touchPreviewRingDepth = preferences.touchPreviewRingDepth;
     this.session.boardZoomEnabled = preferences.boardZoomEnabled;
     this.session.inactiveNumberFillColor = preferences.inactiveNumberFillColor;
     this.session.inactiveNumberTextColor = preferences.inactiveNumberTextColor;
+    if (chargeProgressModeChanged) {
+      this.resetConnectionRewardCombo(true);
+      this.renderLevelProgressEdge();
+    }
     if (boardZoomChanged) {
       this.boardViewportScroll = { x: 0.5, y: 0.5 };
       this.applyBoardViewport();
@@ -726,8 +734,9 @@ export class BoardScene extends Phaser.Scene {
     );
 
     this.session = session;
-    this.resetConnectionRewardCombo();
+    this.resetConnectionRewardCombo(true);
     this.connection = this.createConnectionProgress(session);
+    this.renderLevelProgressEdge();
     this.boardViewportScroll = { x: 0.5, y: 0.5 };
     this.isDrawing = false;
     this.drawingPointerId = undefined;
@@ -759,6 +768,56 @@ export class BoardScene extends Phaser.Scene {
     this.applyBoardViewport(newView);
     this.transitioning = false;
     this.locked = this.paused || this.connection?.complete === true;
+  }
+
+  public async fillChargeProgressScreen(): Promise<boolean> {
+    if (this.session?.chargeProgressMode !== 'progress') return false;
+    const edge = this.connectionComboEdge();
+    if (!edge) return false;
+    const session = this.session;
+    this.ensureConnectionComboLogoGrid(edge);
+    const fillDistance = Math.ceil(Math.min(edge.clientWidth, edge.clientHeight) * 0.5) + 1;
+    edge.style.setProperty('--connection-combo-screen-fill-distance', `${fillDistance}px`);
+    edge.classList.remove('is-screen-filling', 'is-screen-filled');
+    void edge.offsetWidth;
+    edge.classList.add('is-screen-filling');
+    if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 520));
+    }
+    if (this.session !== session) return false;
+    edge.classList.add('is-screen-filled');
+    return true;
+  }
+
+  public beginStageCompletionEdge(): boolean {
+    if (this.session?.chargeProgressMode !== 'progress') return false;
+    const edge = this.stageCompletionEdge();
+    if (!edge) return false;
+    edge.classList.remove('is-active', 'is-expanding', 'is-leaving');
+    void edge.offsetWidth;
+    edge.classList.add('is-active');
+    requestAnimationFrame(() => edge.classList.add('is-expanding'));
+    return true;
+  }
+
+  public async finishStageCompletionEdge(): Promise<void> {
+    const edge = this.stageCompletionEdge();
+    if (!edge?.classList.contains('is-active')) return;
+    edge.classList.remove('is-expanding');
+    edge.classList.add('is-leaving');
+    if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 680));
+    }
+    edge.classList.remove('is-active', 'is-leaving');
+  }
+
+  private ensureConnectionComboLogoGrid(edge: HTMLElement): void {
+    if (edge.querySelector('.connection-combo-logo-grid')) return;
+    const grid = document.createElement('div');
+    grid.className = 'connection-combo-logo-grid';
+    grid.setAttribute('aria-hidden', 'true');
+    grid.replaceChildren(...Array.from({ length: 162 }, () => document.createElement('i')));
+    edge.append(grid);
   }
 
   public async showCompletion({ revealImage = false }: { revealImage?: boolean } = {}): Promise<void> {
@@ -2425,6 +2484,7 @@ export class BoardScene extends Phaser.Scene {
         this.playConnectionBackdropPop(action.index);
         this.playNextConnectionSound();
       }
+      this.renderLevelProgressEdge(action.index);
       return;
     }
     if (!action.added) {
@@ -2456,9 +2516,10 @@ export class BoardScene extends Phaser.Scene {
       });
       this.playConnectionBackdropPop(action.index);
       completionWaitsForLanding = action.complete && feedbackStarted;
-      this.advanceConnectionRewardCombo();
+      if (this.session.chargeProgressMode === 'coins') this.advanceConnectionRewardCombo();
       this.playNextConnectionSound();
     }
+    this.renderLevelProgressEdge(action.index);
     this.session.onProgress(action.progress, this.session.level.solutionPath.length);
 
     if (action.complete) {
@@ -2819,8 +2880,54 @@ export class BoardScene extends Phaser.Scene {
     }
   }
 
-  private resetConnectionRewardCombo(): void {
+  private resetConnectionRewardCombo(forceClear = false): void {
+    if (!forceClear && this.session?.chargeProgressMode === 'progress') {
+      this.renderLevelProgressEdge();
+      return;
+    }
     this.connectionRewardComboCount = 0;
+    this.clearConnectionProgressEdgeVisual();
+  }
+
+  private renderLevelProgressEdge(index = this.connection?.activeIndex): void {
+    if (this.session?.chargeProgressMode !== 'progress') return;
+    const total = this.session.level.solutionPath.length;
+    const progress = total > 0 ? Math.min(1, (this.connection?.progress ?? 0) / total) : 0;
+    if (progress <= 0) {
+      this.clearConnectionProgressEdgeVisual();
+      return;
+    }
+    const edge = this.connectionComboEdge();
+    const pathCell = index === undefined ? undefined : this.session.level.solutionPath[index];
+    const cell = pathCell && this.view ? this.view.cells.get(cellKey(pathCell)) : undefined;
+    const ballColor = this.view
+      ? this.view.artworkEnabled && cell
+        ? cell.color
+        : this.view.ballColor
+      : 0x57d88b;
+    edge?.style.setProperty('--connection-combo-color', `#${ballColor.toString(16).padStart(6, '0')}`);
+    edge?.style.setProperty('--connection-combo-horizontal-length', `${Math.min(50, progress * 100)}%`);
+    edge?.style.setProperty('--connection-combo-vertical-length', `${Math.max(0, (progress - 0.5) * 100)}%`);
+    edge?.classList.add('is-active');
+  }
+
+  private clearConnectionProgressEdgeVisual(): void {
+    const edge = this.connectionComboEdge();
+    edge?.classList.remove('is-active', 'is-screen-filling', 'is-screen-filled');
+    edge?.style.setProperty('--connection-combo-horizontal-length', '0%');
+    edge?.style.setProperty('--connection-combo-vertical-length', '0%');
+  }
+
+  private connectionComboEdge(): HTMLElement | null {
+    return this.sys.game.canvas
+      .closest<HTMLElement>('.play-screen')
+      ?.querySelector<HTMLElement>('#connection-combo-edge') ?? null;
+  }
+
+  private stageCompletionEdge(): HTMLElement | null {
+    return this.sys.game.canvas
+      .closest<HTMLElement>('.play-screen')
+      ?.querySelector<HTMLElement>('#stage-completion-edge') ?? null;
   }
 
   private playNextConnectionSound(): void {
