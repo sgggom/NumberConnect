@@ -1,73 +1,22 @@
 import {
   BoardShape,
   DEFAULT_SETTINGS,
+  isComboSoundPattern,
+  isComboSoundArrangement,
+  isComboSoundSet,
   isInputMode,
+  isLobbyTheme,
   isMainGameplay,
   isMainGameplayDifficulty,
   isTouchPreviewSize,
-  isUiTheme,
   type GameSettings,
   type LevelData,
 } from './types';
 import { decodeCompactLevelCollection } from './levelDataFormat';
 
 const SETTINGS_KEY = 'number-connect.settings.v1';
-const LEVEL_COLLECTION_KEY = 'number-connect.level-collection.v5';
 
 const hasStorage = (): boolean => typeof window !== 'undefined' && 'localStorage' in window;
-
-const withDefaultAlgorithm = (level: LevelData): LevelData => {
-  if (level.algorithm?.id === 'algorithm-1' || level.algorithm?.id === 'algorithm-8') {
-    const parameters = level.algorithm.parameters ?? {};
-    return {
-      ...level,
-      algorithm: {
-        id: 'algorithm-1',
-        parameters: {
-          topology: 'board-shape',
-          pathMode: 'spatial-distribution-multiple-solutions',
-          targetCrossings: level.boardShape === BoardShape.Hex
-            ? 0
-            : Number.isFinite(Number(parameters.targetCrossings))
-            ? Math.max(0, Math.min(99, Math.floor(Number(parameters.targetCrossings))))
-            : 20,
-          turnProbability: Number.isFinite(Number(parameters.turnProbability))
-            ? Math.max(0, Math.min(100, Math.floor(Number(parameters.turnProbability))))
-            : 40,
-          hiddenPercent: Number.isFinite(Number(parameters.hiddenPercent))
-            ? Math.max(0, Math.min(100, Math.floor(Number(parameters.hiddenPercent))))
-            : 35,
-          targetDifficulty: Number.isFinite(Number(parameters.targetDifficulty))
-            ? Math.max(1, Math.min(10, Math.floor(Number(parameters.targetDifficulty))))
-            : 6,
-          maxVisibleRun: Number.isFinite(Number(parameters.maxVisibleRun))
-            ? Math.max(1, Math.min(99, Math.floor(Number(parameters.maxVisibleRun))))
-            : 8,
-          maxHiddenRun: Number.isFinite(Number(parameters.maxHiddenRun))
-            ? Math.max(1, Math.min(99, Math.floor(Number(parameters.maxHiddenRun))))
-            : 4,
-        },
-      },
-    };
-  }
-  if (level.algorithm) return level;
-  return {
-      ...level,
-      algorithm: {
-        id: 'algorithm-1',
-        parameters: {
-          topology: 'board-shape',
-          pathMode: 'spatial-distribution-multiple-solutions',
-          targetCrossings: level.boardShape === BoardShape.Hex ? 0 : 20,
-          turnProbability: 40,
-          hiddenPercent: 35,
-          targetDifficulty: 6,
-          maxVisibleRun: 8,
-          maxHiddenRun: 4,
-        },
-      },
-    };
-};
 
 export const loadSettings = (): GameSettings => {
   if (!hasStorage()) return { ...DEFAULT_SETTINGS };
@@ -79,7 +28,12 @@ export const loadSettings = (): GameSettings => {
         selectedLevelId?: number;
       }
     );
-    const { touchPreviewEnabled, touchPreviewDefaultOffMigrated, ...currentSettings } = stored;
+    const {
+      touchPreviewEnabled,
+      touchPreviewDefaultOffMigrated,
+      uiTheme: _legacyUiTheme,
+      ...currentSettings
+    } = stored as typeof stored & { uiTheme?: unknown };
     let touchPreviewSize = isTouchPreviewSize(stored.touchPreviewSize)
       ? stored.touchPreviewSize
       : touchPreviewEnabled === false
@@ -95,7 +49,6 @@ export const loadSettings = (): GameSettings => {
         }));
       }
     }
-    const uiTheme = isUiTheme(stored.uiTheme) ? stored.uiTheme : DEFAULT_SETTINGS.uiTheme;
     const inputMode = isInputMode(stored.inputMode) ? stored.inputMode : DEFAULT_SETTINGS.inputMode;
     const mainGameplay = isMainGameplay(stored.mainGameplay)
       ? stored.mainGameplay
@@ -121,18 +74,40 @@ export const loadSettings = (): GameSettings => {
     const mode5MainLevelId = Number.isInteger(stored.mode5MainLevelId) && Number(stored.mode5MainLevelId) > 0
       ? Number(stored.mode5MainLevelId)
       : legacyLevelId;
+    const storedComboPatterns = Array.isArray(stored.comboSoundPatterns)
+      ? stored.comboSoundPatterns.filter(isComboSoundPattern).slice(0, 32)
+      : [];
+    const legacyComboPattern = isComboSoundPattern(stored.comboSoundPattern)
+      ? stored.comboSoundPattern
+      : DEFAULT_SETTINGS.comboSoundPattern;
+    const comboSoundPatterns = storedComboPatterns.length > 0
+      ? storedComboPatterns
+      : [legacyComboPattern];
+    const comboSoundPatternIndex = Number.isInteger(stored.comboSoundPatternIndex)
+      ? Math.max(0, Math.min(comboSoundPatterns.length - 1, Number(stored.comboSoundPatternIndex)))
+      : Math.max(0, comboSoundPatterns.indexOf(legacyComboPattern));
+    const comboSoundArrangement = isComboSoundArrangement(stored.comboSoundArrangement, comboSoundPatterns.length)
+      ? stored.comboSoundArrangement
+      : DEFAULT_SETTINGS.comboSoundArrangement;
     return {
       ...DEFAULT_SETTINGS,
       ...currentSettings,
       inputMode,
+      comboSoundSet: isComboSoundSet(stored.comboSoundSet)
+        ? stored.comboSoundSet
+        : DEFAULT_SETTINGS.comboSoundSet,
+      comboSoundPattern: comboSoundPatterns[comboSoundPatternIndex],
+      comboSoundPatterns,
+      comboSoundPatternIndex,
+      comboSoundArrangement,
       mainGameplay,
       mainGameplayDifficulty,
+      lobbyTheme: isLobbyTheme(stored.lobbyTheme) ? stored.lobbyTheme : DEFAULT_SETTINGS.lobbyTheme,
       beadMainLevelId,
       puzzleMainLevelId,
       mode3MainLevelId,
       mode4MainLevelId,
       mode5MainLevelId,
-      uiTheme,
       touchPreviewSize,
       showDifficultyScore: stored.showDifficultyScore === true,
       shape: BoardShape.Level,
@@ -154,53 +129,9 @@ export const saveSettings = (settings: GameSettings): void => {
   if (hasStorage()) window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
 };
 
-const parseLevelArray = (value: string | null): LevelData[] => {
-  try {
-    const parsed = JSON.parse(value ?? '[]') as unknown;
-    return Array.isArray(parsed) ? parsed.filter((level): level is LevelData => (
-      Boolean(level)
-      && typeof level === 'object'
-      && Number.isFinite(Number((level as LevelData).levelId))
-      && Array.isArray((level as LevelData).activeCells)
-      && Array.isArray((level as LevelData).solutionPath)
-    )).map(withDefaultAlgorithm) : [];
-  } catch {
-    return [];
-  }
-};
-
-export const loadEditorLevelCollection = (): LevelData[] => {
-  if (!hasStorage()) return [];
-  const storedValue = window.localStorage.getItem(LEVEL_COLLECTION_KEY);
-  return storedValue === null
-    ? []
-    : parseLevelArray(storedValue)
-      .filter((level) => level.custom === true)
-      .sort((left, right) => left.levelId - right.levelId);
-};
-
-export const loadLevelCollection = (bundledLevels: LevelData[]): LevelData[] => {
-  const customLevels = loadEditorLevelCollection();
-  if (customLevels.length > 0) {
-    const customByLevelId = new Map(customLevels.map((level) => [level.levelId, level]));
-    const bundledLevelIds = new Set(bundledLevels.map((level) => level.levelId));
-    return [
-      ...bundledLevels.map((level) => ({
-        ...(customByLevelId.get(level.levelId) ?? level),
-      })),
-      ...customLevels.filter((level) => !bundledLevelIds.has(level.levelId)),
-    ].sort((left, right) => left.levelId - right.levelId);
-  }
-  return bundledLevels.map((level) => ({ ...level }));
-};
-
-export const saveLevelCollection = (levels: LevelData[]): void => {
-  const normalized = [...levels]
-    .filter((level) => level.custom === true)
-    .sort((left, right) => left.levelId - right.levelId)
-    .map((level) => ({ ...level }));
-  if (hasStorage()) window.localStorage.setItem(LEVEL_COLLECTION_KEY, JSON.stringify(normalized));
-};
+export const loadLevelCollection = (bundledLevels: LevelData[]): LevelData[] => (
+  bundledLevels.map((level) => ({ ...level }))
+);
 
 const loadBundledLevels = async (
   resourcePath: string,
@@ -238,10 +169,3 @@ export const loadMode3Levels = (): Promise<LevelData[]> => (
 export const loadMode5Levels = (): Promise<LevelData[]> => (
   loadBundledLevels('./levels/mode5-levels.json', 'algorithm-1')
 );
-
-export const getNextLevelId = (levels: LevelData[]): number => {
-  const used = new Set(levels.map((level) => level.levelId));
-  let id = 1;
-  while (used.has(id)) id += 1;
-  return id;
-};

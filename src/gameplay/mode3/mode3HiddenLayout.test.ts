@@ -8,7 +8,7 @@ import {
   createMode3HiddenCells,
   createMode4HiddenCells,
   mode3EffectiveHiddenPercent,
-  mode3EditorShape,
+  mode3PathShape,
   mode4EffectiveHiddenPercent,
   mode4RandomHiddenSeed,
   resolveMode4DifficultyConfig,
@@ -84,11 +84,11 @@ describe('玩法3算法1隐藏布局', () => {
   });
 
   it('把棋盘类型映射到算法1空间拓扑', () => {
-    expect(mode3EditorShape(BoardShape.Square)).toBe('square');
-    expect(mode3EditorShape(BoardShape.Level)).toBe('square');
-    expect(mode3EditorShape(BoardShape.Diamond)).toBe('diamond');
-    expect(mode3EditorShape(BoardShape.Rectangle)).toBe('rectangle');
-    expect(mode3EditorShape(BoardShape.Hex)).toBe('hex');
+    expect(mode3PathShape(BoardShape.Square)).toBe('square');
+    expect(mode3PathShape(BoardShape.Level)).toBe('square');
+    expect(mode3PathShape(BoardShape.Diamond)).toBe('diamond');
+    expect(mode3PathShape(BoardShape.Rectangle)).toBe('rectangle');
+    expect(mode3PathShape(BoardShape.Hex)).toBe('hex');
   });
 
   it('全部玩法3关卡均可生成，并始终显示起点和终点', () => {

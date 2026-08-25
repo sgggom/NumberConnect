@@ -1,6 +1,6 @@
 import { BoardShape, cellKey, type LevelData } from '../../game/types';
-import { selectAlgorithm1HiddenLayout } from '../editor/algorithms/algorithm1';
-import type { EditorShape } from '../editor/types';
+import { selectAlgorithm1HiddenLayout } from '../../game/algorithm1HiddenLayout';
+import type { BoardPathShape } from '../../game/pathGenerationTypes';
 
 export interface Mode5HiddenLayoutConfig {
   hiddenPercentRange: readonly [minimum: number, maximum: number];
@@ -43,7 +43,7 @@ export const mode5Algorithm1Seed = (level: LevelData, difficulty: number): numbe
 /** @deprecated 使用 mode5Algorithm1Seed；保留旧导出以兼容现有调用。 */
 export const mode5RandomHiddenSeed = (level: LevelData): number => mode5Algorithm1Seed(level, 1);
 
-const mode5EditorShape = (shape: BoardShape): EditorShape => {
+const mode5PathShape = (shape: BoardShape): BoardPathShape => {
   if (shape === BoardShape.Hex) return 'hex';
   if (shape === BoardShape.Diamond) return 'diamond';
   if (shape === BoardShape.Rectangle) return 'rectangle';
@@ -84,7 +84,7 @@ export const createMode5HiddenCells = (
   const hiddenPercent = mode5HiddenPercentForLevel(level, config.hiddenPercentRange);
   const hiddenIndices = selectAlgorithm1HiddenLayout(
     level.solutionPath,
-    mode5EditorShape(level.boardShape),
+    mode5PathShape(level.boardShape),
     hiddenPercent,
     normalizedDifficulty,
     mode5Algorithm1Seed(level, normalizedDifficulty),

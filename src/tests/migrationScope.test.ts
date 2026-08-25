@@ -1,14 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import indexMarkup from '../../index.html?raw';
-import { EDITOR_ALGORITHMS } from '../gameplay/editor/algorithms/registry';
 
 describe('migrated product scope', () => {
-  it('exposes puzzle as the only selectable main gameplay', () => {
+  it('does not expose main gameplay selection in settings', () => {
     const values = [...indexMarkup.matchAll(/name="main-gameplay" value="([^"]+)"/g)]
       .map((match) => match[1]);
 
-    expect(values).toEqual(['puzzle']);
-    expect(indexMarkup).toContain('value="puzzle" checked');
+    expect(values).toEqual([]);
+    expect(indexMarkup).not.toContain('id="settings-main-gameplay"');
   });
 
   it('keeps daily challenge, bead gameplay, and gallery as standalone lobby destinations', () => {
@@ -23,15 +22,33 @@ describe('migrated product scope', () => {
     expect(indexMarkup).not.toContain('id="primary-tab-bar"');
   });
 
-  it('exposes the current generator as algorithm 1', () => {
-    expect(EDITOR_ALGORITHMS.map(({ id }) => id)).toEqual(['algorithm-1']);
-    expect(indexMarkup).toContain('id="default-editor-button"');
+  it('does not expose internal level-authoring tools', () => {
+    expect(indexMarkup).not.toContain('id="lobby-tools-dialog"');
+    expect(indexMarkup).not.toContain('id="editor-screen"');
+    expect(indexMarkup).not.toContain('id="arranger-screen"');
   });
 
-  it('opens level tools from the lobby logo and exposes both destinations', () => {
-    expect(indexMarkup).toContain('id="lobby-tools-dialog"');
-    expect(indexMarkup).toContain('id="lobby-open-editor-button"');
-    expect(indexMarkup).toContain('id="lobby-open-arranger-button"');
-    expect(indexMarkup).toContain('id="arranger-screen"');
+  it('offers cool and warm lobby artwork themes without restoring the removed night theme', () => {
+    expect(indexMarkup).not.toContain('value="night"');
+    expect(indexMarkup).toContain('id="lobby-theme"');
+    expect(indexMarkup).toContain('name="lobby-theme" value="cool"');
+    expect(indexMarkup).toContain('name="lobby-theme" value="warm"');
+    expect(indexMarkup).not.toContain('lobby-theme-panel--night');
+  });
+
+  it('uses the supplied gameplay HUD resources', () => {
+    expect(indexMarkup).toContain('id="play-back-button"');
+    expect(indexMarkup).toContain('set-2/fanhui.png');
+    expect(indexMarkup).toContain('set-2/icon_tishi.png');
+    expect(indexMarkup).toContain('set-2/icon_fanwei.png');
+    expect(indexMarkup).toContain('id="play-progress-start"');
+    expect(indexMarkup).toContain('id="play-progress-end"');
+    expect(indexMarkup).not.toContain('id="undo-step-button"');
+  });
+
+  it('includes the puzzle finale result summary', () => {
+    expect(indexMarkup).toContain('class="play-puzzle-finale__mask"');
+    expect(indexMarkup).toContain('id="play-puzzle-finale-time"');
+    expect(indexMarkup).toContain('id="play-puzzle-finale-reward-progress"');
   });
 });

@@ -1,6 +1,6 @@
 import { BoardShape, cellKey, type EndlessStageSettings, type LevelData } from '../../game/types';
 import { selectHiddenCells } from '../../game/hidden';
-import { generateVariedPath } from '../editor/algorithms/generateVariedPath';
+import { generateVariedPath } from '../../game/generateVariedPath';
 
 const GENERATION_ATTEMPTS = 3;
 // Keep hidden runs short enough for readable live stage transitions.

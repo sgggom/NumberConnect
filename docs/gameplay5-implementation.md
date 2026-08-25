@@ -24,7 +24,6 @@
 | 算法1选点入口 | `src/gameplay/mode5/mode5HiddenLayout.ts` |
 | 动态难度公式和状态 | `src/gameplay/mode5/dynamicDifficulty.ts` |
 | 大关/小阶段映射 | `src/gameplay/mode5/mode5Campaign.ts` |
-| 编辑器初始关卡列表 | 同样读取 `excel/关卡表.xlsx`，旧本地列表通过存储版本升级清除 |
 | 动态存档键 | `number-connect.mode5-dynamic-difficulty.v1` |
 | 运行时路由 | `src/main.ts` |
 

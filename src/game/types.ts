@@ -9,11 +9,14 @@ export enum BoardShape {
 export const TOUCH_PREVIEW_SIZES = ['off', 'small', 'medium', 'large', 'zoom'] as const;
 export type TouchPreviewSize = typeof TOUCH_PREVIEW_SIZES[number];
 
-export const UI_THEMES = ['default', 'night'] as const;
-export type UiTheme = typeof UI_THEMES[number];
+export const LOBBY_THEMES = ['cool', 'warm'] as const;
+export type LobbyTheme = typeof LOBBY_THEMES[number];
 
 export const INPUT_MODES = ['drag', 'click', 'auto-click'] as const;
 export type InputMode = typeof INPUT_MODES[number];
+
+export const COMBO_SOUND_SETS = ['combo1', 'combo2'] as const;
+export type ComboSoundSet = typeof COMBO_SOUND_SETS[number];
 
 export const MAIN_GAMEPLAYS = ['beads', 'puzzle', 'mode3', 'mode4', 'mode5'] as const;
 export type MainGameplay = typeof MAIN_GAMEPLAYS[number];
@@ -25,13 +28,105 @@ export const isTouchPreviewSize = (value: unknown): value is TouchPreviewSize =>
   typeof value === 'string' && (TOUCH_PREVIEW_SIZES as readonly string[]).includes(value)
 );
 
-export const isUiTheme = (value: unknown): value is UiTheme => (
-  typeof value === 'string' && (UI_THEMES as readonly string[]).includes(value)
+export const isLobbyTheme = (value: unknown): value is LobbyTheme => (
+  typeof value === 'string' && (LOBBY_THEMES as readonly string[]).includes(value)
 );
 
 export const isInputMode = (value: unknown): value is InputMode => (
   typeof value === 'string' && (INPUT_MODES as readonly string[]).includes(value)
 );
+
+export const isComboSoundSet = (value: unknown): value is ComboSoundSet => (
+  typeof value === 'string' && (COMBO_SOUND_SETS as readonly string[]).includes(value)
+);
+
+export type ComboSoundPatternToken = readonly number[];
+
+export const parseComboSoundPattern = (value: unknown): ComboSoundPatternToken[] | undefined => {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 64) return undefined;
+  const tokens: ComboSoundPatternToken[] = [];
+  for (let index = 0; index < value.length;) {
+    const character = value[index];
+    if (/^[1-8]$/.test(character)) {
+      tokens.push([Number(character)]);
+      index += 1;
+      continue;
+    }
+    if (character !== '[') return undefined;
+    const closeIndex = value.indexOf(']', index + 1);
+    if (closeIndex < 0) return undefined;
+    const choices = value.slice(index + 1, closeIndex);
+    if (choices.length === 0 || !/^[1-8]+$/.test(choices)) return undefined;
+    tokens.push([...choices].map(Number));
+    index = closeIndex + 1;
+  }
+  return tokens.length > 0 ? tokens : undefined;
+};
+
+export const isComboSoundPattern = (value: unknown): value is string => (
+  parseComboSoundPattern(value) !== undefined
+);
+
+export const comboSoundBracketGroupRange = (
+  value: string,
+  bracketIndex: number,
+): { start: number; end: number } | undefined => {
+  if (value[bracketIndex] === '[') {
+    const closeIndex = value.indexOf(']', bracketIndex + 1);
+    return closeIndex >= 0 ? { start: bracketIndex, end: closeIndex + 1 } : undefined;
+  }
+  if (value[bracketIndex] === ']') {
+    const openIndex = value.lastIndexOf('[', bracketIndex - 1);
+    return openIndex >= 0 ? { start: openIndex, end: bracketIndex + 1 } : undefined;
+  }
+  return undefined;
+};
+
+export const parseComboSoundArrangement = (value: unknown): ComboSoundPatternToken[] | undefined => {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 128) return undefined;
+  const tokens: ComboSoundPatternToken[] = [];
+  for (let index = 0; index < value.length;) {
+    if (value[index] === '[') {
+      const closeIndex = value.indexOf(']', index + 1);
+      if (closeIndex < 0) return undefined;
+      const choices = value.slice(index + 1, closeIndex);
+      if (!/^[1-9]\d*(,[1-9]\d*)*$/.test(choices)) return undefined;
+      tokens.push(choices.split(',').map(Number));
+      index = closeIndex + 1;
+    } else {
+      const match = value.slice(index).match(/^[1-9]\d*/);
+      if (!match) return undefined;
+      tokens.push([Number(match[0])]);
+      index += match[0].length;
+    }
+    if (index === value.length) break;
+    if (value[index] !== ',' || index === value.length - 1) return undefined;
+    index += 1;
+  }
+  return tokens.length > 0 ? tokens : undefined;
+};
+
+export const isComboSoundArrangement = (value: unknown, melodyCount: number): value is string => {
+  const tokens = parseComboSoundArrangement(value);
+  return tokens !== undefined && tokens.every((choices) => (
+    choices.every((melodyNumber) => melodyNumber >= 1 && melodyNumber <= melodyCount)
+  ));
+};
+
+export const remapComboSoundArrangementAfterRemoval = (
+  value: string,
+  removedMelodyNumber: number,
+): string => {
+  const tokens = parseComboSoundArrangement(value) ?? [[1]];
+  const remapped = tokens.flatMap((choices) => {
+    const nextChoices = choices
+      .filter((number) => number !== removedMelodyNumber)
+      .map((number) => number > removedMelodyNumber ? number - 1 : number);
+    if (nextChoices.length === 0) return [];
+    return [nextChoices.length === 1 ? String(nextChoices[0]) : `[${nextChoices.join(',')}]`];
+  });
+  return remapped.length > 0 ? remapped.join(',') : '1';
+};
 
 export const isMainGameplay = (value: unknown): value is MainGameplay => (
   typeof value === 'string' && (MAIN_GAMEPLAYS as readonly string[]).includes(value)
@@ -94,8 +189,13 @@ export interface GameSettings {
   showNextNumber: boolean;
   showDifficultyScore: boolean;
   soundEnabled: boolean;
+  comboSoundSet: ComboSoundSet;
+  comboSoundPattern: string;
+  comboSoundPatterns: string[];
+  comboSoundPatternIndex: number;
+  comboSoundArrangement: string;
+  lobbyTheme: LobbyTheme;
   inputMode: InputMode;
-  uiTheme: UiTheme;
   touchPreviewSize: TouchPreviewSize;
   touchPreviewFollowsPointer: boolean;
 }
@@ -185,6 +285,8 @@ export interface BoardSessionInput {
   inputMode: InputMode;
   touchPreviewRingDepth: 1 | 2;
   boardZoomEnabled: boolean;
+  inactiveNumberFillColor: number;
+  inactiveNumberTextColor: string;
   mode: GameMode;
   onProgress: (current: number, total: number) => void;
   onWrong: (message: string, shouldLoseLife: boolean) => void;
@@ -222,8 +324,13 @@ export const DEFAULT_SETTINGS: GameSettings = {
   showNextNumber: true,
   showDifficultyScore: false,
   soundEnabled: true,
+  comboSoundSet: 'combo1',
+  comboSoundPattern: '12345678',
+  comboSoundPatterns: ['12345678'],
+  comboSoundPatternIndex: 0,
+  comboSoundArrangement: '1',
+  lobbyTheme: 'cool',
   inputMode: 'drag',
-  uiTheme: 'default',
   touchPreviewSize: 'off',
   touchPreviewFollowsPointer: false,
 };

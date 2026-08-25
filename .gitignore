@@ -4,4 +4,3 @@ output/
 .playwright-cli/
 *.tsbuildinfo
 .DS_Store
-
