@@ -13,4 +13,5 @@ export interface GameEventMap {
   'level.wrong-move': LevelEventContext & { current: number; message: string };
   'level.completed': LevelEventContext & { total: number };
   'video.rewarded': { placement: VideoPlacement; stage?: number };
+  'editor.level-saved': { levelId: number; cells: number };
 }

@@ -1,6 +1,6 @@
 import { query } from './dom';
 
-export type ScreenName = 'lobby' | 'play' | 'bead' | 'collection' | 'daily' | 'endless' | 'favorites';
+export type ScreenName = 'lobby' | 'play' | 'editor' | 'arranger' | 'bead' | 'collection' | 'daily' | 'endless' | 'favorites';
 type PrimaryTab = 'lobby' | 'challenge' | 'endless' | 'favorites';
 
 const PRIMARY_TAB_ORDER: readonly PrimaryTab[] = ['lobby', 'challenge', 'endless', 'favorites'];
@@ -18,6 +18,8 @@ export class ScreenRouter {
   private readonly screens: Record<ScreenName, HTMLElement> = {
     lobby: query<HTMLElement>('#lobby-screen'),
     play: query<HTMLElement>('#play-screen'),
+    editor: query<HTMLElement>('#editor-screen'),
+    arranger: query<HTMLElement>('#arranger-screen'),
     bead: query<HTMLElement>('#bead-screen'),
     collection: query<HTMLElement>('#collection-screen'),
     daily: query<HTMLElement>('#daily-screen'),
@@ -41,6 +43,7 @@ export class ScreenRouter {
 
     this.cancelTabTransition();
     this.currentScreen = name;
+    this.appShell.classList.toggle('is-editor-fullscreen', name === 'editor' || name === 'arranger');
     if (activeTab !== undefined) this.appShell.dataset.primaryTab = activeTab;
     if (shouldAnimateTabChange) {
       this.animatePrimaryTabChange(previousScreenName, name, previousTab, activeTab);

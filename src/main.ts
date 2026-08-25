@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import './styles.css';
 import type { GameEventMap } from './app/GameEvents';
+import { startLobbyAmbientNetwork } from './app/LobbyAmbientNetwork';
 import { ScreenRouter, type ScreenName } from './app/ScreenRouter';
 import { query } from './app/dom';
 import { EventBus } from './core/events/EventBus';
@@ -11,6 +12,7 @@ import {
   daysInMonth,
   formatDailyDateKey,
   isDailyDateKey,
+  mondayFirstOffset,
   parseDailyDateKey,
 } from './game/dailyChallenge';
 import { getEndlessStageSettings } from './game/difficulty';
@@ -24,36 +26,39 @@ import {
   type PowerUpId,
 } from './game/powerUps';
 import {
+  getNextLevelId,
+  loadEditorLevelCollection,
   loadBeadLevels,
   loadLevelCollection,
   loadMode3Levels,
   loadSettings,
+  saveLevelCollection,
   saveSettings,
 } from './game/storage';
 import {
   BoardShape,
   cellKey,
-  comboSoundBracketGroupRange,
+  isInputMode,
   isChargeProgressMode,
-  isComboSoundArrangement,
-  isComboSoundPattern,
-  isLobbyTheme,
+  isMainGameplay,
+  isMainGameplayDifficulty,
   isTouchPreviewSize,
-  remapComboSoundArrangementAfterRemoval,
+  isUiTheme,
   usesClickInput,
   type BoardNeighborhoodPreview,
   type BoardHoldScore,
   type BoardSessionInput,
   type ChargeProgressMode,
   type Cell,
-  type ComboSoundSet,
   type EndlessStageSettings,
   type GameMode,
   type GameSettings,
+  type InputMode,
   type LevelData,
-  type LobbyTheme,
   type MainGameplay,
+  type MainGameplayDifficulty,
   type TouchPreviewSize,
+  type UiTheme,
 } from './game/types';
 import {
   createVideoView,
@@ -63,6 +68,8 @@ import {
   videoPlacementLabel,
   type VideoViewRecord,
 } from './game/videoStats';
+import { LevelEditorController } from './gameplay/editor';
+import { LevelArrangementController } from './gameplay/arranger';
 import {
   advanceBeadProgress,
   advanceBeadSequence,
@@ -169,19 +176,15 @@ const COLLECTION_MIN_LEVELS = 7;
 const COLLECTION_PROGRESS_KEY = 'number-connect.collection-route.v1';
 const DAILY_COMPLETION_KEY = 'number-connect.daily-completed.v1';
 const ENDLESS_RUN_KEY = 'number-connect.endless-run.v1';
-const FIRST_LEVEL_RATING_PROMPT_KEY = 'number-connect.first-level-rating-prompt.v1';
-const RATING_VALUE_KEY = 'number-connect.rating-value.v1';
 const NORMAL_LIFE_LIMIT = 3;
-const SOUND_DEBUG_COMBO_SETS: ReadonlyArray<{
-  id: ComboSoundSet;
-  label: string;
-  badge: string;
-  filePrefix: string;
-  tone: string;
-}> = [
-  { id: 'combo1', label: 'Combo 1', badge: 'Original', filePrefix: 'combo_', tone: 'blue' },
-  { id: 'combo2', label: 'Combo 2', badge: 'New', filePrefix: 'combo2_', tone: 'purple' },
-] as const;
+
+const applyUiTheme = (theme: UiTheme): void => {
+  document.documentElement.dataset.theme = theme;
+  document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.setAttribute(
+    'content',
+    theme === 'default' ? '#fff4e3' : '#111823',
+  );
+};
 
 const loadCollectionCompletedCount = (): number => {
   try {
@@ -297,8 +300,8 @@ const roundedRoutePath = (points: RoutePoint[], radius = 20): string => {
   return `${path} L ${last.x} ${last.y}`;
 };
 
-type ResultContext = 'normal' | 'collection' | 'daily' | 'endless-stage' | 'life-depleted';
-type PlayContext = 'normal' | 'collection' | 'daily' | 'bead';
+type ResultContext = 'normal' | 'collection' | 'daily' | 'endless-stage' | 'life-depleted' | 'editor-playtest';
+type PlayContext = 'normal' | 'collection' | 'daily' | 'editor-playtest' | 'bead';
 type AdaptiveMainGameplay = Extract<MainGameplay, 'mode3' | 'mode4' | 'mode5'>;
 
 const isAdaptiveMainGameplay = (gameplay: MainGameplay): gameplay is AdaptiveMainGameplay => (
@@ -374,19 +377,16 @@ class NumberConnectApp {
   private readonly playScreen = query<HTMLElement>('#play-screen');
   private readonly playCoinFrame = query<HTMLElement>('#play-coin-frame');
   private readonly playCoinCount = query<HTMLElement>('#play-coin-count');
-  private readonly lobbyCoinCount = query<HTMLElement>('#lobby-coin-count');
+  private readonly comboCoinRewardLayer = query<HTMLElement>('#combo-coin-reward-layer');
   private readonly gameHost = query<HTMLElement>('#game-host');
   private readonly playBeadShowcaseArt = query<HTMLElement>('#play-bead-showcase-art');
   private readonly playPuzzleShowcaseArt = query<HTMLElement>('#play-puzzle-showcase-art');
   private readonly playPuzzleRotationHandle = query<HTMLElement>('#play-puzzle-rotation-handle');
   private readonly playPuzzleProgressBar = query<HTMLElement>('#play-puzzle-progress');
   private readonly playPuzzleProgressFill = query<HTMLElement>('#play-puzzle-progress-fill');
-  private readonly playPuzzleProgressCurrent = query<HTMLElement>('#play-progress-current');
   private readonly playPuzzleFinale = query<HTMLElement>('#play-puzzle-finale');
   private readonly playPuzzleFinaleArt = query<HTMLElement>('#play-puzzle-finale-art');
   private readonly playPuzzleFinaleButton = query<HTMLButtonElement>('#play-puzzle-finale-button');
-  private readonly playPuzzleFinaleTime = query<HTMLElement>('#play-puzzle-finale-time');
-  private readonly playPuzzleFinaleRewardProgress = query<HTMLElement>('#play-puzzle-finale-reward-progress');
   private readonly playLevelButton = query<HTMLButtonElement>('#play-level-button');
   private readonly levelLabel = query<HTMLElement>('#play-level-label');
   private readonly holdScoreFormula = query<HTMLElement>('#hold-score-formula');
@@ -404,6 +404,7 @@ class NumberConnectApp {
   private readonly dailyPlayProgressCurrent = query<HTMLElement>('#daily-play-progress-current');
   private readonly dailyPlayProgressEnd = query<HTMLElement>('#daily-play-progress-end');
   private readonly powerUpStatus = query<HTMLElement>('#power-up-status');
+  private readonly undoStepButton = query<HTMLButtonElement>('#undo-step-button');
   private readonly watercolorBrushButton = query<HTMLButtonElement>('#watercolor-brush-button');
   private readonly paintBucketButton = query<HTMLButtonElement>('#paint-bucket-button');
   private readonly solutionToggle = query<HTMLInputElement>('#solution-toggle');
@@ -415,6 +416,12 @@ class NumberConnectApp {
   private readonly touchPreviewPointerLine = query<SVGLineElement>('#touch-preview-pointer-line');
   private readonly touchPreviewViewport = query<HTMLElement>('#touch-preview-viewport');
   private readonly touchPreviewSizeControl = query<HTMLElement>('#touch-preview-size');
+  private readonly inputModeControl = query<HTMLElement>('#settings-input-mode');
+  private readonly chargeProgressModeControl = query<HTMLElement>('#settings-charge-progress-mode');
+  private readonly mainGameplayControl = query<HTMLElement>('#settings-main-gameplay');
+  private readonly mainGameplayDifficultyRow = query<HTMLElement>('#settings-main-difficulty-row');
+  private readonly mainGameplayDifficultyControl = query<HTMLSelectElement>('#settings-main-difficulty');
+  private readonly uiThemeControl = query<HTMLElement>('#settings-theme');
   private readonly resultOverlay = query<HTMLElement>('#result-overlay');
   private readonly resultTitle = query<HTMLElement>('#result-title');
   private readonly resultMessage = query<HTMLElement>('#result-message');
@@ -427,19 +434,8 @@ class NumberConnectApp {
   private readonly levelPickerGrid = query<HTMLElement>('#level-picker-grid');
   private readonly settingsDialog = query<HTMLDialogElement>('#settings-dialog');
   private readonly settingsRestartButton = query<HTMLButtonElement>('#settings-restart-button');
-  private readonly soundDebugPanel = query<HTMLElement>('#sound-debug-panel');
-  private readonly soundDebugToggle = query<HTMLButtonElement>('#sound-debug-toggle');
-  private readonly soundDebugComboSet = query<HTMLSelectElement>('#sound-debug-combo-set');
-  private readonly soundDebugComboGroup = query<HTMLElement>('#sound-debug-combo-group');
-  private readonly soundDebugComboBadge = query<HTMLElement>('#sound-debug-combo-badge');
-  private readonly soundDebugPatternList = query<HTMLElement>('#sound-debug-pattern-list');
-  private readonly soundDebugPatternAdd = query<HTMLButtonElement>('#sound-debug-pattern-add');
-  private readonly soundDebugArrangement = query<HTMLInputElement>('#sound-debug-arrangement');
-  private readonly soundDebugArrangementBrackets = query<HTMLButtonElement>('#sound-debug-arrangement-brackets');
-  private readonly chargeProgressModeControl = query<HTMLElement>('#settings-charge-progress-mode');
-  private readonly ratingDialog = query<HTMLDialogElement>('#rating-dialog');
-  private readonly ratingSubmitButton = query<HTMLButtonElement>('#rating-submit-button');
   private readonly videoStatsDialog = query<HTMLDialogElement>('#video-stats-dialog');
+  private readonly lobbyToolsDialog = query<HTMLDialogElement>('#lobby-tools-dialog');
   private readonly videoStatsCount = query<HTMLElement>('#video-stats-count');
   private readonly videoStatsTotal = query<HTMLElement>('#video-stats-total');
   private readonly videoStatsEmpty = query<HTMLElement>('#video-stats-empty');
@@ -501,20 +497,23 @@ class NumberConnectApp {
   private mode5Levels: LevelData[] = [];
   private mode5Campaign: Mode5CampaignLevel[] = [];
   private levels: LevelData[] = [];
+  private editorLevels: LevelData[] = [];
   private settings: GameSettings = { ...loadSettings(), mainGameplay: 'puzzle' };
   private activeMainGameplay: MainGameplay = this.settings.mainGameplay;
   private mode: GameMode = 'normal';
   private stage = initialEndlessRunState.stage;
   private lives = 3;
   private coinBalance = loadCoinBalance();
+  private coinRewardCleanupTimer?: number;
+  private coinRewardAnimationFrame?: number;
+  private editorPlaytestErrorCount = 0;
+  private editorPlaytestReturnScreen: 'editor' | 'arranger' = 'editor';
   private mode3DifficultyState = loadDynamicDifficultyState();
   private mode4DifficultyState = loadMode4DynamicDifficultyState();
   private mode5DifficultyState = loadMode5DynamicDifficultyState();
   private currentAdaptiveDifficulty = this.mode3DifficultyState.currentDifficulty;
   private currentAdaptiveUsesDynamicDifficulty = true;
   private currentAdaptiveAttemptErrors = 0;
-  private currentBoardStartedAt = Date.now();
-  private currentBoardMistakes = 0;
   private currentAdaptiveAttemptRecorded = true;
   private currentAdaptiveAttemptEligible = false;
   private currentAdaptiveLifeDepleted = false;
@@ -529,7 +528,6 @@ class NumberConnectApp {
   private currentProgress = 0;
   private currentTotal = 0;
   private settingsContext: 'lobby' | 'play' = 'lobby';
-  private soundDebugAudio?: HTMLAudioElement;
   private resultContext: ResultContext = 'normal';
   private resultActionBusy = false;
   private solutionRevealed = false;
@@ -561,8 +559,9 @@ class NumberConnectApp {
     startValue: number;
   };
   private playPuzzleFinaleBusy = false;
-  private selectedRating = 0;
   private playPuzzleCornerPressTimer?: number;
+  private playPuzzleProgressGlowTimer?: number;
+  private lastPlayPuzzleProgressCompleted?: number;
   private readonly playPuzzlePieceFloatTimers = new Set<number>();
   private beadJar: BeadJarItem[] = [];
   private beadRewardAnimating = false;
@@ -607,16 +606,14 @@ class NumberConnectApp {
 
   private readonly boardScene = new BoardScene();
   private readonly game: Phaser.Game;
+  private readonly editor: LevelEditorController;
+  private readonly arranger: LevelArrangementController;
 
   public constructor() {
-    this.applyLobbyTheme(this.settings.lobbyTheme);
-    this.boardScene.setComboSoundSet(this.settings.comboSoundSet);
-    this.boardScene.setConnectionSoundComposition(
-      this.settings.comboSoundPatterns,
-      this.settings.comboSoundArrangement,
-    );
+    applyUiTheme(this.settings.uiTheme);
     this.renderCoinBalance();
     this.applyPlayPuzzleRotation();
+    startLobbyAmbientNetwork();
     this.boardScene.registerArtworkTextures(PLAY_PUZZLE_PATTERNS.map((pattern) => ({
       key: playPuzzleTextureKey(pattern),
       url: pattern.imageUrl,
@@ -636,6 +633,21 @@ class NumberConnectApp {
         windowEvents: true,
       },
       scene: [this.boardScene],
+    });
+    this.editor = new LevelEditorController(query<HTMLElement>('#editor-screen'), {
+      getLevels: () => this.editorLevels,
+      getNextLevelId: () => getNextLevelId(this.editorLevels),
+      onLevelsChange: (levels) => {
+        saveLevelCollection(levels);
+        this.refreshLevels();
+        this.refreshLevelOptions();
+      },
+      onPlaytest: (level) => void this.startEditorPlaytest(level),
+      onBack: () => this.backToLobby(),
+    });
+    this.arranger = new LevelArrangementController(query<HTMLElement>('#arranger-screen'), {
+      onBack: () => this.backToLobby(),
+      onPlaytest: (level) => void this.startEditorPlaytest(level, 'arranger'),
     });
     window.addEventListener('resize', () => requestAnimationFrame(() => {
       this.syncBeadCellSize();
@@ -673,13 +685,11 @@ class NumberConnectApp {
     this.playBeadShowcaseCollected = showcaseProgress.collected;
     this.normalizePlayPuzzleLevel();
     this.refreshLevels();
-    query<HTMLElement>('#lobby-daily-date').textContent = new Intl.DateTimeFormat('en-US', {
-      month: 'long',
-      day: 'numeric',
-    }).format(new Date());
     this.bindLobby();
     this.bindPlayControls();
     this.bindSettings();
+    this.editor.bind();
+    this.arranger.bind();
     this.refreshLevelOptions();
     this.renderVideoStats();
     this.renderBeadScreen();
@@ -694,6 +704,7 @@ class NumberConnectApp {
   }
 
   private uiVisualScale(): number {
+    if (this.appShell.classList.contains('is-editor-fullscreen')) return 1;
     const logicalWidth = this.appShell.offsetWidth;
     const visualWidth = this.appShell.getBoundingClientRect().width;
     return logicalWidth > 0 && visualWidth > 0 ? visualWidth / logicalWidth : 1;
@@ -705,6 +716,10 @@ class NumberConnectApp {
       else if (this.currentScreen === 'daily') void this.startDailyChallenge(this.dailyChallengeDateKey);
       else if (this.currentScreen === 'endless') void this.startEndlessMode();
     });
+    query('#start-button').addEventListener('click', () => void this.startNormalMode());
+    query('#endless-button').addEventListener('click', () => this.openEndlessHub());
+    query('#bead-mode-button').addEventListener('click', () => this.openBeadMode());
+    query('#daily-challenge-entry-button').addEventListener('click', () => this.openDailyChallenge());
     query('#collection-back-button').addEventListener('click', () => this.backToLobby());
     query('#collection-gallery-button').addEventListener('click', () => this.openBeadGallery());
     this.beadBackButton.addEventListener('click', () => this.closeBeadMode());
@@ -723,10 +738,25 @@ class NumberConnectApp {
     this.beadGalleryDialog.addEventListener('click', (event) => {
       if (event.target === this.beadGalleryDialog) this.beadGalleryDialog.close();
     });
+    query('#challenge-button').addEventListener('click', () => this.openDailyChallenge());
+    query('#night-editor-button').addEventListener('click', () => this.openLobbyToolsDialog());
+    query('#lobby-settings-button').addEventListener('click', () => this.openSettings('lobby'));
     query('#default-start-button').addEventListener('click', () => void this.startNormalMode());
     query('#default-bead-mode-button').addEventListener('click', () => this.openBeadMode());
     query('#default-daily-challenge-button').addEventListener('click', () => this.openDailyChallenge());
     query('#default-gallery-button').addEventListener('click', () => this.openFavorites());
+    query('#default-editor-button').addEventListener('click', () => this.openLobbyToolsDialog());
+    query('#lobby-open-editor-button').addEventListener('click', () => {
+      this.lobbyToolsDialog.close();
+      this.openEditor();
+    });
+    query('#lobby-open-arranger-button').addEventListener('click', () => {
+      this.lobbyToolsDialog.close();
+      this.openArrangementTool();
+    });
+    this.lobbyToolsDialog.addEventListener('click', (event) => {
+      if (event.target === this.lobbyToolsDialog) this.lobbyToolsDialog.close();
+    });
     query('#default-lobby-settings-button').addEventListener('click', () => this.openSettings('lobby'));
     query('#daily-back-button').addEventListener('click', () => this.backToLobby());
     query('#favorites-back-button').addEventListener('click', () => this.backToLobby());
@@ -747,7 +777,6 @@ class NumberConnectApp {
   }
 
   private bindPlayControls(): void {
-    query('#play-back-button').addEventListener('click', () => this.leavePlayScreen());
     this.playLevelButton.addEventListener('click', () => this.openLevelPicker());
     this.levelPickerDialog.addEventListener('close', () => {
       if (!this.playScreen.hidden) {
@@ -756,6 +785,7 @@ class NumberConnectApp {
       }
     });
     query('#play-settings-button').addEventListener('click', () => this.openSettings('play'));
+    this.undoStepButton.addEventListener('click', () => this.undoLastConnectionStep());
     this.watercolorBrushButton.addEventListener('click', () => void this.useWatercolorBrush());
     this.paintBucketButton.addEventListener('click', () => this.togglePaintBucket());
     this.bindSingleTouchInput();
@@ -763,10 +793,6 @@ class NumberConnectApp {
     this.bindTouchPreviewViewportDrag();
     this.bindPlayPuzzleRotationHandle();
     this.playPuzzleFinaleButton.addEventListener('click', () => void this.completePlayPuzzleFinale());
-    this.ratingDialog.querySelectorAll<HTMLButtonElement>('[data-rating]').forEach((button) => {
-      button.addEventListener('click', () => this.selectRating(Number(button.dataset.rating)));
-    });
-    this.ratingSubmitButton.addEventListener('click', () => this.submitRating());
     this.restartButton.addEventListener('click', () => this.handleResultPrimary());
     this.nextButton.addEventListener('click', () => this.handleResultSecondary());
     this.resultLobbyButton.addEventListener('click', () => this.leavePlayScreen());
@@ -1600,9 +1626,25 @@ class NumberConnectApp {
     return isTouchPreviewSize(value) ? value : 'small';
   }
 
-  private selectedLobbyTheme(): LobbyTheme {
-    const value = query<HTMLInputElement>('input[name="lobby-theme"]:checked').value;
-    return isLobbyTheme(value) ? value : 'cool';
+  private setTouchPreviewSizeControl(size: TouchPreviewSize): void {
+    this.touchPreviewSizeControl.querySelectorAll<HTMLInputElement>(
+      'input[name="touch-preview-size"]',
+    ).forEach((input) => {
+      input.checked = input.value === size;
+    });
+  }
+
+  private selectedInputMode(): InputMode {
+    const value = this.inputModeControl.querySelector<HTMLInputElement>(
+      'input[name="input-mode"]:checked',
+    )?.value;
+    return isInputMode(value) ? value : 'drag';
+  }
+
+  private setInputModeControl(mode: InputMode): void {
+    this.inputModeControl.querySelectorAll<HTMLInputElement>('input[name="input-mode"]').forEach((input) => {
+      input.checked = input.value === mode;
+    });
   }
 
   private selectedChargeProgressMode(): ChargeProgressMode {
@@ -1620,25 +1662,28 @@ class NumberConnectApp {
     });
   }
 
-  private setLobbyThemeControl(theme: LobbyTheme): void {
-    document.querySelectorAll<HTMLInputElement>('input[name="lobby-theme"]').forEach((input) => {
-      input.checked = input.value === theme;
+  private selectedMainGameplay(): MainGameplay {
+    const value = this.mainGameplayControl.querySelector<HTMLInputElement>(
+      'input[name="main-gameplay"]:checked',
+    )?.value;
+    return isMainGameplay(value) ? value : 'beads';
+  }
+
+  private setMainGameplayControl(gameplay: MainGameplay): void {
+    this.mainGameplayControl.querySelectorAll<HTMLInputElement>('input[name="main-gameplay"]').forEach((input) => {
+      input.checked = input.value === gameplay;
     });
   }
 
-  private applyLobbyTheme(theme: LobbyTheme): void {
-    document.documentElement.dataset.lobbyTheme = theme;
-    query<HTMLImageElement>('.default-brand-lockup > img').src = theme === 'warm'
-      ? './ui/lobby-themes/warm/logo.png'
-      : './ui/number-connect-slices/set-7/logo.png';
+  private selectedMainGameplayDifficulty(): MainGameplayDifficulty {
+    const value = this.mainGameplayDifficultyControl.value;
+    if (value === 'dynamic') return 'dynamic';
+    const difficulty = Number(value);
+    return isMainGameplayDifficulty(difficulty) ? difficulty : 'dynamic';
   }
 
-  private setTouchPreviewSizeControl(size: TouchPreviewSize): void {
-    this.touchPreviewSizeControl.querySelectorAll<HTMLInputElement>(
-      'input[name="touch-preview-size"]',
-    ).forEach((input) => {
-      input.checked = input.value === size;
-    });
+  private setMainGameplayDifficultyControl(difficulty: MainGameplayDifficulty): void {
+    this.mainGameplayDifficultyControl.value = String(difficulty);
   }
 
   private mainGameplayLevels(gameplay: MainGameplay = this.settings.mainGameplay): LevelData[] {
@@ -1691,42 +1736,21 @@ class NumberConnectApp {
     this.playScreen.classList.toggle('is-click-input', usesClickInput(this.settings.inputMode));
   }
 
+  private selectedUiTheme(): UiTheme {
+    const value = this.uiThemeControl.querySelector<HTMLInputElement>(
+      'input[name="ui-theme"]:checked',
+    )?.value;
+    return isUiTheme(value) ? value : 'default';
+  }
+
+  private setUiThemeControl(theme: UiTheme): void {
+    this.uiThemeControl.querySelectorAll<HTMLInputElement>('input[name="ui-theme"]').forEach((input) => {
+      input.checked = input.value === theme;
+    });
+  }
+
   private bindSettings(): void {
-    // The debug surface belongs to the live game HUD, not to the modal. Move it
-    // out of the dialog so it remains visible and interactive after settings closes.
-    document.body.append(this.soundDebugPanel);
-    this.populateSoundDebugComboSets();
     this.settingsDialog.addEventListener('change', () => this.applySettingsChange());
-    this.soundDebugToggle.addEventListener('click', () => {
-      if (!this.soundDebugPanel.hidden) {
-        this.setSoundDebugPanelOpen(false);
-        return;
-      }
-      this.settingsDialog.close();
-      this.setSoundDebugPanelOpen(true);
-    });
-    query('#sound-debug-close').addEventListener('click', () => this.setSoundDebugPanelOpen(false));
-    this.soundDebugComboSet.addEventListener('change', () => {
-      this.stopSoundDebug();
-      this.renderSoundDebugComboSet();
-    });
-    this.soundDebugPatternAdd.addEventListener('click', () => this.addSoundDebugPattern());
-    this.soundDebugArrangement.addEventListener('input', () => this.updateSoundDebugArrangement());
-    this.soundDebugArrangement.addEventListener('keydown', (event) => {
-      this.handleSoundDebugArrangementDelete(event);
-    });
-    this.soundDebugArrangement.addEventListener('blur', () => {
-      if (!isComboSoundArrangement(this.soundDebugArrangement.value, this.settings.comboSoundPatterns.length)) {
-        this.soundDebugArrangement.value = this.settings.comboSoundArrangement;
-        this.soundDebugArrangement.removeAttribute('aria-invalid');
-      }
-    });
-    this.soundDebugArrangementBrackets.addEventListener('pointerdown', (event) => event.preventDefault());
-    this.soundDebugArrangementBrackets.addEventListener('click', () => this.insertSoundDebugArrangementGroup());
-    this.soundDebugPanel.querySelectorAll<HTMLButtonElement>('[data-debug-sound]').forEach((button) => {
-      button.addEventListener('click', () => this.playSoundDebug(button));
-    });
-    window.addEventListener('resize', () => this.positionSoundDebugPanel());
     query('#video-stats-button').addEventListener('click', () => this.openVideoStats());
     query('#video-stats-reset').addEventListener('click', () => this.resetVideoStats());
     query('#settings-clear-data-button').addEventListener('click', () => this.clearAllLocalData());
@@ -1751,297 +1775,8 @@ class NumberConnectApp {
     });
   }
 
-  private populateSoundDebugComboSets(): void {
-    const options = SOUND_DEBUG_COMBO_SETS.map((set) => {
-      const option = document.createElement('option');
-      option.value = set.id;
-      option.textContent = set.label;
-      return option;
-    });
-    this.soundDebugComboSet.replaceChildren(...options);
-    this.soundDebugComboSet.value = this.settings.comboSoundSet;
-    this.soundDebugArrangement.value = this.settings.comboSoundArrangement;
-    this.renderSoundDebugPatterns();
-    this.renderSoundDebugComboSet();
-  }
-
-  private renderSoundDebugPatterns(): void {
-    const rows = this.settings.comboSoundPatterns.map((pattern, index) => {
-      const row = document.createElement('div');
-      const active = index === this.settings.comboSoundPatternIndex;
-      row.className = 'sound-debug-pattern-row';
-      row.classList.toggle('is-active', active);
-      row.setAttribute('role', 'listitem');
-
-      const select = document.createElement('button');
-      select.type = 'button';
-      select.className = 'sound-debug-pattern-select';
-      select.textContent = String(index + 1);
-      select.setAttribute('aria-label', `选中旋律 ${index + 1}`);
-      select.setAttribute('aria-pressed', String(active));
-      select.addEventListener('click', () => this.selectSoundDebugPattern(index));
-
-      const input = document.createElement('input');
-      input.type = 'text';
-      input.inputMode = 'text';
-      input.maxLength = 64;
-      input.value = pattern;
-      input.autocomplete = 'off';
-      input.spellcheck = false;
-      input.setAttribute('aria-label', `旋律 ${index + 1}`);
-      input.addEventListener('focus', () => this.selectSoundDebugPattern(index, false));
-      input.addEventListener('keydown', (event) => this.handleSoundDebugPatternDelete(index, input, event));
-      input.addEventListener('input', () => this.updateSoundDebugPattern(index, input));
-      input.addEventListener('blur', () => {
-        if (!isComboSoundPattern(input.value)) {
-          input.value = this.settings.comboSoundPatterns[index] ?? '12345678';
-          input.removeAttribute('aria-invalid');
-        }
-      });
-
-      const remove = document.createElement('button');
-      remove.type = 'button';
-      remove.className = 'sound-debug-pattern-remove';
-      remove.textContent = '×';
-      remove.disabled = this.settings.comboSoundPatterns.length === 1;
-      remove.setAttribute('aria-label', `删除旋律 ${index + 1}`);
-      remove.addEventListener('click', () => this.removeSoundDebugPattern(index));
-
-      const addRandomGroup = document.createElement('button');
-      addRandomGroup.type = 'button';
-      addRandomGroup.className = 'sound-debug-pattern-brackets';
-      addRandomGroup.textContent = '＋[]';
-      addRandomGroup.setAttribute('aria-label', `在旋律 ${index + 1} 中添加随机音节括号`);
-      addRandomGroup.addEventListener('pointerdown', (event) => event.preventDefault());
-      addRandomGroup.addEventListener('click', () => this.insertSoundDebugRandomGroup(index, input));
-      row.append(select, input, remove, addRandomGroup);
-      return row;
-    });
-    this.soundDebugPatternList.replaceChildren(...rows);
-    this.soundDebugPatternAdd.disabled = this.settings.comboSoundPatterns.length >= 32;
-  }
-
-  private addSoundDebugPattern(): void {
-    if (this.settings.comboSoundPatterns.length >= 32) return;
-    this.settings.comboSoundPatterns.push('12345678');
-    this.settings.comboSoundPatternIndex = this.settings.comboSoundPatterns.length - 1;
-    this.syncActiveSoundDebugPattern();
-    this.renderSoundDebugPatterns();
-    this.soundDebugPatternList.querySelector<HTMLInputElement>('.sound-debug-pattern-row:last-child input')?.focus();
-  }
-
-  private removeSoundDebugPattern(index: number): void {
-    if (this.settings.comboSoundPatterns.length <= 1) return;
-    this.settings.comboSoundPatterns.splice(index, 1);
-    this.settings.comboSoundArrangement = remapComboSoundArrangementAfterRemoval(
-      this.settings.comboSoundArrangement,
-      index + 1,
-    );
-    this.soundDebugArrangement.value = this.settings.comboSoundArrangement;
-    if (index < this.settings.comboSoundPatternIndex) this.settings.comboSoundPatternIndex -= 1;
-    else if (index === this.settings.comboSoundPatternIndex) {
-      this.settings.comboSoundPatternIndex = Math.min(index, this.settings.comboSoundPatterns.length - 1);
-    }
-    this.syncActiveSoundDebugPattern();
-    this.renderSoundDebugPatterns();
-  }
-
-  private selectSoundDebugPattern(index: number, render = true): void {
-    if (!this.settings.comboSoundPatterns[index]) return;
-    this.settings.comboSoundPatternIndex = index;
-    this.syncActiveSoundDebugPattern();
-    if (render) this.renderSoundDebugPatterns();
-    else {
-      this.soundDebugPatternList.querySelectorAll<HTMLElement>('.sound-debug-pattern-row').forEach((row, rowIndex) => {
-        row.classList.toggle('is-active', rowIndex === index);
-        row.querySelector('.sound-debug-pattern-select')?.setAttribute('aria-pressed', String(rowIndex === index));
-      });
-    }
-  }
-
-  private updateSoundDebugPattern(index: number, input: HTMLInputElement): void {
-    const sanitized = input.value.replace(/[^1-8[\]]/g, '').slice(0, 64);
-    if (input.value !== sanitized) input.value = sanitized;
-    if (!isComboSoundPattern(sanitized)) {
-      input.setAttribute('aria-invalid', 'true');
-      return;
-    }
-    input.removeAttribute('aria-invalid');
-    this.settings.comboSoundPatterns[index] = sanitized;
-    this.syncActiveSoundDebugPattern();
-  }
-
-  private insertSoundDebugRandomGroup(index: number, input: HTMLInputElement): void {
-    const selectionStart = input.selectionStart ?? input.value.length;
-    const selectionEnd = input.selectionEnd ?? selectionStart;
-    const nextValue = `${input.value.slice(0, selectionStart)}[]${input.value.slice(selectionEnd)}`;
-    if (nextValue.length > input.maxLength) return;
-    input.value = nextValue;
-    this.updateSoundDebugPattern(index, input);
-    input.focus();
-    input.setSelectionRange(selectionStart + 1, selectionStart + 1);
-  }
-
-  private handleSoundDebugPatternDelete(
-    index: number,
-    input: HTMLInputElement,
-    event: KeyboardEvent,
-  ): void {
-    if (event.key !== 'Backspace' && event.key !== 'Delete') return;
-    const selectionStart = input.selectionStart ?? 0;
-    const selectionEnd = input.selectionEnd ?? selectionStart;
-    let deleteStart = selectionStart;
-    let deleteEnd = selectionEnd;
-
-    if (selectionStart === selectionEnd) {
-      const targetIndex = event.key === 'Backspace' ? selectionStart - 1 : selectionStart;
-      const group = comboSoundBracketGroupRange(input.value, targetIndex);
-      if (!group) return;
-      deleteStart = group.start;
-      deleteEnd = group.end;
-    } else {
-      let touchesBracket = false;
-      for (let position = selectionStart; position < selectionEnd; position += 1) {
-        const group = comboSoundBracketGroupRange(input.value, position);
-        if (!group) continue;
-        touchesBracket = true;
-        deleteStart = Math.min(deleteStart, group.start);
-        deleteEnd = Math.max(deleteEnd, group.end);
-      }
-      if (!touchesBracket) return;
-    }
-
-    event.preventDefault();
-    input.value = `${input.value.slice(0, deleteStart)}${input.value.slice(deleteEnd)}`;
-    this.updateSoundDebugPattern(index, input);
-    input.setSelectionRange(deleteStart, deleteStart);
-  }
-
-  private syncActiveSoundDebugPattern(): void {
-    const pattern = this.settings.comboSoundPatterns[this.settings.comboSoundPatternIndex] ?? '12345678';
-    this.settings.comboSoundPattern = pattern;
-    saveSettings(this.settings);
-    this.boardScene.setConnectionSoundComposition(
-      this.settings.comboSoundPatterns,
-      this.settings.comboSoundArrangement,
-    );
-  }
-
-  private updateSoundDebugArrangement(): void {
-    const sanitized = this.soundDebugArrangement.value.replace(/[^0-9,[\]]/g, '').slice(0, 128);
-    if (this.soundDebugArrangement.value !== sanitized) this.soundDebugArrangement.value = sanitized;
-    if (!isComboSoundArrangement(sanitized, this.settings.comboSoundPatterns.length)) {
-      this.soundDebugArrangement.setAttribute('aria-invalid', 'true');
-      return;
-    }
-    this.soundDebugArrangement.removeAttribute('aria-invalid');
-    this.settings.comboSoundArrangement = sanitized;
-    this.syncActiveSoundDebugPattern();
-  }
-
-  private insertSoundDebugArrangementGroup(): void {
-    const input = this.soundDebugArrangement;
-    const selectionStart = input.selectionStart ?? input.value.length;
-    const selectionEnd = input.selectionEnd ?? selectionStart;
-    const prefix = selectionStart > 0 && input.value[selectionStart - 1] !== ',' ? ',' : '';
-    const suffix = selectionEnd < input.value.length && input.value[selectionEnd] !== ',' ? ',' : '';
-    const insertion = `${prefix}[]${suffix}`;
-    const nextValue = `${input.value.slice(0, selectionStart)}${insertion}${input.value.slice(selectionEnd)}`;
-    if (nextValue.length > input.maxLength) return;
-    input.value = nextValue;
-    this.updateSoundDebugArrangement();
-    input.focus();
-    const caret = selectionStart + prefix.length + 1;
-    input.setSelectionRange(caret, caret);
-  }
-
-  private handleSoundDebugArrangementDelete(event: KeyboardEvent): void {
-    if (event.key !== 'Backspace' && event.key !== 'Delete') return;
-    const input = this.soundDebugArrangement;
-    const selectionStart = input.selectionStart ?? 0;
-    const selectionEnd = input.selectionEnd ?? selectionStart;
-    const targetIndex = selectionStart === selectionEnd
-      ? event.key === 'Backspace' ? selectionStart - 1 : selectionStart
-      : [...Array(selectionEnd - selectionStart).keys()]
-          .map((offset) => selectionStart + offset)
-          .find((position) => input.value[position] === '[' || input.value[position] === ']');
-    if (targetIndex === undefined) return;
-    const group = comboSoundBracketGroupRange(input.value, targetIndex);
-    if (!group) return;
-    event.preventDefault();
-    let deleteStart = group.start;
-    let deleteEnd = group.end;
-    if (input.value[deleteEnd] === ',') deleteEnd += 1;
-    else if (deleteStart > 0 && input.value[deleteStart - 1] === ',') deleteStart -= 1;
-    input.value = `${input.value.slice(0, deleteStart)}${input.value.slice(deleteEnd)}`;
-    this.updateSoundDebugArrangement();
-    input.setSelectionRange(deleteStart, deleteStart);
-  }
-
-  private renderSoundDebugComboSet(): void {
-    const selected = SOUND_DEBUG_COMBO_SETS.find((set) => set.id === this.soundDebugComboSet.value)
-      ?? SOUND_DEBUG_COMBO_SETS[0];
-    this.settings.comboSoundSet = selected.id;
-    saveSettings(this.settings);
-    this.boardScene.setComboSoundSet(selected.id);
-    this.soundDebugComboGroup.dataset.tone = selected.tone;
-    this.soundDebugComboBadge.textContent = selected.badge;
-    this.soundDebugComboGroup.querySelectorAll<HTMLButtonElement>('[data-debug-combo-step]').forEach((button) => {
-      const step = button.dataset.debugComboStep;
-      button.dataset.debugSound = `${selected.filePrefix}${step}.mp3`;
-    });
-  }
-
-  private setSoundDebugPanelOpen(open: boolean): void {
-    if (open) this.positionSoundDebugPanel();
-    this.soundDebugPanel.hidden = !open;
-    this.soundDebugToggle.setAttribute('aria-expanded', String(open));
-    const action = this.soundDebugToggle.querySelector('strong');
-    if (action) action.textContent = open ? '已打开 ‹' : '打开 ›';
-    if (!open) this.stopSoundDebug();
-  }
-
-  private positionSoundDebugPanel(): void {
-    const gameBounds = this.appShell.getBoundingClientRect();
-    const visualScale = this.uiVisualScale();
-    const viewportMargin = 18;
-    const gameGap = 18 * visualScale;
-    const availableWidth = gameBounds.left - gameGap - viewportMargin;
-    const useOverlay = window.innerWidth <= 760 || availableWidth < 260 * visualScale;
-    this.soundDebugPanel.dataset.layout = useOverlay ? 'overlay' : 'side';
-    if (useOverlay) return;
-    this.soundDebugPanel.style.setProperty('--sound-debug-left', `${viewportMargin}px`);
-    this.soundDebugPanel.style.setProperty('--sound-debug-top', `${gameBounds.top}px`);
-    this.soundDebugPanel.style.setProperty('--sound-debug-width', `${availableWidth / visualScale}px`);
-    this.soundDebugPanel.style.setProperty('--sound-debug-height', `${gameBounds.height / visualScale}px`);
-  }
-
-  private playSoundDebug(button: HTMLButtonElement): void {
-    const file = button.dataset.debugSound;
-    if (!file) return;
-    this.stopSoundDebug();
-    const audio = new Audio(`./audio/${file}`);
-    this.soundDebugAudio = audio;
-    audio.volume = 0.72;
-    this.soundDebugPanel.querySelectorAll('[data-debug-sound]').forEach((item) => item.classList.remove('is-playing'));
-    button.classList.add('is-playing');
-    const finish = (): void => {
-      if (this.soundDebugAudio !== audio) return;
-      button.classList.remove('is-playing');
-      this.soundDebugAudio = undefined;
-    };
-    audio.addEventListener('ended', finish, { once: true });
-    audio.addEventListener('error', finish, { once: true });
-    void audio.play().catch(finish);
-  }
-
-  private stopSoundDebug(): void {
-    this.soundDebugAudio?.pause();
-    this.soundDebugAudio = undefined;
-    this.soundDebugPanel.querySelectorAll('[data-debug-sound]').forEach((item) => item.classList.remove('is-playing'));
-  }
-
   private refreshLevels(): void {
+    this.editorLevels = loadEditorLevelCollection();
     this.levels = loadLevelCollection(this.builtInLevels);
     if (!this.levels.some((level) => level.levelId === this.settings.beadMainLevelId)) {
       this.settings.beadMainLevelId = this.levels[0]?.levelId ?? 1;
@@ -2314,6 +2049,19 @@ class NumberConnectApp {
     this.setCurrentBoard(level);
   }
 
+  private async startEditorPlaytest(
+    level: LevelData,
+    returnScreen: 'editor' | 'arranger' = 'editor',
+  ): Promise<void> {
+    this.editorPlaytestReturnScreen = returnScreen;
+    this.playContext = 'editor-playtest';
+    this.mode = 'normal';
+    this.editorPlaytestErrorCount = 0;
+    this.renderLives();
+    await this.showPlayScreen();
+    this.setCurrentBoard(level);
+  }
+
   private createNormalLevel(): LevelData {
     if (this.activeMainGameplay === 'puzzle') {
       const patternIndex = Math.max(0, Math.min(
@@ -2324,7 +2072,8 @@ class NumberConnectApp {
         puzzlePieceCount(this.playPuzzlePattern) - 1,
         this.playPuzzleProgress.revealed,
       ));
-      // Published puzzle formations come from the workbook.
+      // Published puzzle formations come from the workbook. Editor-local levels
+      // must not override the configured campaign mapping.
       const puzzleBoards = this.mode5Levels.filter(
         (level) => level.activeCells.length === level.rows * level.columns,
       );
@@ -2446,28 +2195,30 @@ class NumberConnectApp {
       chargeProgressMode: this.settings.chargeProgressMode,
       touchPreviewRingDepth: this.settings.touchPreviewSize === 'large' ? 2 : 1,
       boardZoomEnabled: this.isTouchPreviewZoomMode(),
-      inactiveNumberFillColor: this.settings.lobbyTheme === 'warm' ? 0xede6d9 : 0xdee4f3,
-      inactiveNumberTextColor: this.settings.lobbyTheme === 'warm' ? '#3e3f5e' : '#335588',
       mode: this.mode,
       onProgress: (current, total) => {
         this.currentProgress = current;
         this.currentTotal = total;
-        this.renderNumberProgress();
         this.renderDailyPlayProgress();
         this.renderPowerUps();
-        this.events.emit('level.progressed', { ...eventContext, current, total });
+        if (this.playContext !== 'editor-playtest') {
+          this.events.emit('level.progressed', { ...eventContext, current, total });
+        }
       },
       onWrong: (message, shouldLoseLife) => {
-        this.currentBoardMistakes += 1;
-        this.events.emit('level.wrong-move', { ...eventContext, current: this.currentProgress, message });
+        if (this.playContext !== 'editor-playtest') {
+          this.events.emit('level.wrong-move', { ...eventContext, current: this.currentProgress, message });
+        }
         if (shouldLoseLife) this.handleWrong();
       },
       onComplete: () => {
-        this.events.emit('level.completed', { ...eventContext, total: level.solutionPath.length });
+        if (this.playContext !== 'editor-playtest') {
+          this.events.emit('level.completed', { ...eventContext, total: level.solutionPath.length });
+        }
         void this.handleComplete();
       },
       onComboComplete: () => {
-        this.awardComboCoins(5);
+        if (this.playContext !== 'editor-playtest') this.awardComboCoins(5);
       },
       onNeighborhoodPreview: (preview) => this.handleNeighborhoodPreview(preview),
       onHoldScore: (score) => this.renderHoldScore(score),
@@ -2476,8 +2227,6 @@ class NumberConnectApp {
 
   private setCurrentBoard(level: LevelData, profile?: EndlessStageSettings): void {
     this.currentLevel = level;
-    this.currentBoardStartedAt = Date.now();
-    this.currentBoardMistakes = 0;
     const adaptiveGameplay = this.activeAdaptiveGameplay();
     if (adaptiveGameplay) {
       this.currentAdaptiveUsesDynamicDifficulty = this.settings.mainGameplayDifficulty === 'dynamic';
@@ -2497,26 +2246,28 @@ class NumberConnectApp {
     this.currentTotal = level.solutionPath.length;
     this.renderDailyPlayProgress();
     this.updateGameHeading(level);
-    this.renderNumberProgress();
     this.prepareMainGameplayShowcase(level);
     this.boardScene.setBoard(this.makeSession(level, profile));
     this.renderPowerUps();
-    const usesPuzzleStage = this.playContext === 'normal'
-      && this.mode === 'normal'
-      && this.activeMainGameplay === 'puzzle';
-    this.events.emit('level.started', {
-      mode: this.mode,
-      levelId: usesPuzzleStage ? this.settings.puzzleMainLevelId : level.levelId,
-      stage: this.mode === 'endless'
-        ? this.stage
-        : usesPuzzleStage
-          ? Math.min(puzzlePieceCount(this.playPuzzlePattern), this.playPuzzleProgress.revealed + 1)
-          : undefined,
-      total: level.solutionPath.length,
-    });
+    if (this.playContext !== 'editor-playtest') {
+      const usesPuzzleStage = this.playContext === 'normal'
+        && this.mode === 'normal'
+        && this.activeMainGameplay === 'puzzle';
+      this.events.emit('level.started', {
+        mode: this.mode,
+        levelId: usesPuzzleStage ? this.settings.puzzleMainLevelId : level.levelId,
+        stage: this.mode === 'endless'
+          ? this.stage
+          : usesPuzzleStage
+            ? Math.min(puzzlePieceCount(this.playPuzzlePattern), this.playPuzzleProgress.revealed + 1)
+            : undefined,
+        total: level.solutionPath.length,
+      });
+    }
   }
 
   private prepareMainGameplayShowcase(level: LevelData): void {
+    const isEditorPlaytest = this.playContext === 'editor-playtest';
     const supportsMainShowcase = shouldUsePlayBeadShowcase(this.playContext, this.mode);
     const usesBeadShowcase = supportsMainShowcase && this.activeMainGameplay === 'beads';
     const usesPuzzleShowcase = supportsMainShowcase && this.activeMainGameplay === 'puzzle';
@@ -2524,6 +2275,7 @@ class NumberConnectApp {
     const showcaseSpacer = this.playBeadShowcaseArt.closest<HTMLElement>('.play-top-spacer');
     const beadShowcase = this.playBeadShowcaseArt.closest<HTMLElement>('.play-bead-showcase');
     const puzzleShowcase = this.playPuzzleShowcaseArt.closest<HTMLElement>('.play-puzzle-showcase');
+    this.playScreen.classList.toggle('is-editor-playtest', isEditorPlaytest);
     this.playScreen.classList.toggle('is-play-showcase-hidden', !usesMainShowcase);
     this.playScreen.classList.toggle('is-puzzle-main-gameplay', usesPuzzleShowcase);
     if (showcaseSpacer) showcaseSpacer.hidden = !usesMainShowcase;
@@ -2570,29 +2322,36 @@ class NumberConnectApp {
       this.playPuzzlePattern,
       this.playPuzzleProgress.revealed,
     );
-    this.renderNumberProgress();
+    this.renderPlayPuzzleProgress();
   }
 
-  private renderNumberProgress(): void {
-    const total = Math.max(1, this.currentTotal);
-    const current = Math.max(1, Math.min(total, this.currentProgress || 1));
-    const progress = total > 1 ? (current - 1) / (total - 1) : 1;
-    this.playPuzzleProgressBar.setAttribute('aria-valuemin', '1');
+  private renderPlayPuzzleProgress(): void {
+    const total = puzzlePieceCount(this.playPuzzlePattern);
+    const completed = Math.min(total, this.playPuzzleProgress.revealed);
+    const progressGrew = this.lastPlayPuzzleProgressCompleted !== undefined
+      && completed > this.lastPlayPuzzleProgressCompleted;
+    this.lastPlayPuzzleProgressCompleted = completed;
     this.playPuzzleProgressBar.setAttribute('aria-valuemax', String(total));
-    this.playPuzzleProgressBar.setAttribute('aria-valuenow', String(current));
-    this.playPuzzleProgressBar.setAttribute('aria-valuetext', `${current} / ${total}`);
-    this.playPuzzleProgressFill.style.width = `${progress * 100}%`;
-    this.playPuzzleProgressCurrent.style.left = `${progress * 100}%`;
-    this.playPuzzleProgressCurrent.textContent = String(current);
-    this.playPuzzleProgressCurrent.hidden = current <= 1 || current >= total;
+    this.playPuzzleProgressBar.setAttribute('aria-valuenow', String(completed));
+    this.playPuzzleProgressFill.style.width = `${completed / Math.max(1, total) * 100}%`;
+    if (progressGrew) {
+      if (this.playPuzzleProgressGlowTimer !== undefined) {
+        window.clearTimeout(this.playPuzzleProgressGlowTimer);
+      }
+      this.playPuzzleProgressBar.classList.remove('is-growing');
+      void this.playPuzzleProgressBar.offsetWidth;
+      this.playPuzzleProgressBar.classList.add('is-growing');
+      this.playPuzzleProgressGlowTimer = window.setTimeout(() => {
+        this.playPuzzleProgressBar.classList.remove('is-growing');
+        this.playPuzzleProgressGlowTimer = undefined;
+      }, 520);
+    }
   }
 
   private updateGameHeading(level: LevelData): void {
     const canSelectLevel = this.playContext === 'normal' && this.mode === 'normal';
     this.playLevelButton.disabled = !canSelectLevel;
     this.playLevelButton.title = canSelectLevel ? '选择关卡' : '';
-    query<HTMLElement>('#play-progress-start').textContent = '1';
-    query<HTMLElement>('#play-progress-end').textContent = String(level.solutionPath.length);
 
     if (this.playContext === 'daily') {
       const date = parseDailyDateKey(this.dailyChallengeDateKey);
@@ -2609,6 +2368,10 @@ class NumberConnectApp {
       this.levelLabel.textContent = `拼豆关卡 · 关卡 ${level.levelId}`;
       return;
     }
+    if (this.playContext === 'editor-playtest') {
+      this.levelLabel.textContent = `试玩关卡 · ${level.columns} × ${level.rows}`;
+      return;
+    }
     if (this.mode === 'endless') {
       this.levelLabel.textContent = `无尽 · 阶段 ${this.stage}`;
       return;
@@ -2616,8 +2379,7 @@ class NumberConnectApp {
     if (this.activeMainGameplay === 'puzzle') {
       const totalStages = puzzlePieceCount(this.playPuzzlePattern);
       const currentStage = Math.min(totalStages, this.playPuzzleProgress.revealed + 1);
-      this.levelLabel.textContent = `Level${this.settings.puzzleMainLevelId}`;
-      this.playLevelButton.setAttribute('aria-label', `第 ${this.settings.puzzleMainLevelId} 关，第 ${currentStage}/${totalStages} 阶段`);
+      this.levelLabel.textContent = `Level ${this.settings.puzzleMainLevelId}-${currentStage}`;
       return;
     }
     if (isAdaptiveMainGameplay(this.activeMainGameplay)) {
@@ -2629,11 +2391,11 @@ class NumberConnectApp {
         const progress = this.mode5LevelProgress(level.levelId);
         this.levelLabel.textContent = `${gameplayName} · 难度 ${difficultyLabel} · 关卡 ${progress.level} · 阶段 ${progress.stage}/${progress.totalStages}`;
       } else {
-        this.levelLabel.textContent = `${gameplayName} · 难度 ${difficultyLabel} · 关卡 ${level.levelId}`;
+        this.levelLabel.textContent = `${gameplayName} · 难度 ${difficultyLabel} · ${level.custom ? '自制关卡' : '关卡'} ${level.levelId}`;
       }
       return;
     }
-    this.levelLabel.textContent = `拼豆 · 关卡 ${level.levelId}`;
+    this.levelLabel.textContent = `拼豆 · ${level.custom ? '自制关卡' : '关卡'} ${level.levelId}`;
   }
 
   private setPowerUpMessage(
@@ -2662,7 +2424,10 @@ class NumberConnectApp {
     const noRevealTargets = !this.currentLevel || this.solutionRevealed || concealedCount === 0;
     const bucketActive = this.activePowerUp === 'paint-bucket';
     const animationBusy = this.animatingPowerUp !== undefined;
+    const undoAvailable = !this.solutionRevealed && this.boardScene.canUndoStep();
+    const undoControlAvailable = !this.solutionRevealed && this.boardScene.canUseUndoControl();
 
+    this.undoStepButton.disabled = !undoControlAvailable || animationBusy;
     this.watercolorBrushButton.disabled = noRevealTargets || animationBusy;
     this.paintBucketButton.disabled = noRevealTargets || animationBusy;
     this.paintBucketButton.classList.toggle('is-active', bucketActive);
@@ -2679,6 +2444,12 @@ class NumberConnectApp {
         ? '油漆桶，正在显示选中位置的 3×3 范围空位'
         : `油漆桶，选择中心位置并显示 3×3 范围空位，可重复使用${bucketActive ? '，正在选择中心位置' : ''}`,
     );
+    this.undoStepButton.setAttribute(
+      'aria-label',
+      undoAvailable
+        ? '撤回道具，撤回上一步连接'
+        : '撤回道具，当前没有可撤回的连接，点击直接完成当前阶段',
+    );
     this.playScreen.classList.toggle('is-paint-targeting', bucketActive);
     this.playScreen.classList.toggle('is-power-up-animating', animationBusy);
     this.playScreen.setAttribute('aria-busy', String(animationBusy));
@@ -2690,7 +2461,7 @@ class NumberConnectApp {
       tone = 'active';
     } else if (!message && this.solutionRevealed) {
       message = '答案显示时，道具暂不可用。';
-    } else if (!message && concealedCount === 0) {
+    } else if (!message && concealedCount === 0 && !undoControlAvailable) {
       message = '当前没有可用的道具目标。';
     } else if (!message) {
       message = '道具可重复使用';
@@ -2698,6 +2469,23 @@ class NumberConnectApp {
     this.powerUpStatus.textContent = message;
     this.powerUpStatus.classList.toggle('is-active', tone === 'active');
     this.powerUpStatus.classList.toggle('is-success', tone === 'success');
+  }
+
+  private undoLastConnectionStep(): void {
+    if (this.activePowerUp === 'paint-bucket') this.cancelPowerUpTargeting();
+    if (!this.boardScene.canUndoStep()) {
+      if (this.isAdaptiveGameplaySession()) this.currentAdaptiveAttemptEligible = false;
+      if (this.boardScene.quickComplete()) {
+        this.setPowerUpMessage('已直接完成当前阶段。', 'success');
+      } else {
+        this.setPowerUpMessage('当前无法完成阶段。');
+      }
+      this.renderPowerUps();
+      return;
+    }
+    if (!this.boardScene.undoLastStep()) return;
+    this.setPowerUpMessage('已撤回一步。', 'success');
+    this.renderPowerUps();
   }
 
   private async animatePowerUpUse<T>(
@@ -2965,6 +2753,12 @@ class NumberConnectApp {
       return;
     }
     this.dailyPlayProgress.hidden = true;
+    if (this.playContext === 'editor-playtest') {
+      this.livesLabel.hidden = false;
+      this.livesLabel.textContent = `错误 × ${this.editorPlaytestErrorCount}`;
+      this.livesLabel.setAttribute('aria-label', `错误次数 ${this.editorPlaytestErrorCount}`);
+      return;
+    }
     if (this.mode === 'endless' && this.endlessSessionActive) {
       this.endlessLives = this.lives;
       this.recordEndlessProgress();
@@ -3027,9 +2821,7 @@ class NumberConnectApp {
 
   private renderCoinBalance(): void {
     this.playCoinCount.textContent = String(this.coinBalance);
-    this.lobbyCoinCount.textContent = String(this.coinBalance);
     this.playCoinFrame.setAttribute('aria-label', `金币 ${this.coinBalance}`);
-    this.lobbyCoinCount.parentElement?.setAttribute('aria-label', `金币 ${this.coinBalance}`);
   }
 
   private awardComboCoins(amount: number): void {
@@ -3037,6 +2829,98 @@ class NumberConnectApp {
     if (reward === 0) return;
     this.coinBalance = saveCoinBalance(this.coinBalance + reward);
     this.renderCoinBalance();
+    this.playComboCoinRewardAnimation(reward);
+  }
+
+  private playComboCoinRewardAnimation(amount: number): void {
+    if (this.coinRewardCleanupTimer !== undefined) {
+      window.clearTimeout(this.coinRewardCleanupTimer);
+    }
+    if (this.coinRewardAnimationFrame !== undefined) {
+      window.cancelAnimationFrame(this.coinRewardAnimationFrame);
+      this.coinRewardAnimationFrame = undefined;
+    }
+    this.comboCoinRewardLayer.replaceChildren();
+    this.playCoinFrame.querySelector('.play-coin-gain')?.remove();
+
+    const positions = [
+      ['12.5%', '24px', -154], ['27.5%', '24px', -112], ['42.5%', '24px', -62],
+      ['57.5%', '24px', 68], ['72.5%', '24px', 118], ['87.5%', '24px', 162],
+      ['12.5%', 'calc(100% - 24px)', -168], ['27.5%', 'calc(100% - 24px)', -124], ['42.5%', 'calc(100% - 24px)', -74],
+      ['57.5%', 'calc(100% - 24px)', 78], ['72.5%', 'calc(100% - 24px)', 132], ['87.5%', 'calc(100% - 24px)', 176],
+      ['24px', '12.5%', 126], ['24px', '27.5%', 148], ['24px', '42.5%', 172],
+      ['24px', '57.5%', 138], ['24px', '72.5%', 162], ['24px', '87.5%', 188],
+      ['calc(100% - 24px)', '12.5%', -132], ['calc(100% - 24px)', '27.5%', -156], ['calc(100% - 24px)', '42.5%', -182],
+      ['calc(100% - 24px)', '57.5%', -144], ['calc(100% - 24px)', '72.5%', -170], ['calc(100% - 24px)', '87.5%', -196],
+    ] as const;
+    const standardGravity = 9.80665;
+    const pixelsPerMeter = 100;
+    const gravity = standardGravity * pixelsPerMeter;
+    const coins = positions.map(([left, top, velocityX], index) => {
+      const coin = document.createElement('i');
+      coin.className = 'combo-coin-reward-coin';
+      coin.style.backgroundImage = "url('./ui/coins/coin-spin-strip.png')";
+      coin.style.left = left;
+      coin.style.top = top;
+      const delay = (index % 6) * 30;
+      coin.style.setProperty('--coin-delay', `${delay}ms`);
+      return {
+        coin,
+        delay,
+        velocityX: velocityX * 0.3,
+        velocityY: -128 - (index % 4) * 9,
+        gravity,
+      };
+    });
+    this.comboCoinRewardLayer.replaceChildren(...coins.map(({ coin }) => coin));
+
+    const startedAt = performance.now();
+    const duration = 850;
+    const animateCoins = (timestamp: number): void => {
+      let animationActive = false;
+      coins.forEach(({ coin, delay, velocityX, velocityY, gravity }) => {
+        const elapsed = timestamp - startedAt - delay;
+        if (elapsed < 0) {
+          animationActive = true;
+          return;
+        }
+        if (elapsed > duration) {
+          coin.style.opacity = '0';
+          return;
+        }
+        animationActive = true;
+        const seconds = elapsed / 1000;
+        const x = velocityX * seconds;
+        const y = velocityY * seconds + 0.5 * gravity * seconds * seconds;
+        const fadeIn = Math.min(1, elapsed / 90);
+        const fadeOut = Math.min(1, (duration - elapsed) / 220);
+        const scale = Math.min(1, 0.58 + elapsed / 180);
+        coin.style.opacity = String(Math.max(0, Math.min(fadeIn, fadeOut)));
+        coin.style.transform = `translate(-50%, -50%) translate(${x}px, ${y}px) scale(${scale})`;
+      });
+      if (animationActive) {
+        this.coinRewardAnimationFrame = window.requestAnimationFrame(animateCoins);
+      } else {
+        this.coinRewardAnimationFrame = undefined;
+      }
+    };
+    this.coinRewardAnimationFrame = window.requestAnimationFrame(animateCoins);
+
+    const gain = document.createElement('span');
+    gain.className = 'play-coin-gain';
+    gain.textContent = `+${amount}`;
+    gain.setAttribute('aria-hidden', 'true');
+    this.playCoinFrame.append(gain);
+
+    this.coinRewardCleanupTimer = window.setTimeout(() => {
+      if (this.coinRewardAnimationFrame !== undefined) {
+        window.cancelAnimationFrame(this.coinRewardAnimationFrame);
+        this.coinRewardAnimationFrame = undefined;
+      }
+      this.comboCoinRewardLayer.replaceChildren();
+      gain.remove();
+      this.coinRewardCleanupTimer = undefined;
+    }, 1050);
   }
 
   private renderDailyPlayProgress(): void {
@@ -3084,6 +2968,11 @@ class NumberConnectApp {
 
   private handleWrong(): void {
     if (hasUnlimitedLives(this.playContext)) return;
+    if (this.playContext === 'editor-playtest') {
+      this.editorPlaytestErrorCount += 1;
+      this.renderLives();
+      return;
+    }
     if (this.lives <= 0) return;
     if (this.isAdaptiveGameplaySession() && !this.currentAdaptiveAttemptRecorded) {
       this.currentAdaptiveAttemptErrors += 1;
@@ -3126,8 +3015,21 @@ class NumberConnectApp {
     this.resultOverlay.hidden = false;
   }
 
+  private showEditorPlaytestResult(): void {
+    const returnsToArranger = this.editorPlaytestReturnScreen === 'arranger';
+    this.resultContext = 'editor-playtest';
+    this.resultTitle.textContent = '试玩完成';
+    this.resultMessage.textContent = `${returnsToArranger ? '当前排布关卡' : '当前编辑器关卡'}可以完整通关，本次错误 ${this.editorPlaytestErrorCount} 次。`;
+    this.resultReward.hidden = true;
+    this.restartButton.textContent = '再试一次';
+    this.nextButton.hidden = true;
+    this.resultLobbyButton.textContent = returnsToArranger ? '返回排布工具' : '返回编辑器';
+    this.resultActions.classList.add('is-single');
+    this.setResultActionsDisabled(false);
+    this.resultOverlay.hidden = false;
+  }
+
   private showNormalResult(): void {
-    this.selectNextNormalLevel();
     this.resultContext = 'normal';
     this.resultTitle.textContent = '漂亮的一笔！';
     this.resultMessage.textContent = '你已连接棋盘上的所有数字。';
@@ -3274,6 +3176,10 @@ class NumberConnectApp {
       void this.advanceEndlessStage(false);
     } else if (this.resultContext === 'life-depleted') {
       this.restartAfterFailure();
+    } else if (this.resultContext === 'editor-playtest') {
+      this.editorPlaytestErrorCount = 0;
+      this.renderLives();
+      this.restartCurrent();
     } else {
       this.lives = 3;
       this.renderLives();
@@ -3290,7 +3196,7 @@ class NumberConnectApp {
     } else if (this.resultContext === 'collection') {
       this.nextCollectionLevel();
     } else if (this.resultContext === 'normal') {
-      this.startSelectedNormalLevel();
+      this.nextLevel();
     }
   }
 
@@ -3341,7 +3247,7 @@ class NumberConnectApp {
       this.playPuzzlePattern,
       this.playPuzzleProgress.revealed,
     );
-    this.renderNumberProgress();
+    this.renderPlayPuzzleProgress();
     const revealedPiece = this.playPuzzleShowcaseArt.querySelector<HTMLElement>(
       `[data-puzzle-piece="${this.playPuzzleProgress.revealed - 1}"]`,
     );
@@ -3454,7 +3360,7 @@ class NumberConnectApp {
       try {
         await animation.finished;
       } catch {
-        // A canceled flight still commits the completed piece to the frame.
+        // A canceled flight still commits the completed piece to the top board.
       }
     } finally {
       layer.remove();
@@ -3468,17 +3374,6 @@ class NumberConnectApp {
     this.stopPlayPuzzlePieceFloats();
     this.boardScene.setPaused(true);
     renderPlayPuzzleFinale(this.playPuzzleFinaleArt, this.playPuzzlePattern);
-    const elapsedSeconds = Math.max(0, Math.floor((Date.now() - this.currentBoardStartedAt) / 1000));
-    const elapsedMinutes = Math.floor(elapsedSeconds / 60);
-    this.playPuzzleFinaleTime.textContent = `${String(elapsedMinutes).padStart(2, '0')}:${String(elapsedSeconds % 60).padStart(2, '0')}`;
-    const completedRewardSteps = (this.settings.puzzleMainLevelId - 1) % 5 + 1;
-    this.playPuzzleFinaleRewardProgress.setAttribute('aria-valuenow', String(completedRewardSteps));
-    this.playPuzzleFinaleRewardProgress.setAttribute('aria-valuetext', `${completedRewardSteps}/5 关`);
-    this.playPuzzleFinaleRewardProgress.classList.toggle('is-complete', completedRewardSteps === 5);
-    this.playPuzzleFinaleRewardProgress.querySelectorAll<HTMLElement>('[data-reward-step]').forEach((segment) => {
-      segment.classList.toggle('is-filled', Number(segment.dataset.rewardStep) <= completedRewardSteps);
-    });
-    this.playPuzzleFinaleButton.textContent = `Level ${this.settings.puzzleMainLevelId + 1}`;
     this.playPuzzleFinale.classList.remove('is-visible', 'is-floating', 'is-assembling', 'is-assembled', 'is-leaving', 'is-charge-panel');
     this.playPuzzleFinale.classList.toggle('is-charge-panel', onChargePanel);
     this.playPuzzleFinaleButton.hidden = true;
@@ -3510,39 +3405,6 @@ class NumberConnectApp {
       this.startPlayPuzzleCornerPresses();
     }
     this.playPuzzleFinaleButton.focus();
-    this.showFirstLevelRatingPrompt();
-  }
-
-  private showFirstLevelRatingPrompt(): void {
-    if (this.settings.puzzleMainLevelId !== 1 || this.ratingDialog.open) return;
-    try {
-      if (window.localStorage.getItem(FIRST_LEVEL_RATING_PROMPT_KEY) === 'shown') return;
-      window.localStorage.setItem(FIRST_LEVEL_RATING_PROMPT_KEY, 'shown');
-    } catch {
-      // Storage can be unavailable in private browsing; the current session can still show the prompt.
-    }
-    this.selectRating(0);
-    this.ratingDialog.showModal();
-  }
-
-  private selectRating(rating: number): void {
-    this.selectedRating = Math.max(0, Math.min(5, Math.floor(rating)));
-    this.ratingDialog.querySelectorAll<HTMLButtonElement>('[data-rating]').forEach((button) => {
-      const isSelected = Number(button.dataset.rating) <= this.selectedRating;
-      button.classList.toggle('is-selected', isSelected);
-      button.setAttribute('aria-pressed', String(Number(button.dataset.rating) === this.selectedRating));
-    });
-    this.ratingSubmitButton.disabled = this.selectedRating === 0;
-  }
-
-  private submitRating(): void {
-    if (this.selectedRating === 0) return;
-    try {
-      window.localStorage.setItem(RATING_VALUE_KEY, String(this.selectedRating));
-    } catch {
-      // The interaction still completes when persistent storage is unavailable.
-    }
-    this.ratingDialog.close('submit');
   }
 
   private startPlayPuzzleCornerPresses(): void {
@@ -3703,7 +3565,7 @@ class NumberConnectApp {
     this.playPuzzleFinaleButton.disabled = false;
     this.playPuzzleFinaleBusy = false;
     this.boardScene.setPaused(false);
-    this.startSelectedNormalLevel();
+    this.nextLevel();
   }
 
   private async flyBoardBeadsToShowcase(
@@ -3813,6 +3675,11 @@ class NumberConnectApp {
       );
       return;
     }
+    if (this.playContext === 'editor-playtest') {
+      await this.boardScene.showCompletion();
+      if (this.playContext === 'editor-playtest') this.showEditorPlaytestResult();
+      return;
+    }
     if (this.playContext === 'daily') {
       await this.boardScene.showCompletion();
       if (this.playContext !== 'daily') return;
@@ -3859,7 +3726,6 @@ class NumberConnectApp {
       }
       const onChargePanel = await this.boardScene.fillChargeProgressScreen();
       await this.showPlayPuzzleFinale(onChargePanel);
-      this.selectNextNormalLevel();
     } else {
       const patternComplete = await this.showPlayBeadCompletion();
       if (!patternComplete) {
@@ -3923,7 +3789,9 @@ class NumberConnectApp {
     if (this.isAdaptiveGameplaySession() && this.currentAdaptiveLifeDepleted) {
       this.recordAdaptiveAttempt('life-depleted');
     }
-    if (this.mode !== 'endless') {
+    if (this.playContext === 'editor-playtest') {
+      this.editorPlaytestErrorCount = 0;
+    } else if (this.mode !== 'endless') {
       this.lives = 3;
     }
     this.renderLives();
@@ -3959,13 +3827,6 @@ class NumberConnectApp {
     this.lives = 3;
     this.renderLives();
     this.selectNextNormalLevel();
-    this.setCurrentBoard(this.createNormalLevel());
-  }
-
-  private startSelectedNormalLevel(): void {
-    this.resultOverlay.hidden = true;
-    this.lives = 3;
-    this.renderLives();
     this.setCurrentBoard(this.createNormalLevel());
   }
 
@@ -4035,6 +3896,16 @@ class NumberConnectApp {
       this.showScreen('bead');
       return;
     }
+    if (this.playContext === 'editor-playtest') {
+      if (this.editorPlaytestReturnScreen === 'arranger') {
+        this.showScreen('arranger');
+        this.arranger.open();
+      } else {
+        this.showScreen('editor');
+        this.editor.resumeFromPlaytest();
+      }
+      return;
+    }
     if (this.playContext === 'collection') {
       this.showScreen('collection');
       this.renderCollectionMap();
@@ -4070,7 +3941,9 @@ class NumberConnectApp {
     query<HTMLElement>('#settings-actions').hidden = context === 'lobby';
     leaveButton.textContent = this.mode === 'endless'
       ? '返回无尽模式'
-      : this.playContext === 'bead'
+      : this.playContext === 'editor-playtest'
+        ? this.editorPlaytestReturnScreen === 'arranger' ? '返回排布工具' : '返回编辑器'
+        : this.playContext === 'bead'
           ? '返回拼豆图纸'
           : this.playContext === 'collection'
             ? '返回收集路线'
@@ -4095,7 +3968,7 @@ class NumberConnectApp {
 
   private clearAllLocalData(): void {
     const confirmed = window.confirm(
-      '确定清除全部本地数据吗？\\n\\n关卡进度、拼豆收藏、设置和统计数据都将被永久删除。',
+      '确定清除全部本地数据吗？\\n\\n关卡进度、拼豆收藏、设置、自制关卡和统计数据都将被永久删除。',
     );
     if (!confirmed) return;
     window.localStorage.clear();
@@ -4123,9 +3996,14 @@ class NumberConnectApp {
   }
 
   private populateSettingsForm(): void {
-    this.setLobbyThemeControl(this.settings.lobbyTheme);
+    this.setMainGameplayControl(this.settings.mainGameplay);
+    this.setMainGameplayDifficultyControl(this.settings.mainGameplayDifficulty);
+    this.setInputModeControl(this.settings.inputMode);
     this.setChargeProgressModeControl(this.settings.chargeProgressMode);
+    query<HTMLInputElement>('#settings-next').checked = this.settings.showNextNumber;
+    query<HTMLInputElement>('#settings-difficulty-score').checked = this.settings.showDifficultyScore;
     query<HTMLInputElement>('#settings-sound').checked = this.settings.soundEnabled;
+    this.setUiThemeControl(this.settings.uiTheme);
     this.solutionToggle.checked = this.solutionRevealed;
     this.setTouchPreviewSizeControl(this.settings.touchPreviewSize);
     query<HTMLInputElement>('#settings-touch-preview-follow').checked = this.settings.touchPreviewFollowsPointer;
@@ -4162,7 +4040,7 @@ class NumberConnectApp {
             ? '玩法3关卡'
             : gameplay === 'mode4'
               ? '玩法4关卡'
-              : '关卡',
+              : level.custom ? '自制关卡' : '关卡',
           selected: level.levelId === this.mainGameplayLevelId(gameplay),
         }));
     const options = levelOptions.map((level) => {
@@ -4197,28 +4075,68 @@ class NumberConnectApp {
         : this.mainGameplayLevelId())
       : '—';
     query<HTMLButtonElement>('#default-start-button').disabled = !hasLevels;
+    query<HTMLButtonElement>('#start-button').disabled = !hasLevels;
     this.renderPrimaryAction();
   }
 
   private refreshSettingsControls(): void {
     const previewSize = this.selectedTouchPreviewSize();
+    const mainGameplay = this.selectedMainGameplay();
+    const supportsDifficulty = isAdaptiveMainGameplay(mainGameplay);
+    this.mainGameplayDifficultyControl.disabled = !supportsDifficulty;
+    this.mainGameplayDifficultyRow.classList.toggle('is-disabled', !supportsDifficulty);
+    this.mainGameplayDifficultyRow.setAttribute('aria-disabled', String(!supportsDifficulty));
     query<HTMLInputElement>('#settings-touch-preview-follow').disabled = (
       previewSize === 'off' || previewSize === 'zoom'
     );
+    query<HTMLInputElement>('#settings-next').disabled = usesClickInput(this.selectedInputMode());
   }
 
   private applySettingsChange(): void {
-    this.settings.lobbyTheme = this.selectedLobbyTheme();
+    const previousMainGameplay = this.settings.mainGameplay;
+    const previousMainGameplayDifficulty = this.settings.mainGameplayDifficulty;
+    const nextMainGameplay = this.selectedMainGameplay();
+    const nextMainGameplayDifficulty = this.selectedMainGameplayDifficulty();
+    const mainGameplayChanged = previousMainGameplay !== nextMainGameplay;
+    const mainGameplayDifficultyChanged = (
+      previousMainGameplayDifficulty !== nextMainGameplayDifficulty
+    );
+    const isNormalPlay = this.settingsContext === 'play'
+      && this.playContext === 'normal'
+      && this.mode === 'normal';
+    const shouldRegenerateBoard = isNormalPlay && (
+      mainGameplayChanged
+      || (
+        mainGameplayDifficultyChanged
+        && isAdaptiveMainGameplay(this.activeMainGameplay)
+      )
+    );
+
+    if (
+      shouldRegenerateBoard
+      && this.isAdaptiveGameplaySession()
+      && this.currentAdaptiveLifeDepleted
+    ) {
+      this.recordAdaptiveAttempt('life-depleted');
+    }
+
+    this.settings.mainGameplay = nextMainGameplay;
+    this.settings.mainGameplayDifficulty = nextMainGameplayDifficulty;
+    this.settings.inputMode = this.selectedInputMode();
     this.settings.chargeProgressMode = this.selectedChargeProgressMode();
+    this.settings.showNextNumber = query<HTMLInputElement>('#settings-next').checked;
+    this.settings.showDifficultyScore = query<HTMLInputElement>('#settings-difficulty-score').checked;
     this.settings.soundEnabled = query<HTMLInputElement>('#settings-sound').checked;
+    this.settings.uiTheme = this.selectedUiTheme();
     this.settings.touchPreviewSize = this.selectedTouchPreviewSize();
     this.settings.touchPreviewFollowsPointer = query<HTMLInputElement>('#settings-touch-preview-follow').checked;
+    applyUiTheme(this.settings.uiTheme);
     saveSettings(this.settings);
-    this.applyLobbyTheme(this.settings.lobbyTheme);
     this.renderDefaultLobbyLevelNumber();
     this.refreshSettingsControls();
     this.renderTouchPreviewState();
     this.renderInputMode();
+    if (!this.settings.showDifficultyScore) this.renderHoldScore(null);
     this.boardScene.setRuntimePreferences({
       showNextNumber: this.settings.showNextNumber,
       soundEnabled: this.settings.soundEnabled,
@@ -4226,13 +4144,35 @@ class NumberConnectApp {
       chargeProgressMode: this.settings.chargeProgressMode,
       touchPreviewRingDepth: this.settings.touchPreviewSize === 'large' ? 2 : 1,
       boardZoomEnabled: this.isTouchPreviewZoomMode(),
-      inactiveNumberFillColor: this.settings.lobbyTheme === 'warm' ? 0xede6d9 : 0xdee4f3,
-      inactiveNumberTextColor: this.settings.lobbyTheme === 'warm' ? '#3e3f5e' : '#335588',
     });
+
+    if (shouldRegenerateBoard) {
+      this.activeMainGameplay = this.settings.mainGameplay;
+      this.resultOverlay.hidden = true;
+      this.lives = 3;
+      this.renderLives();
+      this.setCurrentBoard(this.createNormalLevel());
+    }
 
     if (this.settingsContext === 'play') {
       this.setSolutionReveal(this.solutionToggle.checked);
     }
+  }
+
+  private openEditor(): void {
+    this.playContext = 'normal';
+    this.showScreen('editor');
+    this.editor.open();
+  }
+
+  private openLobbyToolsDialog(): void {
+    if (!this.lobbyToolsDialog.open) this.lobbyToolsDialog.showModal();
+  }
+
+  private openArrangementTool(): void {
+    this.playContext = 'normal';
+    this.showScreen('arranger');
+    this.arranger.open();
   }
 
   private openDailyChallenge(): void {
@@ -4279,10 +4219,13 @@ class NumberConnectApp {
     this.dailyProgressTrack.setAttribute('aria-valuemax', String(monthDayCount));
     this.dailyProgressTrack.setAttribute('aria-valuenow', String(completedThisMonth));
 
-    this.dailyMonthLabel.textContent = `${year}/${month + 1}/1`;
+    this.dailyMonthLabel.textContent = new Intl.DateTimeFormat('zh-CN', {
+      year: 'numeric',
+      month: 'long',
+    }).format(this.dailyCalendarMonth);
     this.dailyNextMonthButton.disabled = this.dailyCalendarMonth.getTime() >= currentMonth.getTime();
 
-    const emptyCells = Array.from({ length: new Date(year, month, 1, 12).getDay() }, () => {
+    const emptyCells = Array.from({ length: mondayFirstOffset(year, month) }, () => {
       const empty = document.createElement('span');
       empty.className = 'daily-calendar-empty';
       empty.setAttribute('aria-hidden', 'true');
@@ -4331,9 +4274,15 @@ class NumberConnectApp {
     const selectedLabel = selectedDate
       ? `${selectedDate.getMonth() + 1}月${selectedDate.getDate()}日`
       : '所选日期';
-    this.dailyPlayButton.textContent = this.completedDailyChallenges.has(this.dailyChallengeDateKey) ? 'Play Again' : 'Play Now';
+    this.dailyPlayButton.textContent = this.completedDailyChallenges.has(this.dailyChallengeDateKey) ? '再次挑战' : '开始挑战';
     this.dailyPlayButton.setAttribute('aria-label', `${selectedLabel}，${this.dailyPlayButton.textContent}`);
     this.renderPrimaryAction();
+  }
+
+  private openEndlessHub(): void {
+    this.boardScene.setPaused(true);
+    this.showScreen('endless');
+    this.renderEndlessHub();
   }
 
   private openFavorites(tab: 'album' | 'beads' = 'album'): void {
@@ -5146,10 +5095,7 @@ class NumberConnectApp {
 const app = new NumberConnectApp();
 void app.initialize().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
+  query<HTMLElement>('#lobby-title').textContent = '加载失败';
+  query<HTMLElement>('#lobby-title').title = message;
   console.error(error);
-  const lobbyTitle = document.querySelector<HTMLElement>('#lobby-title');
-  if (lobbyTitle) {
-    lobbyTitle.textContent = '加载失败';
-    lobbyTitle.title = message;
-  }
 });

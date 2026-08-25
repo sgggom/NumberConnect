@@ -9,7 +9,7 @@ import {
 import { BoardShape } from '../game/types';
 
 describe('built-in level collection', () => {
-  it('contains the 9 bundled campaign levels', () => {
+  it('contains the 9 campaign levels exported from the local editor', () => {
     const levels = decodeCompactLevelCollection(levelsJson, false);
     const sizeCounts = levels.reduce<Record<string, number>>((counts, level) => {
       const size = `${level.rows}×${level.columns}`;

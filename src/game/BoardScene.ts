@@ -34,14 +34,11 @@ import {
   BoardShape,
   backgroundUrl,
   cellKey,
-  parseComboSoundArrangement,
-  parseComboSoundPattern,
   usesClickInput,
   type BoardArtworkInput,
   type BoardHoldScore,
   type BoardSessionInput,
   type Cell,
-  type ComboSoundSet,
 } from './types';
 import { levelBallColor } from './levelTheme';
 
@@ -61,7 +58,6 @@ interface CellView {
   hollowRing: CellShape;
   glow: CellShape;
   label: Phaser.GameObjects.Text;
-  underline: Phaser.GameObjects.Rectangle;
   questionMark: Phaser.GameObjects.Text;
   questionShown: boolean;
 }
@@ -149,13 +145,16 @@ const HIDDEN_QUESTION_MIN_SCALE = 0.55;
 const HIDDEN_QUESTION_SHOW_DURATION_MS = 170;
 const HIDDEN_QUESTION_HIDE_DURATION_MS = 120;
 const NUMBER_FILL_RADIUS_SCALE = 49 / 64;
-const NUMBER_FILL_DISPLAY_SCALE = 0.95;
-const CONNECTED_NUMBER_BACKDROP_SCALE = 1.2;
-const CONNECTED_NUMBER_BACKDROP_ALPHA = 0.5;
-const NUMBER_UNDERLINE_Y_OFFSET_SCALE = 0.44;
+const CELL_SLOT_RADIUS_SCALE = 54 / 64;
+const CELL_SLOT_TO_FILL_SCALE = 1.12;
+const INACTIVE_NUMBER_FILL_COLOR = 0xccd0d0;
+const INACTIVE_NUMBER_TEXT_COLOR = '#465158';
 
 const numberFillDisplaySize = (radius: number): number =>
-  liquidBallRadius(radius) * 2 / NUMBER_FILL_RADIUS_SCALE * NUMBER_FILL_DISPLAY_SCALE;
+  liquidBallRadius(radius) * 2 / NUMBER_FILL_RADIUS_SCALE;
+
+const cellSlotDisplaySize = (radius: number): number =>
+  liquidBallRadius(radius) * 2 * CELL_SLOT_TO_FILL_SCALE / CELL_SLOT_RADIUS_SCALE;
 
 const colorHex = (color: number): string =>
   `#${(color & 0xffffff).toString(16).padStart(6, '0')}`;
@@ -234,8 +233,6 @@ export class BoardScene extends Phaser.Scene {
   private drawingNativePointerId?: number;
   private wrongFeedbackActive = false;
   private readonly wrongCellIndexes = new Set<number>();
-  private readonly initiallyHiddenCellKeys = new Set<string>();
-  private readonly activeConnectionBackdropIndexes = new Set<number>();
   private locked = true;
   private transitioning = false;
   private solutionRevealed = false;
@@ -246,12 +243,7 @@ export class BoardScene extends Phaser.Scene {
   private raisedConnectedCellIndex?: number;
   private pendingStepReward?: PendingStepRewardFeedback;
   private completionCheckPending = false;
-  private connectionRewardComboCount = 0;
-  private connectionSoundArrangementIndex = 0;
-  private connectionSoundMelodyIndex?: number;
-  private connectionSoundNoteIndex = 0;
-  private connectionSoundMelodies: ReadonlyArray<ReadonlyArray<readonly number[]>> = [[[1], [2], [3], [4], [5], [6], [7], [8]]];
-  private connectionSoundArrangement: ReadonlyArray<readonly number[]> = [[1]];
+  private connectionComboCount = 0;
   private readonly heldScoreRequests = new Map<string, Promise<BoardHoldScore | undefined>>();
   private heldScoreDisplayToken = 0;
   private paused = true;
@@ -263,7 +255,6 @@ export class BoardScene extends Phaser.Scene {
   private boardViewportScroll = { x: 0.5, y: 0.5 };
   private readonly artworkTextures = new Map<string, string>();
   private readonly artworkColorCache = new Map<string, readonly number[]>();
-  private comboSoundSet: ComboSoundSet = 'combo1';
 
   public constructor() {
     super('board');
@@ -277,36 +268,12 @@ export class BoardScene extends Phaser.Scene {
     textures.forEach(({ key, url }) => this.artworkTextures.set(key, url));
   }
 
-  public setComboSoundSet(set: ComboSoundSet): void {
-    this.comboSoundSet = set;
-  }
-
-  public setConnectionSoundComposition(patterns: readonly string[], arrangement: string): void {
-    const melodies = patterns.flatMap((pattern) => {
-      const parsed = parseComboSoundPattern(pattern);
-      return parsed ? [parsed] : [];
-    });
-    this.connectionSoundMelodies = melodies.length > 0
-      ? melodies
-      : [[[1], [2], [3], [4], [5], [6], [7], [8]]];
-    const arrangementTokens = parseComboSoundArrangement(arrangement);
-    const validArrangement = arrangementTokens?.map((choices) => (
-      choices.filter((melodyNumber) => melodyNumber <= this.connectionSoundMelodies.length)
-    )).filter((choices) => choices.length > 0);
-    this.connectionSoundArrangement = validArrangement && validArrangement.length > 0
-      ? validArrangement
-      : [[1]];
-    this.resetConnectionSoundComposition();
-  }
-
   public preload(): void {
     for (let index = 1; index <= 8; index += 1) {
-      this.load.audio(`combo1-${index}`, `./audio/combo_${index}.mp3`);
-      this.load.audio(`combo2-${index}`, `./audio/combo2_${index}.mp3`);
+      this.load.audio(`combo-${index}`, `./audio/combo_${index}.mp3`);
     }
     this.load.audio('wrong', './audio/wrong_move.mp3');
     this.load.audio('victory', './audio/victory_bgm.mp3');
-    this.load.image('board-number-fill-slice', './ui/number-connect-slices/set-2/shuzi_di.png');
     this.load.image('bead-gem', './ui/beads/bead-gem.png');
     this.load.svg('bead-jar', './ui/beads/open-glass-jar.svg', { width: 512, height: 512 });
     for (const name of COLLECTION_ARTWORK_NAMES) {
@@ -342,8 +309,7 @@ export class BoardScene extends Phaser.Scene {
   };
 
   public setBoard(session: BoardSessionInput): void {
-    this.resetConnectionRewardCombo(true);
-    this.resetConnectionSoundComposition();
+    this.resetConnectionComboEdge(true);
     this.cancelAutoClickSequence();
     this.cancelBoardEntrance();
     this.clearNeighborhoodPreview();
@@ -363,9 +329,6 @@ export class BoardScene extends Phaser.Scene {
     this.heldScoreDisplayToken += 1;
     this.wrongFeedbackActive = false;
     this.wrongCellIndexes.clear();
-    this.initiallyHiddenCellKeys.clear();
-    session.hiddenCells.forEach((key) => this.initiallyHiddenCellKeys.add(key));
-    this.activeConnectionBackdropIndexes.clear();
     this.cellSelectionHandler = undefined;
     this.transitioning = false;
     this.boardViewportScroll = { x: 0.5, y: 0.5 };
@@ -382,7 +345,6 @@ export class BoardScene extends Phaser.Scene {
     if (paused) {
       this.cancelAutoClickSequence();
       this.clearNeighborhoodPreview();
-      this.activeConnectionBackdropIndexes.clear();
       this.isDrawing = false;
       this.drawingPointerId = undefined;
       this.drawingNativePointerId = undefined;
@@ -408,6 +370,41 @@ export class BoardScene extends Phaser.Scene {
       && !this.autoClickTimer
       && !this.connection.complete,
     );
+  }
+
+  public canUndoStep(): boolean {
+    return this.canUsePowerUp() && this.connection?.canUndoStep === true;
+  }
+
+  public canUseUndoControl(): boolean {
+    return Boolean(
+      this.session
+      && this.connection
+      && !this.paused
+      && !this.transitioning
+      && !this.autoClickTimer
+      && !this.connection.complete
+      && (!this.locked || this.entranceAnimating),
+    );
+  }
+
+  public undoLastStep(): boolean {
+    if (!this.session || !this.connection || !this.canUndoStep()) return false;
+    this.cancelAutoClickSequence();
+    this.finishPointerInteraction();
+    const progress = this.connection.undoLastStep();
+    if (progress === undefined) return false;
+
+    this.wrongFeedbackActive = false;
+    this.wrongCellIndexes.clear();
+    this.pendingStepReward = undefined;
+    this.stopHintPulse();
+    this.hideDragQuestions();
+    this.clearNeighborhoodPreview();
+    this.refreshView();
+    this.renderLevelProgressEdge();
+    this.session.onProgress(progress, this.session.level.solutionPath.length);
+    return true;
   }
 
   public quickComplete(): boolean {
@@ -553,13 +550,14 @@ export class BoardScene extends Phaser.Scene {
   public setRuntimePreferences(
     preferences: Pick<
       BoardSessionInput,
-      'showNextNumber' | 'soundEnabled' | 'inputMode' | 'touchPreviewRingDepth' | 'boardZoomEnabled'
-      | 'inactiveNumberFillColor' | 'inactiveNumberTextColor' | 'chargeProgressMode'
+      'showNextNumber' | 'soundEnabled' | 'inputMode' | 'chargeProgressMode' | 'touchPreviewRingDepth' | 'boardZoomEnabled'
     >,
   ): void {
     if (!this.session) return;
     const boardZoomChanged = this.session.boardZoomEnabled !== preferences.boardZoomEnabled;
-    const chargeProgressModeChanged = this.session.chargeProgressMode !== preferences.chargeProgressMode;
+    const chargeProgressModeChanged = (
+      this.session.chargeProgressMode !== preferences.chargeProgressMode
+    );
     if (this.session.inputMode !== preferences.inputMode) {
       this.cancelAutoClickSequence();
       this.finishPointerInteraction();
@@ -572,10 +570,8 @@ export class BoardScene extends Phaser.Scene {
     this.session.chargeProgressMode = preferences.chargeProgressMode;
     this.session.touchPreviewRingDepth = preferences.touchPreviewRingDepth;
     this.session.boardZoomEnabled = preferences.boardZoomEnabled;
-    this.session.inactiveNumberFillColor = preferences.inactiveNumberFillColor;
-    this.session.inactiveNumberTextColor = preferences.inactiveNumberTextColor;
     if (chargeProgressModeChanged) {
-      this.resetConnectionRewardCombo(true);
+      this.resetConnectionComboEdge(true);
       this.renderLevelProgressEdge();
     }
     if (boardZoomChanged) {
@@ -594,7 +590,12 @@ export class BoardScene extends Phaser.Scene {
   private playBoardEntrance(view: BoardView): void {
     const token = this.entranceAnimationToken;
     const cells = [...view.cells.values()];
-    const numberFillRestingScale = cells[0]?.numberFill.scaleX ?? 1;
+    const slotRestingScale = cellSlotDisplaySize(view.radius) / 128;
+    const numberFillRestingScale = numberFillDisplaySize(view.radius) / 128;
+    const outlineOrder = [...cells].sort((left, right) => {
+      const diagonalOffset = (left.x + left.y) - (right.x + right.y);
+      return Math.abs(diagonalOffset) > 0.5 ? diagonalOffset : left.y - right.y || left.x - right.x;
+    });
     const visibleCells = cells
       .filter((cell) => this.solutionRevealed || this.connection?.isVisible(cell.index) === true)
       .sort((left, right) => left.index - right.index);
@@ -605,55 +606,47 @@ export class BoardScene extends Phaser.Scene {
     cells.forEach((cell) => {
       // These canvas textures have board-dependent resting scales. Animate
       // relative to those values so the bounce never expands them to 128px.
-      cell.slot.setVisible(false).setAlpha(0);
+      cell.slot.setAlpha(0).setScale(slotRestingScale * 0.1);
       cell.numberFill.setAlpha(0).setScale(numberFillRestingScale * 0.1);
       cell.liquidRing.setAlpha(0).setScale(1);
       cell.circle.setAlpha(0).setScale(0.1);
       cell.hollowRing.setVisible(true).setAlpha(0).setScale(0.1);
       cell.glow.setAlpha(0).setScale(1);
       cell.label.setVisible(false).setAlpha(0).setScale(0.1);
-      cell.underline.setVisible(false).setAlpha(0).setScale(0.1);
     });
 
     if (cells.length === 0 || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
       this.finishBoardEntrance(view, token);
       return;
     }
-    this.playNumberEntrance(view, cells, visibleCells, numberFillRestingScale, token);
+
+    const outlineStagger = Math.min(28, Math.max(7, 520 / outlineOrder.length));
+    const outlineTween = this.tweens.add({
+      targets: outlineOrder.map((cell) => cell.slot),
+      alpha: 1,
+      scaleX: slotRestingScale,
+      scaleY: slotRestingScale,
+      delay: this.tweens.stagger(outlineStagger, {}),
+      duration: 250,
+      ease: 'Back.easeOut',
+      easeParams: [1.7],
+      onComplete: () => this.playNumberEntrance(view, visibleCells, token),
+    });
+    this.entranceTweens.push(outlineTween);
   }
 
-  private playNumberEntrance(
-    view: BoardView,
-    cells: CellView[],
-    visibleCells: CellView[],
-    numberFillRestingScale: number,
-    token: number,
-  ): void {
+  private playNumberEntrance(view: BoardView, visibleCells: CellView[], token: number): void {
     if (token !== this.entranceAnimationToken || this.view !== view) return;
-    if (cells.length === 0) {
+    if (visibleCells.length === 0) {
       this.finishBoardEntrance(view, token);
       return;
     }
 
-    const underlinedVisibleCells = visibleCells.filter((cell) => (
-      !this.initiallyHiddenCellKeys.has(cellKey(cell.cell))
-    ));
     visibleCells.forEach((cell) => cell.label.setVisible(true));
-    underlinedVisibleCells.forEach((cell) => cell.underline.setVisible(true));
     const numberStagger = Math.min(64, Math.max(22, 380 / visibleCells.length));
     const delay = this.tweens.stagger(numberStagger, {});
     const labelTween = this.tweens.add({
       targets: visibleCells.map((cell) => cell.label),
-      alpha: 1,
-      scaleX: 1,
-      scaleY: 1,
-      delay,
-      duration: 240,
-      ease: 'Back.easeOut',
-      easeParams: [2.35],
-    });
-    const underlineTween = this.tweens.add({
-      targets: underlinedVisibleCells.map((cell) => cell.underline),
       alpha: 1,
       scaleX: 1,
       scaleY: 1,
@@ -673,32 +666,32 @@ export class BoardScene extends Phaser.Scene {
       easeParams: [2.35],
     });
     const fillTween = this.tweens.add({
-      targets: cells.map((cell) => cell.numberFill),
+      targets: visibleCells.map((cell) => cell.numberFill),
       alpha: 1,
-      scaleX: numberFillRestingScale,
-      scaleY: numberFillRestingScale,
+      scaleX: numberFillDisplaySize(view.radius) / 128,
+      scaleY: numberFillDisplaySize(view.radius) / 128,
       delay,
       duration: 310,
       ease: 'Back.easeOut',
       easeParams: [2.05],
       onComplete: () => this.finishBoardEntrance(view, token),
     });
-    this.entranceTweens.push(labelTween, underlineTween, circleTween, fillTween);
+    this.entranceTweens.push(labelTween, circleTween, fillTween);
   }
 
   private finishBoardEntrance(view: BoardView, token: number): void {
     if (token !== this.entranceAnimationToken || this.view !== view) return;
     this.entranceTweens = [];
+    const slotRestingScale = cellSlotDisplaySize(view.radius) / 128;
+    const numberFillRestingScale = numberFillDisplaySize(view.radius) / 128;
     view.cells.forEach((cell) => {
-      cell.slot.setVisible(false).setAlpha(0);
-      const numberFillRestingScale = numberFillDisplaySize(view.radius) / Math.max(1, cell.numberFill.width);
+      cell.slot.setAlpha(1).setScale(slotRestingScale);
       cell.numberFill.setAlpha(1).setScale(numberFillRestingScale);
       cell.liquidRing.setAlpha(1).setScale(1);
       cell.circle.setAlpha(1).setScale(1);
       cell.hollowRing.setAlpha(1).setScale(1);
       cell.glow.setAlpha(1).setScale(1);
       cell.label.setAlpha(1).setScale(1);
-      cell.underline.setAlpha(1).setScale(1);
     });
     this.entranceAnimating = false;
     this.locked = this.paused || this.transitioning || this.connection?.complete === true;
@@ -734,7 +727,7 @@ export class BoardScene extends Phaser.Scene {
     );
 
     this.session = session;
-    this.resetConnectionRewardCombo(true);
+    this.resetConnectionComboEdge(true);
     this.connection = this.createConnectionProgress(session);
     this.renderLevelProgressEdge();
     this.boardViewportScroll = { x: 0.5, y: 0.5 };
@@ -781,6 +774,7 @@ export class BoardScene extends Phaser.Scene {
     edge.classList.remove('is-screen-filling', 'is-screen-filled');
     void edge.offsetWidth;
     edge.classList.add('is-screen-filling');
+
     if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
       await new Promise<void>((resolve) => window.setTimeout(resolve, 520));
     }
@@ -897,7 +891,7 @@ export class BoardScene extends Phaser.Scene {
       view.root.add(piece);
       pieces.push(piece);
 
-      const front = [cellView.slot, cellView.liquidRing, cellView.circle, cellView.hollowRing, cellView.numberFill, cellView.glow, cellView.label, cellView.underline];
+      const front = [cellView.slot, cellView.liquidRing, cellView.circle, cellView.hollowRing, cellView.numberFill, cellView.glow, cellView.label];
       return new Promise<void>((resolve) => {
         this.tweens.add({
           targets: front,
@@ -956,7 +950,6 @@ export class BoardScene extends Phaser.Scene {
       cell.numberFill,
       cell.glow,
       cell.label,
-      cell.underline,
       cell.questionMark,
     ]);
     this.tweens.killTweensOf([...boardGraphics, ...cellObjects]);
@@ -1016,7 +1009,6 @@ export class BoardScene extends Phaser.Scene {
         cellView.numberFill,
         cellView.glow,
         cellView.label,
-        cellView.underline,
         cellView.questionMark,
       ];
       return new Promise<void>((resolve) => {
@@ -1103,7 +1095,7 @@ export class BoardScene extends Phaser.Scene {
     const unusedCellObjects: Phaser.GameObjects.GameObject[] = [];
     view.cells.forEach((cellView, key) => {
       if (!rewardCells.has(key)) {
-        unusedCellObjects.push(cellView.slot, cellView.liquidRing, cellView.circle, cellView.hollowRing, cellView.numberFill, cellView.glow, cellView.label, cellView.underline);
+        unusedCellObjects.push(cellView.slot, cellView.liquidRing, cellView.circle, cellView.hollowRing, cellView.numberFill, cellView.glow, cellView.label);
       }
     });
     if (unusedCellObjects.length > 0) {
@@ -1134,7 +1126,7 @@ export class BoardScene extends Phaser.Scene {
 
       return new Promise<void>((resolve) => {
         this.tweens.add({
-          targets: [cellView.slot, cellView.liquidRing, cellView.circle, cellView.hollowRing, cellView.numberFill, cellView.glow, cellView.label, cellView.underline],
+          targets: [cellView.slot, cellView.liquidRing, cellView.circle, cellView.hollowRing, cellView.numberFill, cellView.glow, cellView.label],
           scaleX: 0,
           delay: index * stagger,
           duration: reducedMotion ? 1 : 90,
@@ -1147,7 +1139,6 @@ export class BoardScene extends Phaser.Scene {
             cellView.glow.setAlpha(0);
             cellView.liquidRing.setAlpha(0);
             cellView.label.setAlpha(0);
-            cellView.underline.setAlpha(0);
             this.tweens.add({
               targets: gem,
               scaleX: 1,
@@ -1297,25 +1288,76 @@ export class BoardScene extends Phaser.Scene {
     return textureKey;
   }
 
+  private recessedCellSlotTexture(): string {
+    const textureKey = 'board-cell-recessed-slot-reference-v2';
+    if (this.textures.exists(textureKey)) return textureKey;
+
+    const texture = this.textures.createCanvas(textureKey, 128, 128);
+    if (!texture) return '__DEFAULT';
+    const context = texture.context;
+    context.clearRect(0, 0, 128, 128);
+
+    this.paintRecessedCellSlot(context);
+
+    texture.refresh();
+    return textureKey;
+  }
+
+  private wrongCellSlotTexture(): string {
+    const textureKey = 'board-cell-recessed-slot-wrong-v4';
+    if (this.textures.exists(textureKey)) return textureKey;
+
+    const texture = this.textures.createCanvas(textureKey, 128, 128);
+    if (!texture) return '__DEFAULT';
+    const context = texture.context;
+    context.clearRect(0, 0, 128, 128);
+
+    this.paintRecessedCellSlot(context);
+
+    context.save();
+    context.beginPath();
+    context.arc(64, 64, 52, 0, Math.PI * 2);
+    context.clip();
+    const redGlow = context.createRadialGradient(64, 64, 4, 64, 64, 52);
+    redGlow.addColorStop(0, 'rgba(255,88,98,.34)');
+    redGlow.addColorStop(0.55, 'rgba(230,0,18,.2)');
+    redGlow.addColorStop(0.8, 'rgba(230,0,18,.3)');
+    redGlow.addColorStop(0.96, 'rgba(166,0,14,.42)');
+    redGlow.addColorStop(1, 'rgba(166,0,14,0)');
+    context.fillStyle = redGlow;
+    context.fillRect(8, 5, 112, 112);
+    context.restore();
+
+    texture.refresh();
+    return textureKey;
+  }
+
+  private paintRecessedCellSlot(context: CanvasRenderingContext2D): void {
+    context.beginPath();
+    context.arc(64, 64, 54, 0, Math.PI * 2);
+    const recess = context.createRadialGradient(82, 82, 4, 64, 64, 72);
+    recess.addColorStop(0, 'rgba(255,255,255,.98)');
+    recess.addColorStop(0.42, 'rgba(247,248,249,.96)');
+    recess.addColorStop(0.68, 'rgba(225,228,230,.92)');
+    recess.addColorStop(0.86, 'rgba(199,204,207,.78)');
+    recess.addColorStop(1, 'rgba(174,181,186,.56)');
+    context.fillStyle = recess;
+    context.fill();
+
+    context.save();
+    context.globalCompositeOperation = 'destination-in';
+    const edgeFeather = context.createRadialGradient(64, 64, 50.5, 64, 64, 55);
+    edgeFeather.addColorStop(0, 'rgba(0,0,0,1)');
+    edgeFeather.addColorStop(0.45, 'rgba(0,0,0,.92)');
+    edgeFeather.addColorStop(0.78, 'rgba(0,0,0,.48)');
+    edgeFeather.addColorStop(1, 'rgba(0,0,0,0)');
+    context.fillStyle = edgeFeather;
+    context.fillRect(7, 7, 114, 114);
+    context.restore();
+  }
+
   private numberFillTexture(color: number): string {
     const normalizedColor = color & 0xffffff;
-    const sliceTextureKey = `board-number-fill-slice-${normalizedColor.toString(16).padStart(6, '0')}`;
-    if (this.textures.exists(sliceTextureKey)) return sliceTextureKey;
-    if (this.textures.exists('board-number-fill-slice')) {
-      const sliceTexture = this.textures.createCanvas(sliceTextureKey, 100, 100);
-      if (sliceTexture) {
-        const source = this.textures.get('board-number-fill-slice').getSourceImage() as CanvasImageSource;
-        const context = sliceTexture.context;
-        context.clearRect(0, 0, 100, 100);
-        context.drawImage(source, 0, 0, 100, 100);
-        context.globalCompositeOperation = 'source-in';
-        context.fillStyle = colorHex(normalizedColor);
-        context.fillRect(0, 0, 100, 100);
-        context.globalCompositeOperation = 'source-over';
-        sliceTexture.refresh();
-        return sliceTextureKey;
-      }
-    }
     const textureKey = `board-number-fill-${normalizedColor.toString(16).padStart(6, '0')}-frosted-opaque-v3`;
     if (this.textures.exists(textureKey)) return textureKey;
 
@@ -1639,12 +1681,12 @@ export class BoardScene extends Phaser.Scene {
       const slot = this.add.image(
         position.x,
         position.y,
-        '__WHITE',
-      ).setVisible(false).setAlpha(0);
+        this.recessedCellSlotTexture(),
+      ).setDisplaySize(cellSlotDisplaySize(radius), cellSlotDisplaySize(radius));
       const numberFill = this.add.image(
         position.x,
         position.y,
-        this.numberFillTexture(session.inactiveNumberFillColor),
+        this.numberFillTexture(INACTIVE_NUMBER_FILL_COLOR),
       ).setDisplaySize(numberFillDisplaySize(radius), numberFillDisplaySize(radius));
       const liquidRingRadius = liquidBallRadius(radius);
       const liquidRing: CellShape = isHex
@@ -1689,13 +1731,6 @@ export class BoardScene extends Phaser.Scene {
       const labelSize = baseRadius * 2;
       label.setFixedSize(labelSize, labelSize);
       label.setPadding(0, Math.max(0, (labelSize - labelTextHeight) * 0.5), 0, 0);
-      const underline = this.add.rectangle(
-        position.x,
-        position.y + numberFontSize * NUMBER_UNDERLINE_Y_OFFSET_SCALE,
-        Math.max(8, numberFontSize * 0.42),
-        Math.max(2, numberFontSize * 0.065),
-        Number.parseInt(session.inactiveNumberTextColor.slice(1), 16),
-      ).setOrigin(0.5);
       const questionMark = this.add.text(position.x, position.y, '?', {
         fontFamily: 'Nunito Sans, sans-serif',
         fontStyle: '700',
@@ -1717,7 +1752,7 @@ export class BoardScene extends Phaser.Scene {
         .setScale(HIDDEN_QUESTION_MIN_SCALE);
       circle.on('pointerdown', (pointer: Phaser.Input.Pointer) => this.handleCellDown(index, pointer));
       cellUnderlays.push(glow, slot);
-      cellForegrounds.push(liquidRing, circle, hollowRing, numberFill, label, underline, questionMark);
+      cellForegrounds.push(liquidRing, circle, hollowRing, numberFill, label, questionMark);
       cells.set(cellKey(cell), {
         cell,
         index,
@@ -1731,7 +1766,6 @@ export class BoardScene extends Phaser.Scene {
         hollowRing,
         glow,
         label,
-        underline,
         questionMark,
         questionShown: false,
       });
@@ -1828,32 +1862,32 @@ export class BoardScene extends Phaser.Scene {
       const cellColor = artworkEnabled && connected
         ? cellView.color
         : this.view!.ballColor;
+      const numberFillColor = connected ? cellColor : INACTIVE_NUMBER_FILL_COLOR;
       const isWrongCell = this.wrongCellIndexes.has(cellView.index);
-      const numberFillColor = isWrongCell
-        ? COLORS.wrongRipple
-        : connected
-          ? cellColor
-          : this.session!.inactiveNumberFillColor;
-      const displayText = String(this.connection?.displayNumber(cellView.index) ?? cellView.index + 1);
-      cellView.label.setText(displayText);
+      cellView.label.setText(String(this.connection?.displayNumber(cellView.index) ?? cellView.index + 1));
+      const slotTexture = isWrongCell
+        ? this.wrongCellSlotTexture()
+        : this.recessedCellSlotTexture();
+      if (cellView.slot.texture.key !== slotTexture) {
+        cellView.slot
+          .setTexture(slotTexture)
+          .setDisplaySize(
+            cellSlotDisplaySize(this.view!.radius),
+            cellSlotDisplaySize(this.view!.radius),
+          );
+      }
+      cellView.slot.setVisible(true).setAlpha(1);
       const numberFillTexture = this.numberFillTexture(numberFillColor);
-      const numberFillSize = numberFillDisplaySize(this.view!.radius);
       if (cellView.numberFill.texture.key !== numberFillTexture) {
         cellView.numberFill
           .setTexture(numberFillTexture)
-          .setDisplaySize(numberFillSize, numberFillSize);
+          .setDisplaySize(
+            numberFillDisplaySize(this.view!.radius),
+            numberFillDisplaySize(this.view!.radius),
+          );
       }
-      const showConnectionBackdrop = this.activeConnectionBackdropIndexes.has(cellView.index);
-      cellView.slot
-        .setTexture(numberFillTexture)
-        .setDisplaySize(
-          numberFillSize * CONNECTED_NUMBER_BACKDROP_SCALE,
-          numberFillSize * CONNECTED_NUMBER_BACKDROP_SCALE,
-        )
-        .setVisible(showConnectionBackdrop)
-        .setAlpha(showConnectionBackdrop ? CONNECTED_NUMBER_BACKDROP_ALPHA : 0);
       cellView.numberFill
-        .setVisible(true)
+        .setVisible(numberVisible && !isWrongCell)
         .setAlpha(1);
       // The legacy liquid node remains as animation state for bridge scaling,
       // but the visible node is now the consistently sized numberFill texture.
@@ -1865,28 +1899,15 @@ export class BoardScene extends Phaser.Scene {
       cellView.hollowRing.setVisible(false);
       cellView.label.setVisible(numberVisible && !isWrongCell);
       cellView.label.setAlpha(1);
-      const labelColor = (
+      cellView.label.setColor(
         !connected
-          ? this.session!.inactiveNumberTextColor
+          ? INACTIVE_NUMBER_TEXT_COLOR
           : artworkEnabled
             ? contrastTextForColor(cellColor)
             : revealedHidden
               ? COLORS.revealedHiddenText
-              : COLORS.selectedText
+              : COLORS.selectedText,
       );
-      cellView.label.setColor(labelColor);
-      cellView.underline
-        .setDisplaySize(
-          Math.max(8, this.view!.numberFontSize * (0.42 + Math.max(0, displayText.length - 1) * 0.3)),
-          Math.max(2, this.view!.numberFontSize * 0.065),
-        )
-        .setFillStyle(Number.parseInt(labelColor.slice(1), 16), 1)
-        .setVisible(
-          numberVisible
-          && !isWrongCell
-          && !this.initiallyHiddenCellKeys.has(key)
-        )
-        .setAlpha(1);
       cellView.label.setStroke('rgba(0,0,0,0)', 0);
       cellView.label.setFontStyle(revealedHidden ? 'italic 900' : '900');
       cellView.questionMark.setColor(colorHex(cellColor));
@@ -2148,8 +2169,6 @@ export class BoardScene extends Phaser.Scene {
 
   private finishPointerInteraction(): void {
     const wasDrawing = this.isDrawing;
-    const hadActiveConnectionBackdrops = this.activeConnectionBackdropIndexes.size > 0;
-    this.activeConnectionBackdropIndexes.clear();
     this.isDrawing = false;
     this.drawingPointerId = undefined;
     this.drawingNativePointerId = undefined;
@@ -2158,8 +2177,8 @@ export class BoardScene extends Phaser.Scene {
     if (!this.session || !usesClickInput(this.session.inputMode)) this.connection?.endStroke();
     this.view?.pointerLine.clear();
     if (this.connection?.complete !== true) this.lowerRaisedConnectedCell();
-    if (wasDrawing && this.connection?.complete !== true) this.resetConnectionRewardCombo();
-    if (wasDrawing || hadActiveConnectionBackdrops) this.refreshView();
+    if (wasDrawing && this.connection?.complete !== true) this.resetConnectionComboEdge();
+    if (wasDrawing) this.refreshView();
     this.clearNeighborhoodPreview();
   }
 
@@ -2461,7 +2480,7 @@ export class BoardScene extends Phaser.Scene {
       this.wrongFeedbackActive = true;
       const shouldLoseLife = !this.wrongCellIndexes.has(action.index);
       this.flashWrong(action.index);
-      this.resetConnectionRewardCombo();
+      this.resetConnectionComboEdge();
       this.playSound('wrong');
       this.cancelAutoClickSequence();
       this.pendingStepReward = undefined;
@@ -2473,26 +2492,15 @@ export class BoardScene extends Phaser.Scene {
 
     this.wrongFeedbackActive = false;
     if (action.type === 'started') {
-      this.activeConnectionBackdropIndexes.clear();
-      if (playFeedback && this.isDrawing) {
-        this.activeConnectionBackdropIndexes.add(action.index);
-      }
       this.wrongCellIndexes.clear();
       this.refreshView();
-      if (playFeedback) {
-        this.playConnectedCellBounce(action.index);
-        this.playConnectionBackdropPop(action.index);
-        this.playNextConnectionSound();
-      }
+      if (playFeedback) this.playConnectedCellBounce(action.index);
       this.renderLevelProgressEdge(action.index);
       return;
     }
     if (!action.added) {
       this.refreshView();
       return;
-    }
-    if (playFeedback && this.isDrawing) {
-      this.activeConnectionBackdropIndexes.add(action.index);
     }
     this.wrongCellIndexes.clear();
     this.refreshView();
@@ -2514,10 +2522,11 @@ export class BoardScene extends Phaser.Scene {
           if (this.session === completionSession) completionSession.onComplete();
         });
       });
-      this.playConnectionBackdropPop(action.index);
       completionWaitsForLanding = action.complete && feedbackStarted;
-      if (this.session.chargeProgressMode === 'coins') this.advanceConnectionRewardCombo();
-      this.playNextConnectionSound();
+      const comboLevel = this.session.chargeProgressMode === 'coins'
+        ? this.advanceConnectionComboEdge(action.index)
+        : undefined;
+      if (comboLevel !== undefined) this.playSound(`combo-${comboLevel}`);
     }
     this.renderLevelProgressEdge(action.index);
     this.session.onProgress(action.progress, this.session.level.solutionPath.length);
@@ -2652,19 +2661,10 @@ export class BoardScene extends Phaser.Scene {
     }
 
     this.raisedConnectedCellIndex = index;
-    this.bringConnectedCellToFront(cell);
-    const targets = [cell.slot, cell.numberFill, cell.liquidRing, cell.circle, cell.hollowRing, cell.label];
-    this.tweens.killTweensOf([...targets, cell.underline]);
+    const targets = [cell.numberFill, cell.liquidRing, cell.circle, cell.hollowRing, cell.label];
+    this.tweens.killTweensOf(targets);
     targets.forEach((target) => target.setY(cell.y));
-    const underlineY = cell.y + this.view.numberFontSize * NUMBER_UNDERLINE_Y_OFFSET_SCALE;
-    cell.underline.setY(underlineY);
-    const liftHeight = cell.numberFill.displayHeight / 4;
-    this.tweens.add({
-      targets: cell.underline,
-      y: underlineY - liftHeight,
-      duration: 150,
-      ease: 'Quad.easeOut',
-    });
+    const liftHeight = cell.numberFill.displayHeight / 3;
     this.tweens.add({
       targets,
       y: cell.y - liftHeight,
@@ -2677,46 +2677,6 @@ export class BoardScene extends Phaser.Scene {
       },
     });
     return true;
-  }
-
-  private bringConnectedCellToFront(cell: CellView): void {
-    if (!this.view) return;
-    [
-      cell.slot,
-      cell.liquidRing,
-      cell.circle,
-      cell.hollowRing,
-      cell.numberFill,
-      cell.label,
-      cell.underline,
-      cell.questionMark,
-    ].forEach((object) => this.view!.root.bringToTop(object));
-    this.view.root.bringToTop(this.view.choiceScore);
-  }
-
-  private playConnectionBackdropPop(index: number): void {
-    if (
-      !this.view
-      || !this.session
-      || window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    ) return;
-    const pathCell = this.session.level.solutionPath[index];
-    const cell = pathCell ? this.view.cells.get(cellKey(pathCell)) : undefined;
-    if (!cell?.slot.visible) return;
-
-    const restingScaleX = cell.slot.scaleX;
-    const restingScaleY = cell.slot.scaleY;
-    cell.slot
-      .setAlpha(0)
-      .setScale(restingScaleX * 0.58, restingScaleY * 0.58);
-    this.tweens.add({
-      targets: cell.slot,
-      scaleX: restingScaleX,
-      scaleY: restingScaleY,
-      alpha: CONNECTED_NUMBER_BACKDROP_ALPHA,
-      duration: 190,
-      ease: 'Back.easeOut',
-    });
   }
 
   private lowerRaisedConnectedCell(onLanded?: () => void): void {
@@ -2733,15 +2693,8 @@ export class BoardScene extends Phaser.Scene {
       return;
     }
 
-    const targets = [cell.slot, cell.numberFill, cell.liquidRing, cell.circle, cell.hollowRing, cell.label];
-    this.tweens.killTweensOf([...targets, cell.underline]);
-    const underlineY = cell.y + this.view.numberFontSize * NUMBER_UNDERLINE_Y_OFFSET_SCALE;
-    this.tweens.add({
-      targets: cell.underline,
-      y: underlineY,
-      duration: 150,
-      ease: 'Quad.easeIn',
-    });
+    const targets = [cell.numberFill, cell.liquidRing, cell.circle, cell.hollowRing, cell.label];
+    this.tweens.killTweensOf(targets);
     this.tweens.add({
       targets,
       y: cell.y,
@@ -2750,7 +2703,6 @@ export class BoardScene extends Phaser.Scene {
       onUpdate: () => this.redrawLiquidConnections(),
       onComplete: () => {
         targets.forEach((target) => target.setY(cell.y));
-        cell.underline.setY(underlineY);
         this.redrawLiquidConnections();
         onLanded?.();
       },
@@ -2800,7 +2752,7 @@ export class BoardScene extends Phaser.Scene {
     const revealed = indexes
       .map((index) => this.view!.cells.get(cellKey(this.session!.level.solutionPath[index])))
       .filter((cell): cell is CellView => cell !== undefined);
-    const targets = revealed.flatMap((cell) => [cell.circle, cell.label, cell.underline]);
+    const targets = revealed.flatMap((cell) => [cell.circle, cell.label]);
     this.tweens.killTweensOf(targets);
     targets.forEach((target) => target.setAlpha(0.2).setScale(0.68));
     revealed.forEach((cell) => cell.numberFill.setAlpha(0.2));
@@ -2809,7 +2761,7 @@ export class BoardScene extends Phaser.Scene {
       cell.glow.setStrokeStyle(4, COLORS.powerUpReveal, 0.92);
       cell.glow.setScale(0.82);
       this.tweens.add({
-        targets: [cell.circle, cell.label, cell.underline],
+        targets: [cell.circle, cell.label],
         alpha: 1,
         scaleX: 1,
         scaleY: 1,
@@ -2867,26 +2819,50 @@ export class BoardScene extends Phaser.Scene {
     }
   }
 
-  private advanceConnectionRewardCombo(): void {
-    this.connectionRewardComboCount += 1;
-    if (this.connectionRewardComboCount < 2) return;
-    const comboProgress = this.connectionRewardComboCount - 1;
+  private advanceConnectionComboEdge(index: number): number | undefined {
+    this.connectionComboCount += 1;
+    if (this.connectionComboCount < 2) return undefined;
+    const comboProgress = this.connectionComboCount - 1;
+    const soundLevel = Phaser.Math.Clamp(comboProgress, 1, 8);
     const numberCount = this.session?.level.solutionPath.length ?? 0;
     const totalComboProgress = Math.max(10, Math.ceil(numberCount / 4));
     const progress = Math.min(1, comboProgress / totalComboProgress);
+    const edge = this.connectionComboEdge();
+    const pathCell = this.session?.level.solutionPath[index];
+    const cell = pathCell && this.view ? this.view.cells.get(cellKey(pathCell)) : undefined;
+    const ballColor = this.view
+      ? this.view.artworkEnabled && cell
+        ? cell.color
+        : this.view.ballColor
+      : 0xff9f43;
+    edge?.style.setProperty(
+      '--connection-combo-color',
+      `#${ballColor.toString(16).padStart(6, '0')}`,
+    );
+    edge?.style.setProperty(
+      '--connection-combo-horizontal-length',
+      `${Math.min(50, progress * 100)}%`,
+    );
+    edge?.style.setProperty(
+      '--connection-combo-vertical-length',
+      `${Math.max(0, (progress - 0.5) * 100)}%`,
+    );
+    edge?.classList.add('is-active');
     if (progress >= 1) {
-      this.connectionRewardComboCount = 0;
+      this.clearConnectionComboEdgeVisual();
+      this.connectionComboCount = 0;
       this.session?.onComboComplete?.();
     }
+    return soundLevel;
   }
 
-  private resetConnectionRewardCombo(forceClear = false): void {
+  private resetConnectionComboEdge(forceClear = false): void {
     if (!forceClear && this.session?.chargeProgressMode === 'progress') {
       this.renderLevelProgressEdge();
       return;
     }
-    this.connectionRewardComboCount = 0;
-    this.clearConnectionProgressEdgeVisual();
+    this.connectionComboCount = 0;
+    this.clearConnectionComboEdgeVisual();
   }
 
   private renderLevelProgressEdge(index = this.connection?.activeIndex): void {
@@ -2894,7 +2870,7 @@ export class BoardScene extends Phaser.Scene {
     const total = this.session.level.solutionPath.length;
     const progress = total > 0 ? Math.min(1, (this.connection?.progress ?? 0) / total) : 0;
     if (progress <= 0) {
-      this.clearConnectionProgressEdgeVisual();
+      this.clearConnectionComboEdgeVisual();
       return;
     }
     const edge = this.connectionComboEdge();
@@ -2905,13 +2881,22 @@ export class BoardScene extends Phaser.Scene {
         ? cell.color
         : this.view.ballColor
       : 0x57d88b;
-    edge?.style.setProperty('--connection-combo-color', `#${ballColor.toString(16).padStart(6, '0')}`);
-    edge?.style.setProperty('--connection-combo-horizontal-length', `${Math.min(50, progress * 100)}%`);
-    edge?.style.setProperty('--connection-combo-vertical-length', `${Math.max(0, (progress - 0.5) * 100)}%`);
+    edge?.style.setProperty(
+      '--connection-combo-color',
+      `#${ballColor.toString(16).padStart(6, '0')}`,
+    );
+    edge?.style.setProperty(
+      '--connection-combo-horizontal-length',
+      `${Math.min(50, progress * 100)}%`,
+    );
+    edge?.style.setProperty(
+      '--connection-combo-vertical-length',
+      `${Math.max(0, (progress - 0.5) * 100)}%`,
+    );
     edge?.classList.add('is-active');
   }
 
-  private clearConnectionProgressEdgeVisual(): void {
+  private clearConnectionComboEdgeVisual(): void {
     const edge = this.connectionComboEdge();
     edge?.classList.remove('is-active', 'is-screen-filling', 'is-screen-filled');
     edge?.style.setProperty('--connection-combo-horizontal-length', '0%');
@@ -2928,32 +2913,6 @@ export class BoardScene extends Phaser.Scene {
     return this.sys.game.canvas
       .closest<HTMLElement>('.play-screen')
       ?.querySelector<HTMLElement>('#stage-completion-edge') ?? null;
-  }
-
-  private playNextConnectionSound(): void {
-    if (this.connectionSoundMelodyIndex === undefined) {
-      const melodyChoices = this.connectionSoundArrangement[this.connectionSoundArrangementIndex] ?? [1];
-      const melodyNumber = melodyChoices[Math.floor(Math.random() * melodyChoices.length)] ?? 1;
-      this.connectionSoundMelodyIndex = Math.max(0, melodyNumber - 1);
-      this.connectionSoundNoteIndex = 0;
-      this.connectionSoundArrangementIndex = (
-        this.connectionSoundArrangementIndex + 1
-      ) % this.connectionSoundArrangement.length;
-    }
-    const melody = this.connectionSoundMelodies[this.connectionSoundMelodyIndex]
-      ?? this.connectionSoundMelodies[0]
-      ?? [[1]];
-    const choices = melody[this.connectionSoundNoteIndex] ?? [1];
-    const level = choices[Math.floor(Math.random() * choices.length)] ?? 1;
-    this.connectionSoundNoteIndex += 1;
-    if (this.connectionSoundNoteIndex >= melody.length) this.connectionSoundMelodyIndex = undefined;
-    this.playSound(`${this.comboSoundSet}-${level}`);
-  }
-
-  private resetConnectionSoundComposition(): void {
-    this.connectionSoundArrangementIndex = 0;
-    this.connectionSoundMelodyIndex = undefined;
-    this.connectionSoundNoteIndex = 0;
   }
 
   private disableViewInput(view: BoardView): void {

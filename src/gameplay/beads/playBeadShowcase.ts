@@ -27,7 +27,7 @@ export interface PlayBeadShowcaseProgress {
   collected: number;
 }
 
-export type PlayBeadShowcaseContext = 'normal' | 'collection' | 'daily' | 'bead';
+export type PlayBeadShowcaseContext = 'normal' | 'collection' | 'daily' | 'editor-playtest' | 'bead';
 export type PlayBeadShowcaseMode = 'normal' | 'endless';
 
 export const shouldUsePlayBeadShowcase = (

@@ -38,6 +38,7 @@ describe('play bead showcase', () => {
     expect(shouldUsePlayBeadShowcase('daily', 'normal')).toBe(false);
     expect(shouldUsePlayBeadShowcase('bead', 'normal')).toBe(false);
     expect(shouldUsePlayBeadShowcase('collection', 'normal')).toBe(false);
+    expect(shouldUsePlayBeadShowcase('editor-playtest', 'normal')).toBe(false);
   });
 
   it('loads saved progress and advances to the next illustration', () => {

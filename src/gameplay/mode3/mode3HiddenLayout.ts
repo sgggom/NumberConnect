@@ -1,8 +1,8 @@
 import { BoardShape, cellKey, type LevelData } from '../../game/types';
 import {
   selectAlgorithm1HiddenLayout,
-} from '../../game/algorithm1HiddenLayout';
-import type { BoardPathShape } from '../../game/pathGenerationTypes';
+} from '../editor/algorithms/algorithm1';
+import type { EditorShape } from '../editor/types';
 import { selectMode4RandomDispersedHiddenLayout } from './mode4RandomHiddenLayout';
 
 export interface AdaptiveHiddenLayoutConfig {
@@ -40,7 +40,7 @@ export const resolveMode4DifficultyConfig = (
   difficulty: number,
 ): AdaptiveHiddenLayoutConfig => MODE4_DIFFICULTY_CONFIGS[normalizeDifficulty(difficulty) - 1];
 
-export const mode3PathShape = (shape: BoardShape): BoardPathShape => {
+export const mode3EditorShape = (shape: BoardShape): EditorShape => {
   if (shape === BoardShape.Hex) return 'hex';
   if (shape === BoardShape.Diamond) return 'diamond';
   if (shape === BoardShape.Rectangle) return 'rectangle';
@@ -109,7 +109,7 @@ const createMode3Algorithm1HiddenCells = (
   // 让目标难度只调整隐藏位置结构，不再改变隐藏总量。
   const hiddenIndices = selectAlgorithm1HiddenLayout(
     level.solutionPath,
-    mode3PathShape(level.boardShape),
+    mode3EditorShape(level.boardShape),
     effectiveHiddenPercent,
     normalizedTargetDifficulty,
     mode3HiddenSeed(level, normalizedTargetDifficulty),

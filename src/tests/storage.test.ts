@@ -2,10 +2,12 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   loadBeadLevels,
   loadBuiltInLevels,
+  loadEditorLevelCollection,
   loadLevelCollection,
   loadMode3Levels,
   loadMode5Levels,
   loadSettings,
+  saveLevelCollection,
 } from '../game/storage';
 import { BoardShape, DEFAULT_SETTINGS, type LevelData } from '../game/types';
 
@@ -84,20 +86,6 @@ describe('game settings migration', () => {
     }
   });
 
-  it('loads a valid lobby theme and falls back to the cool theme', () => {
-    const getItem = vi.fn()
-      .mockReturnValueOnce(JSON.stringify({ lobbyTheme: 'warm' }))
-      .mockReturnValueOnce(JSON.stringify({ lobbyTheme: 'night' }));
-    vi.stubGlobal('window', { localStorage: { getItem } });
-
-    try {
-      expect(loadSettings().lobbyTheme).toBe('warm');
-      expect(loadSettings().lobbyTheme).toBe('cool');
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
-
   it('migrates saved small-window preferences', () => {
     const getItem = vi.fn(() => JSON.stringify({
       touchPreviewEnabled: false,
@@ -169,21 +157,7 @@ describe('game settings migration', () => {
     }
   });
 
-  it('loads a valid combo sound set and falls back from an invalid one', () => {
-    const getItem = vi.fn()
-      .mockReturnValueOnce(JSON.stringify({ comboSoundSet: 'combo2' }))
-      .mockReturnValueOnce(JSON.stringify({ comboSoundSet: 'missing' }));
-    vi.stubGlobal('window', { localStorage: { getItem } });
-
-    try {
-      expect(loadSettings().comboSoundSet).toBe('combo2');
-      expect(loadSettings().comboSoundSet).toBe(DEFAULT_SETTINGS.comboSoundSet);
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
-
-  it('loads a valid charge progress mode and keeps coin mode as the fallback', () => {
+  it('loads a valid charge progress mode and keeps the current coin mode as the fallback', () => {
     const getItem = vi.fn()
       .mockReturnValueOnce(JSON.stringify({ chargeProgressMode: 'off' }))
       .mockReturnValueOnce(JSON.stringify({ chargeProgressMode: 'progress' }))
@@ -194,39 +168,6 @@ describe('game settings migration', () => {
       expect(loadSettings().chargeProgressMode).toBe('off');
       expect(loadSettings().chargeProgressMode).toBe('progress');
       expect(loadSettings().chargeProgressMode).toBe('coins');
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
-
-  it('loads a valid connection sound pattern and rejects invalid notes', () => {
-    const getItem = vi.fn()
-      .mockReturnValueOnce(JSON.stringify({ comboSoundPattern: '13587642' }))
-      .mockReturnValueOnce(JSON.stringify({ comboSoundPattern: '1290' }));
-    vi.stubGlobal('window', { localStorage: { getItem } });
-
-    try {
-      expect(loadSettings().comboSoundPattern).toBe('13587642');
-      expect(loadSettings().comboSoundPattern).toBe(DEFAULT_SETTINGS.comboSoundPattern);
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
-
-  it('loads a connection sound pattern list and its active entry', () => {
-    const getItem = vi.fn(() => JSON.stringify({
-      comboSoundPatterns: ['12', '876', '90'],
-      comboSoundPatternIndex: 1,
-      comboSoundArrangement: '1,[1,2],2',
-    }));
-    vi.stubGlobal('window', { localStorage: { getItem } });
-
-    try {
-      const settings = loadSettings();
-      expect(settings.comboSoundPatterns).toEqual(['12', '876']);
-      expect(settings.comboSoundPatternIndex).toBe(1);
-      expect(settings.comboSoundPattern).toBe('876');
-      expect(settings.comboSoundArrangement).toBe('1,[1,2],2');
     } finally {
       vi.unstubAllGlobals();
     }
@@ -280,12 +221,51 @@ describe('game settings migration', () => {
   });
 });
 
-describe('level collection', () => {
-  it('uses only bundled levels and returns independent objects', () => {
+describe('level collection migration', () => {
+  it('ignores the obsolete v4 collection and starts from the gameplay 5 bundled levels', () => {
     const bundled = [makeLevel(1)];
-    const loaded = loadLevelCollection(bundled);
-    expect(loaded).toEqual(bundled);
-    expect(loaded[0]).not.toBe(bundled[0]);
+    const getItem = vi.fn((key: string) => (
+      key === 'number-connect.level-collection.v4'
+        ? JSON.stringify([makeLevel(9, true)])
+        : null
+    ));
+    vi.stubGlobal('window', { localStorage: { getItem } });
+
+    try {
+      expect(loadLevelCollection(bundled)).toEqual(bundled);
+      expect(getItem).toHaveBeenCalledWith('number-connect.level-collection.v5');
+      expect(getItem).not.toHaveBeenCalledWith('number-connect.level-collection.v4');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('uses custom levels to replace matching bundled formations without reviving stale copies', () => {
+    const bundled = [
+      { ...makeLevel(1), hiddenCells: [{ x: 0, y: 0 }] },
+      makeLevel(2),
+    ];
+    const staleBundledCopy = makeLevel(1);
+    const replacementLevel = { ...makeLevel(2, true), hiddenCells: [{ x: 1, y: 0 }] };
+    const appendedLevel = makeLevel(7, true);
+    const stored = [staleBundledCopy, replacementLevel, appendedLevel];
+    const getItem = vi.fn((key: string) => (
+      key === 'number-connect.level-collection.v5' ? JSON.stringify(stored) : null
+    ));
+    const setItem = vi.fn();
+    vi.stubGlobal('window', { localStorage: { getItem, setItem } });
+
+    try {
+      expect(loadLevelCollection(bundled)).toEqual([bundled[0], replacementLevel, appendedLevel]);
+      expect(loadEditorLevelCollection()).toEqual([replacementLevel, appendedLevel]);
+      saveLevelCollection(stored);
+      expect(setItem).toHaveBeenCalledWith(
+        'number-connect.level-collection.v5',
+        JSON.stringify([replacementLevel, appendedLevel]),
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('loads separate official level pools for the campaign, bead gameplay, gameplay 3, and gameplay 5', async () => {
