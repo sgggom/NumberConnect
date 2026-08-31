@@ -1096,7 +1096,13 @@ class NumberConnectApp {
       { label: '计时(min)', value: (stage: PuzzleStageExperience) => stage.elapsedMs / 60_000 },
       { label: '复活', value: (stage: PuzzleStageExperience) => stage.revives },
     ];
-    const maxima = metrics.map((metric) => Math.max(1, ...cumulativeStages.map(metric.value)));
+    const gridUnitCount = Math.max(
+      5,
+      Math.ceil(Math.max(
+        0,
+        ...cumulativeStages.flatMap((stage) => metrics.map((metric) => metric.value(stage))),
+      )),
+    );
     const centerX = 120;
     const centerY = 104;
     const radius = 72;
@@ -1122,12 +1128,13 @@ class NumberConnectApp {
       document.createElementNS('http://www.w3.org/2000/svg', name)
     );
 
-    const grid = [0.25, 0.5, 0.75, 1].map((level) => {
-      const polygon = svgElement('polygon');
-      polygon.setAttribute('class', 'level-debug-radar-grid');
-      polygon.setAttribute('points', pointsAt(metrics.map(() => radius * level)));
-      return polygon;
-    });
+    const grid = Array.from({ length: gridUnitCount }, (_, index) => (index + 1) / gridUnitCount)
+      .map((level) => {
+        const polygon = svgElement('polygon');
+        polygon.setAttribute('class', 'level-debug-radar-grid');
+        polygon.setAttribute('points', pointsAt(metrics.map(() => radius * level)));
+        return polygon;
+      });
     const axes = metrics.map((_, index) => {
       const [x, y] = pointAt(index, radius);
       const line = svgElement('line');
@@ -1141,12 +1148,12 @@ class NumberConnectApp {
     const plots = cumulativeStages.flatMap((stage, stageIndex) => {
       const hue = (stage.stage * 73 + 145) % 360;
       const color = `hsl(${hue} 68% 48%)`;
-      const distances = metrics.map((metric, index) => (
-        radius * metric.value(stage) / maxima[index]
+      const distances = metrics.map((metric) => (
+        radius * metric.value(stage) / gridUnitCount
       ));
       const previousStage = cumulativeStages[stageIndex - 1];
       const previousDistances = previousStage
-        ? metrics.map((metric, index) => radius * metric.value(previousStage) / maxima[index])
+        ? metrics.map((metric) => radius * metric.value(previousStage) / gridUnitCount)
         : undefined;
       const layer = svgElement('path');
       layer.setAttribute('class', 'level-debug-radar-layer');
@@ -1184,7 +1191,7 @@ class NumberConnectApp {
     this.levelDebugExperienceRadar.replaceChildren(...grid, ...axes, ...plots, ...labels);
     this.levelDebugExperienceRadar.setAttribute(
       'aria-label',
-      `各阶段独立体验数据堆叠雷达图，共 ${stageRecords.length} 个阶段`,
+      `各阶段独立体验数据堆叠雷达图，每格代表 1，共 ${gridUnitCount} 格、${stageRecords.length} 个阶段`,
     );
 
     const legend = stageRecords.map((stage) => {
