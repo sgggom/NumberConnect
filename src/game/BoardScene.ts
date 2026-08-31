@@ -34,7 +34,6 @@ import {
   BoardShape,
   backgroundUrl,
   cellKey,
-  usesClickInput,
   type BoardArtworkInput,
   type BoardHoldScore,
   type BoardSessionInput,
@@ -137,7 +136,6 @@ const hexagonPoints = (radius: number): Phaser.Geom.Point[] => Array.from({ leng
 const HIDDEN_CELL_RING_WIDTH_SCALE = 0.2;
 const BOARD_HORIZONTAL_PADDING = 5;
 const BOARD_VERTICAL_PADDING = 10;
-const AUTO_CLICK_STEP_DELAY_MS = 400;
 const BOARD_ZOOM_SCALE = 1.5;
 const BOARD_ZOOM_EDGE_INSET = 16;
 const HIDDEN_QUESTION_ALPHA = 0.28;
@@ -251,7 +249,6 @@ export class BoardScene extends Phaser.Scene {
   private entranceAnimationToken = 0;
   private entranceTweens: Phaser.Tweens.Tween[] = [];
   private cellSelectionHandler?: (cell: Cell) => void;
-  private autoClickTimer?: Phaser.Time.TimerEvent;
   private boardViewportScroll = { x: 0.5, y: 0.5 };
   private readonly artworkTextures = new Map<string, string>();
   private readonly artworkColorCache = new Map<string, readonly number[]>();
@@ -305,12 +302,11 @@ export class BoardScene extends Phaser.Scene {
   };
 
   private readonly handleNativePointerEnd = (event: PointerEvent): void => {
-    if (this.drawingNativePointerId === event.pointerId) this.finishPointerInteraction();
+    if (this.drawingNativePointerId === event.pointerId) this.finishPointerInteraction(true);
   };
 
   public setBoard(session: BoardSessionInput): void {
     this.resetConnectionComboEdge(true);
-    this.cancelAutoClickSequence();
     this.cancelBoardEntrance();
     this.clearNeighborhoodPreview();
     this.stopHintPulse();
@@ -343,7 +339,6 @@ export class BoardScene extends Phaser.Scene {
     this.input.enabled = !paused;
     this.locked = paused || this.transitioning || this.entranceAnimating || this.connection?.complete === true;
     if (paused) {
-      this.cancelAutoClickSequence();
       this.clearNeighborhoodPreview();
       this.isDrawing = false;
       this.drawingPointerId = undefined;
@@ -367,7 +362,6 @@ export class BoardScene extends Phaser.Scene {
       && !this.paused
       && !this.transitioning
       && !this.entranceAnimating
-      && !this.autoClickTimer
       && !this.connection.complete,
     );
   }
@@ -382,7 +376,6 @@ export class BoardScene extends Phaser.Scene {
       && this.connection
       && !this.paused
       && !this.transitioning
-      && !this.autoClickTimer
       && !this.connection.complete
       && (!this.locked || this.entranceAnimating),
     );
@@ -390,7 +383,6 @@ export class BoardScene extends Phaser.Scene {
 
   public undoLastStep(): boolean {
     if (!this.session || !this.connection || !this.canUndoStep()) return false;
-    this.cancelAutoClickSequence();
     this.finishPointerInteraction();
     const progress = this.connection.undoLastStep();
     if (progress === undefined) return false;
@@ -416,7 +408,6 @@ export class BoardScene extends Phaser.Scene {
       || this.connection.complete
     ) return false;
 
-    this.cancelAutoClickSequence();
     const entranceWasAnimating = this.entranceAnimating;
     this.cancelBoardEntrance();
     if (entranceWasAnimating) this.finishBoardEntrance(this.view, this.entranceAnimationToken);
@@ -550,7 +541,7 @@ export class BoardScene extends Phaser.Scene {
   public setRuntimePreferences(
     preferences: Pick<
       BoardSessionInput,
-      'showNextNumber' | 'soundEnabled' | 'inputMode' | 'chargeProgressMode' | 'touchPreviewRingDepth' | 'boardZoomEnabled'
+      'showNextNumber' | 'soundEnabled' | 'chargeProgressMode' | 'touchPreviewRingDepth' | 'boardZoomEnabled'
     >,
   ): void {
     if (!this.session) return;
@@ -558,15 +549,8 @@ export class BoardScene extends Phaser.Scene {
     const chargeProgressModeChanged = (
       this.session.chargeProgressMode !== preferences.chargeProgressMode
     );
-    if (this.session.inputMode !== preferences.inputMode) {
-      this.cancelAutoClickSequence();
-      this.finishPointerInteraction();
-      this.connection?.endStroke();
-      if (usesClickInput(preferences.inputMode)) this.connection?.enableClickMode();
-    }
     this.session.showNextNumber = preferences.showNextNumber;
     this.session.soundEnabled = preferences.soundEnabled;
-    this.session.inputMode = preferences.inputMode;
     this.session.chargeProgressMode = preferences.chargeProgressMode;
     this.session.touchPreviewRingDepth = preferences.touchPreviewRingDepth;
     this.session.boardZoomEnabled = preferences.boardZoomEnabled;
@@ -712,7 +696,6 @@ export class BoardScene extends Phaser.Scene {
       return;
     }
 
-    this.cancelAutoClickSequence();
     this.cancelBoardEntrance();
     this.locked = true;
     this.transitioning = true;
@@ -814,7 +797,13 @@ export class BoardScene extends Phaser.Scene {
     edge.append(grid);
   }
 
-  public async showCompletion({ revealImage = false }: { revealImage?: boolean } = {}): Promise<void> {
+  public async showCompletion({
+    revealImage = false,
+    revealArtwork = true,
+  }: {
+    revealImage?: boolean;
+    revealArtwork?: boolean;
+  } = {}): Promise<void> {
     if (!this.view || !this.session) return;
     const view = this.view;
     const session = this.session;
@@ -832,7 +821,7 @@ export class BoardScene extends Phaser.Scene {
       return;
     }
 
-    if (view.artworkEnabled) {
+    if (view.artworkEnabled && revealArtwork) {
       await this.showArtworkCompletion(view);
       return;
     }
@@ -1423,7 +1412,6 @@ export class BoardScene extends Phaser.Scene {
         session.level.boardShape,
       ),
     );
-    if (usesClickInput(session.inputMode)) connection.enableClickMode();
     return connection;
   }
 
@@ -1834,12 +1822,8 @@ export class BoardScene extends Phaser.Scene {
     this.drawConnectedBridges();
     if (!this.isDrawing) this.view.pointerLine.clear();
 
-    const clickInput = usesClickInput(this.session.inputMode);
-    const nextHint = this.session.showNextNumber && !clickInput && !selectingCell
+    const nextHint = this.session.showNextNumber && !selectingCell
       ? this.connection?.suggestedNextHint()
-      : undefined;
-    const currentClickIndex = clickInput && !selectingCell
-      ? this.connection?.currentClickIndex
       : undefined;
     const dragQuestionCenter = this.isDrawing && this.connection?.activeIndex !== undefined
       ? path[this.connection.activeIndex]
@@ -1919,23 +1903,20 @@ export class BoardScene extends Phaser.Scene {
       }
       this.setQuestionMarkVisible(cellView, showQuestion && !isWrongCell);
       const hint = cellView.index === nextHint?.index;
-      const clickCurrent = cellView.index === currentClickIndex;
       const hintColor = nextHint?.consecutive ? COLORS.consecutiveHint : COLORS.hint;
       const glowColor = selectingCell
         ? COLORS.powerUpTarget
-        : clickCurrent
-          ? cellColor
-          : hintColor;
+        : hintColor;
       cellView.glow.setFillStyle(
         glowColor,
-        selectingCell ? 0.13 : clickCurrent ? 0.12 : hint ? 0.2 : 0,
+        selectingCell ? 0.13 : hint ? 0.2 : 0,
       );
       cellView.glow.setStrokeStyle(
         CELL_GLOW_STROKE_WIDTH,
         glowColor,
-        selectingCell ? 0.72 : clickCurrent ? 0.92 : hint ? 0.9 : 0,
+        selectingCell ? 0.72 : hint ? 0.9 : 0,
       );
-      if (hint || clickCurrent) activeHintCell = cellView;
+      if (hint) activeHintCell = cellView;
     });
 
     this.startHintPulse(activeHintCell);
@@ -2061,17 +2042,11 @@ export class BoardScene extends Phaser.Scene {
   }
 
   private handleCellDown(index: number, pointer: Phaser.Input.Pointer): void {
-    if (this.locked || this.transitioning || this.autoClickTimer || !this.connection) return;
+    if (this.locked || this.transitioning || !this.connection) return;
     if (this.drawingPointerId !== undefined && this.drawingPointerId !== pointer.id) return;
     if (this.cellSelectionHandler && this.session) {
       const cell = this.session.level.solutionPath[index];
       if (cell) this.cellSelectionHandler({ ...cell });
-      return;
-    }
-    if (this.session && usesClickInput(this.session.inputMode)) {
-      this.wrongFeedbackActive = false;
-      this.showHeldCellChoiceScore(index);
-      void this.handleClickForward(index);
       return;
     }
     this.isDrawing = true;
@@ -2164,93 +2139,23 @@ export class BoardScene extends Phaser.Scene {
 
   private handlePointerUp(pointer: Phaser.Input.Pointer): void {
     if (this.drawingPointerId !== undefined && this.drawingPointerId !== pointer.id) return;
-    this.finishPointerInteraction();
+    this.finishPointerInteraction(true);
   }
 
-  private finishPointerInteraction(): void {
+  private finishPointerInteraction(countRelease = false): void {
     const wasDrawing = this.isDrawing;
     this.isDrawing = false;
     this.drawingPointerId = undefined;
     this.drawingNativePointerId = undefined;
     this.pointerLineTarget = undefined;
     this.wrongFeedbackActive = false;
-    if (!this.session || !usesClickInput(this.session.inputMode)) this.connection?.endStroke();
+    this.connection?.endStroke();
     this.view?.pointerLine.clear();
     if (this.connection?.complete !== true) this.lowerRaisedConnectedCell();
     if (wasDrawing && this.connection?.complete !== true) this.resetConnectionComboEdge();
     if (wasDrawing) this.refreshView();
+    if (wasDrawing && countRelease) this.session?.onRelease?.();
     this.clearNeighborhoodPreview();
-  }
-
-  private async handleClickForward(index: number): Promise<void> {
-    if (this.completionCheckPending || !this.session || !this.connection) return;
-    const session = this.session;
-    const connection = this.connection;
-    const stepReward = this.stepRewardFeedback(connection.currentClickIndex, index);
-    this.completionCheckPending = true;
-    try {
-      const actions = connection.canExtendWithoutSearch(index)
-        ? connection.clickForward(index)
-        : await connection.clickForwardAsync(index, (request) => (
-            findPathCompletionInWorker(session.level.solutionPath, session.level.boardShape, request)
-          ));
-      if (this.session !== session || this.connection !== connection) return;
-      actions.forEach((action, actionIndex) => {
-        this.handleConnectionAction(action, actionIndex === actions.length - 1, stepReward);
-      });
-      if (
-        session.inputMode === 'auto-click'
-        && actions.some((action) => action.type === 'advanced' && action.index === index)
-      ) this.scheduleAutoClickStep();
-    } catch {
-      // Worker failures leave the current connection state unchanged.
-    } finally {
-      if (this.connection === connection) this.completionCheckPending = false;
-    }
-  }
-
-  private scheduleAutoClickStep(): void {
-    if (
-      !this.session
-      || this.session.inputMode !== 'auto-click'
-      || !this.connection
-      || this.connection.complete
-      || this.locked
-      || this.paused
-      || this.transitioning
-      || this.entranceAnimating
-    ) return;
-    const nextIndex = this.connection.nextVisibleClickIndex();
-    if (nextIndex === undefined) return;
-
-    this.cancelAutoClickSequence();
-    this.autoClickTimer = this.time.delayedCall(AUTO_CLICK_STEP_DELAY_MS, () => {
-      this.autoClickTimer = undefined;
-      if (
-        !this.session
-        || this.session.inputMode !== 'auto-click'
-        || !this.connection
-        || this.connection.complete
-        || this.locked
-        || this.paused
-        || this.transitioning
-        || this.entranceAnimating
-      ) return;
-
-      const stepReward = this.stepRewardFeedback(this.connection.currentClickIndex, nextIndex);
-      const actions = this.connection.clickForward(nextIndex);
-      actions.forEach((action, actionIndex) => {
-        this.handleConnectionAction(action, actionIndex === actions.length - 1, stepReward);
-      });
-      if (actions.some((action) => action.type === 'advanced' && action.index === nextIndex)) {
-        this.scheduleAutoClickStep();
-      }
-    });
-  }
-
-  private cancelAutoClickSequence(): void {
-    this.autoClickTimer?.remove(false);
-    this.autoClickTimer = undefined;
   }
 
   private emitNeighborhoodPreview(
@@ -2474,19 +2379,27 @@ export class BoardScene extends Phaser.Scene {
     playFeedback = true,
     stepReward?: PendingStepRewardFeedback,
   ): void {
-    if (!this.session || !this.view || action.type === 'ignored') return;
+    if (!this.session || !this.view || !this.connection || action.type === 'ignored') return;
     if (action.type === 'wrong') {
       if (this.wrongFeedbackActive) return;
       this.wrongFeedbackActive = true;
       const shouldLoseLife = !this.wrongCellIndexes.has(action.index);
+      const scoringIndex = this.connection.activeIndex ?? action.index;
+      const stepNumber = this.connection.displayNumber(scoringIndex);
       this.flashWrong(action.index);
       this.resetConnectionComboEdge();
       this.playSound('wrong');
-      this.cancelAutoClickSequence();
       this.pendingStepReward = undefined;
-      this.finishPointerInteraction();
+      this.finishPointerInteraction(true);
       this.connection?.endStroke();
-      this.session.onWrong(this.connectionFailureMessage(action.reason), shouldLoseLife);
+      const score = Promise.resolve()
+        .then(() => this.heldCellChoiceScore(scoringIndex))
+        .catch(() => undefined);
+      this.session.onWrong(
+        this.connectionFailureMessage(action.reason),
+        shouldLoseLife,
+        { stepNumber, score },
+      );
       return;
     }
 
@@ -2533,6 +2446,7 @@ export class BoardScene extends Phaser.Scene {
 
     if (action.complete) {
       this.locked = true;
+      if (this.isDrawing) this.session.onRelease?.();
       this.isDrawing = false;
       this.connection?.endStroke();
       this.hideDragQuestions();
@@ -2795,7 +2709,6 @@ export class BoardScene extends Phaser.Scene {
   private connectionFailureMessage(reason: ConnectionFailure): string {
     if (reason === 'hidden-start') return '请从显示数字开始。';
     if (reason === 'start-order') return '请从数字 1 开始，并沿当前进度从小到大连续连接。';
-    if (reason === 'click-order') return '请按从小到大的顺序点击数字。';
     if (reason === 'no-completion') return '这样连接后，剩余格子无法完成一笔连。';
     if (reason === 'direction-change') return '请按从小到大的顺序连接连续数字。';
     return '请连接相邻的连续数字。';

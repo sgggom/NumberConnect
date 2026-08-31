@@ -1,10 +1,7 @@
 import {
   BoardShape,
   DEFAULT_SETTINGS,
-  isInputMode,
   isChargeProgressMode,
-  isMainGameplay,
-  isMainGameplayDifficulty,
   isTouchPreviewSize,
   isUiTheme,
   type GameSettings,
@@ -78,9 +75,27 @@ export const loadSettings = (): GameSettings => {
         touchPreviewEnabled?: boolean;
         touchPreviewDefaultOffMigrated?: boolean;
         selectedLevelId?: number;
+        mainGameplay?: unknown;
+        mainGameplayDifficulty?: unknown;
+        beadMainLevelId?: unknown;
+        mode3MainLevelId?: unknown;
+        mode4MainLevelId?: unknown;
+        mode5MainLevelId?: unknown;
+        inputMode?: unknown;
       }
     );
-    const { touchPreviewEnabled, touchPreviewDefaultOffMigrated, ...currentSettings } = stored;
+    const currentSettings = { ...stored };
+    delete currentSettings.touchPreviewEnabled;
+    delete currentSettings.touchPreviewDefaultOffMigrated;
+    delete currentSettings.selectedLevelId;
+    delete currentSettings.mainGameplay;
+    delete currentSettings.mainGameplayDifficulty;
+    delete currentSettings.beadMainLevelId;
+    delete currentSettings.mode3MainLevelId;
+    delete currentSettings.mode4MainLevelId;
+    delete currentSettings.mode5MainLevelId;
+    delete currentSettings.inputMode;
+    const { touchPreviewEnabled, touchPreviewDefaultOffMigrated } = stored;
     let touchPreviewSize = isTouchPreviewSize(stored.touchPreviewSize)
       ? stored.touchPreviewSize
       : touchPreviewEnabled === false
@@ -97,48 +112,23 @@ export const loadSettings = (): GameSettings => {
       }
     }
     const uiTheme = isUiTheme(stored.uiTheme) ? stored.uiTheme : DEFAULT_SETTINGS.uiTheme;
-    const inputMode = isInputMode(stored.inputMode) ? stored.inputMode : DEFAULT_SETTINGS.inputMode;
     const chargeProgressMode = isChargeProgressMode(stored.chargeProgressMode)
       ? stored.chargeProgressMode
       : DEFAULT_SETTINGS.chargeProgressMode;
-    const mainGameplay = isMainGameplay(stored.mainGameplay)
-      ? stored.mainGameplay
-      : DEFAULT_SETTINGS.mainGameplay;
-    const mainGameplayDifficulty = isMainGameplayDifficulty(stored.mainGameplayDifficulty)
-      ? stored.mainGameplayDifficulty
-      : DEFAULT_SETTINGS.mainGameplayDifficulty;
     const legacyLevelId = Number.isInteger(stored.selectedLevelId) && Number(stored.selectedLevelId) > 0
       ? Number(stored.selectedLevelId)
       : 1;
-    const beadMainLevelId = Number.isInteger(stored.beadMainLevelId) && Number(stored.beadMainLevelId) > 0
-      ? Number(stored.beadMainLevelId)
-      : legacyLevelId;
     const puzzleMainLevelId = Number.isInteger(stored.puzzleMainLevelId) && Number(stored.puzzleMainLevelId) > 0
       ? Number(stored.puzzleMainLevelId)
-      : legacyLevelId;
-    const mode3MainLevelId = Number.isInteger(stored.mode3MainLevelId) && Number(stored.mode3MainLevelId) > 0
-      ? Number(stored.mode3MainLevelId)
-      : legacyLevelId;
-    const mode4MainLevelId = Number.isInteger(stored.mode4MainLevelId) && Number(stored.mode4MainLevelId) > 0
-      ? Number(stored.mode4MainLevelId)
-      : legacyLevelId;
-    const mode5MainLevelId = Number.isInteger(stored.mode5MainLevelId) && Number(stored.mode5MainLevelId) > 0
-      ? Number(stored.mode5MainLevelId)
       : legacyLevelId;
     return {
       ...DEFAULT_SETTINGS,
       ...currentSettings,
-      inputMode,
       chargeProgressMode,
-      mainGameplay,
-      mainGameplayDifficulty,
-      beadMainLevelId,
       puzzleMainLevelId,
-      mode3MainLevelId,
-      mode4MainLevelId,
-      mode5MainLevelId,
       uiTheme,
       touchPreviewSize,
+      showPuzzleFlow: stored.showPuzzleFlow !== false,
       showDifficultyScore: stored.showDifficultyScore === true,
       shape: BoardShape.Level,
       squareSize: DEFAULT_SETTINGS.squareSize,
@@ -233,15 +223,6 @@ export const loadBuiltInLevels = (): Promise<LevelData[]> => (
 
 export const loadBeadLevels = (): Promise<LevelData[]> => (
   loadBundledLevels('./levels/bead-levels.json', 'algorithm-1')
-);
-
-export const loadMode3Levels = (): Promise<LevelData[]> => (
-  loadBundledLevels('./levels/mode3-levels.json', 'algorithm-1')
-);
-
-/** 玩法5读取独立资源文件，后续调整阵型不会影响玩法3/4。 */
-export const loadMode5Levels = (): Promise<LevelData[]> => (
-  loadBundledLevels('./levels/mode5-levels.json', 'algorithm-1')
 );
 
 export const getNextLevelId = (levels: LevelData[]): number => {

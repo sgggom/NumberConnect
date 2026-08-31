@@ -5,8 +5,7 @@ export type ConnectionFailure =
   | 'start-order'
   | 'non-consecutive'
   | 'no-completion'
-  | 'direction-change'
-  | 'click-order';
+  | 'direction-change';
 
 export type ConnectionAction =
   | { type: 'started'; index: number }
@@ -41,7 +40,6 @@ interface ConnectionStepSnapshot {
   active?: number;
   previous?: number;
   direction?: Direction;
-  clickAnchor?: number;
   solutionOrder: number[];
   swapChoices: Array<SwapChoice | undefined>;
 }
@@ -65,7 +63,6 @@ export class ConnectionProgress {
   private active?: number;
   private previous?: number;
   private direction?: Direction;
-  private clickAnchor?: number;
   private readonly fixedPositions = new Map<number, number>();
   private readonly persistentFixedPositions = new Map<number, number>();
   private solutionOrder: number[];
@@ -99,11 +96,6 @@ export class ConnectionProgress {
     return this.totalNodes > 1 && this.connectedEdges.size === this.totalNodes - 1;
   }
   public get canUndoStep(): boolean { return this.stepHistory.length > 0; }
-  public get currentClickIndex(): number | undefined {
-    const orderedIndices = this.orderedIndices();
-    this.syncClickAnchor(orderedIndices);
-    return this.clickAnchor ?? orderedIndices[0];
-  }
 
   public begin(index: number, allowHidden = false): ConnectionAction {
     if (!this.inBounds(index) || this.complete) return { type: 'ignored' };
@@ -167,84 +159,6 @@ export class ConnectionProgress {
     return { type: 'advanced', index, added: true, progress: this.progress, complete: this.complete };
   }
 
-  public clickForward(index: number): ConnectionAction[] {
-    if (!this.inBounds(index) || this.complete) return [{ type: 'ignored' }];
-
-    const orderedIndices = this.orderedIndices();
-    this.syncClickAnchor(orderedIndices);
-    this.clickAnchor ??= orderedIndices[0];
-    if (index === this.clickAnchor) return [{ type: 'ignored' }];
-
-    const actions: ConnectionAction[] = [];
-    if (this.active !== this.clickAnchor) {
-      const started = this.begin(this.clickAnchor, true);
-      actions.push(started);
-      if (started.type === 'wrong') return actions;
-    }
-
-    if (this.followConnectedClickEdge(index)) {
-      this.clickAnchor = index;
-      return actions.length > 0 ? actions : [{ type: 'ignored' }];
-    }
-
-    const action = this.extend(index);
-    if (action.type === 'wrong') {
-      actions.push({
-        type: 'wrong',
-        index,
-        reason: action.reason === 'no-completion' ? 'no-completion' : 'click-order',
-      });
-      return actions;
-    }
-    actions.push(action);
-    if (action.type === 'advanced' && (this.active === index || this.complete)) this.clickAnchor = index;
-    return actions.length > 0 ? actions : [{ type: 'ignored' }];
-  }
-
-  public async clickForwardAsync(
-    index: number,
-    findCompletion: (request: PathCompletionRequest) => Promise<number[] | null>,
-  ): Promise<ConnectionAction[]> {
-    if (!this.inBounds(index) || this.complete) return [{ type: 'ignored' }];
-    const orderedIndices = this.orderedIndices();
-    this.syncClickAnchor(orderedIndices);
-    this.clickAnchor ??= orderedIndices[0];
-    if (index === this.clickAnchor) return [{ type: 'ignored' }];
-
-    const actions: ConnectionAction[] = [];
-    if (this.active !== this.clickAnchor) {
-      const started = this.begin(this.clickAnchor, true);
-      actions.push(started);
-      if (started.type === 'wrong') return actions;
-    }
-    if (this.followConnectedClickEdge(index)) {
-      this.clickAnchor = index;
-      return actions.length > 0 ? actions : [{ type: 'ignored' }];
-    }
-    const action = await this.extendAsync(index, findCompletion);
-    if (action.type === 'wrong') {
-      actions.push({
-        type: 'wrong',
-        index,
-        reason: action.reason === 'no-completion' ? 'no-completion' : 'click-order',
-      });
-      return actions;
-    }
-    actions.push(action);
-    if (action.type === 'advanced' && (this.active === index || this.complete)) this.clickAnchor = index;
-    return actions.length > 0 ? actions : [{ type: 'ignored' }];
-  }
-
-  public nextVisibleClickIndex(): number | undefined {
-    const nextIndex = this.nextClickIndex();
-    return nextIndex !== undefined && this.visibleIndices.has(nextIndex) ? nextIndex : undefined;
-  }
-
-  public enableClickMode(): void {
-    const firstIndex = this.orderedIndices()[0];
-    if (firstIndex !== undefined) this.visibleIndices.add(firstIndex);
-  }
-
   public endStroke(): void {
     this.active = undefined;
     this.previous = undefined;
@@ -260,7 +174,6 @@ export class ConnectionProgress {
     this.active = snapshot.active;
     this.previous = snapshot.previous;
     this.direction = snapshot.direction;
-    this.clickAnchor = snapshot.clickAnchor;
     this.swapSegments.forEach((segment, index) => {
       segment.choice = snapshot.swapChoices[index];
     });
@@ -417,14 +330,6 @@ export class ConnectionProgress {
     return Number.isInteger(index) && index >= 0 && index < this.totalNodes;
   }
 
-  private nextClickIndex(): number | undefined {
-    const orderedIndices = this.orderedIndices();
-    this.syncClickAnchor(orderedIndices);
-    const anchor = this.clickAnchor ?? orderedIndices[0];
-    const anchorPosition = anchor === undefined ? -1 : orderedIndices.indexOf(anchor);
-    return anchorPosition < 0 ? undefined : orderedIndices[anchorPosition + 1];
-  }
-
   private requiredStartIndex(): number | undefined {
     const orderedIndices = this.orderedIndices();
     return orderedIndices[this.connectedPrefixEndPosition(orderedIndices)];
@@ -439,47 +344,6 @@ export class ConnectionProgress {
       position += 1;
     }
     return position;
-  }
-
-  private syncClickAnchor(orderedIndices: ReadonlyArray<number>): void {
-    const position = this.connectedPrefixEndPosition(orderedIndices);
-    if (position === 0) return;
-    const currentPosition = this.clickAnchor === undefined
-      ? -1
-      : orderedIndices.indexOf(this.clickAnchor);
-    if (position > currentPosition) this.clickAnchor = orderedIndices[position];
-  }
-
-  private followConnectedClickEdge(index: number): boolean {
-    if (this.active === undefined || !this.connectedEdges.has(edgeKey(this.active, index))) return false;
-    if (this.completionSolver) {
-      const fromPosition = this.solutionOrder.indexOf(this.active);
-      const toPosition = this.solutionOrder.indexOf(index);
-      const direction = Math.sign(toPosition - fromPosition) as Direction;
-      if (
-        fromPosition < 0
-        || Math.abs(toPosition - fromPosition) !== 1
-        || (this.direction !== undefined && direction !== this.direction)
-      ) {
-        return false;
-      }
-      const from = this.active;
-      this.direction = direction;
-      this.previous = from;
-      this.active = index;
-      this.visibleIndices.add(index);
-      return true;
-    }
-    const options = this.transitionOptions(this.active, index);
-    const selected = options.find((option) => this.direction === undefined || option.direction === this.direction);
-    if (!selected) return false;
-    if (selected.segment && selected.choice) selected.segment.choice = selected.choice;
-    const from = this.active;
-    this.direction = selected.direction;
-    this.previous = from;
-    this.active = index;
-    this.visibleIndices.add(index);
-    return true;
   }
 
   private segmentStartDirection(index: number): Direction | null | undefined {
@@ -564,7 +428,6 @@ export class ConnectionProgress {
       active: this.active,
       previous: this.previous,
       direction: this.direction,
-      clickAnchor: this.clickAnchor,
       solutionOrder: [...this.solutionOrder],
       swapChoices: this.swapSegments.map(({ choice }) => choice),
     };

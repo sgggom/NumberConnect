@@ -12,17 +12,8 @@ export type TouchPreviewSize = typeof TOUCH_PREVIEW_SIZES[number];
 export const UI_THEMES = ['default', 'night'] as const;
 export type UiTheme = typeof UI_THEMES[number];
 
-export const INPUT_MODES = ['drag', 'click', 'auto-click'] as const;
-export type InputMode = typeof INPUT_MODES[number];
-
 export const CHARGE_PROGRESS_MODES = ['off', 'coins', 'progress'] as const;
 export type ChargeProgressMode = typeof CHARGE_PROGRESS_MODES[number];
-
-export const MAIN_GAMEPLAYS = ['beads', 'puzzle', 'mode3', 'mode4', 'mode5'] as const;
-export type MainGameplay = typeof MAIN_GAMEPLAYS[number];
-
-export const MAIN_GAMEPLAY_DIFFICULTIES = ['dynamic', 1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
-export type MainGameplayDifficulty = typeof MAIN_GAMEPLAY_DIFFICULTIES[number];
 
 export const isTouchPreviewSize = (value: unknown): value is TouchPreviewSize => (
   typeof value === 'string' && (TOUCH_PREVIEW_SIZES as readonly string[]).includes(value)
@@ -32,29 +23,9 @@ export const isUiTheme = (value: unknown): value is UiTheme => (
   typeof value === 'string' && (UI_THEMES as readonly string[]).includes(value)
 );
 
-export const isInputMode = (value: unknown): value is InputMode => (
-  typeof value === 'string' && (INPUT_MODES as readonly string[]).includes(value)
-);
-
 export const isChargeProgressMode = (value: unknown): value is ChargeProgressMode => (
   typeof value === 'string' && (CHARGE_PROGRESS_MODES as readonly string[]).includes(value)
 );
-
-export const isMainGameplay = (value: unknown): value is MainGameplay => (
-  typeof value === 'string' && (MAIN_GAMEPLAYS as readonly string[]).includes(value)
-);
-
-export const isMainGameplayDifficulty = (value: unknown): value is MainGameplayDifficulty => (
-  value === 'dynamic'
-  || (
-    typeof value === 'number'
-    && Number.isInteger(value)
-    && value >= 1
-    && value <= 10
-  )
-);
-
-export const usesClickInput = (mode: InputMode): boolean => mode !== 'drag';
 
 export interface Cell {
   x: number;
@@ -68,6 +39,7 @@ export interface LevelAlgorithmData {
 
 export interface LevelData {
   levelId: number;
+  formationId?: string | number;
   boardShape: BoardShape;
   rows: number;
   columns: number;
@@ -87,13 +59,7 @@ export interface GameSettings {
   diamondSize: number;
   hexSize: number;
   rectangleSizeIndex: number;
-  mainGameplay: MainGameplay;
-  mainGameplayDifficulty: MainGameplayDifficulty;
-  beadMainLevelId: number;
   puzzleMainLevelId: number;
-  mode3MainLevelId: number;
-  mode4MainLevelId: number;
-  mode5MainLevelId: number;
   hiddenPercent: number;
   maxHiddenRun: number;
   maxVisibleRun: number;
@@ -101,8 +67,8 @@ export interface GameSettings {
   showNextNumber: boolean;
   showDifficultyScore: boolean;
   soundEnabled: boolean;
-  inputMode: InputMode;
   chargeProgressMode: ChargeProgressMode;
+  showPuzzleFlow: boolean;
   uiTheme: UiTheme;
   touchPreviewSize: TouchPreviewSize;
   touchPreviewFollowsPointer: boolean;
@@ -163,6 +129,11 @@ export interface BoardHoldScore {
   badgeScore: number;
 }
 
+export interface BoardWrongStepData {
+  stepNumber: number;
+  score: Promise<BoardHoldScore | undefined>;
+}
+
 export interface BoardArtworkInput {
   textureKey: string;
   sourceColumns: number;
@@ -190,13 +161,13 @@ export interface BoardSessionInput {
   showNextNumber: boolean;
   showDifficultyScore?: boolean;
   soundEnabled: boolean;
-  inputMode: InputMode;
   chargeProgressMode: ChargeProgressMode;
   touchPreviewRingDepth: 1 | 2;
   boardZoomEnabled: boolean;
   mode: GameMode;
   onProgress: (current: number, total: number) => void;
-  onWrong: (message: string, shouldLoseLife: boolean) => void;
+  onWrong: (message: string, shouldLoseLife: boolean, step: BoardWrongStepData) => void;
+  onRelease?: () => void;
   onComplete: () => void;
   onComboComplete?: () => void;
   onNeighborhoodPreview?: (preview: BoardNeighborhoodPreview | null) => void;
@@ -217,13 +188,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   diamondSize: 6,
   hexSize: 6,
   rectangleSizeIndex: 1,
-  mainGameplay: 'beads',
-  mainGameplayDifficulty: 'dynamic',
-  beadMainLevelId: 1,
   puzzleMainLevelId: 1,
-  mode3MainLevelId: 1,
-  mode4MainLevelId: 1,
-  mode5MainLevelId: 1,
   hiddenPercent: 35,
   maxHiddenRun: 3,
   maxVisibleRun: 4,
@@ -231,8 +196,8 @@ export const DEFAULT_SETTINGS: GameSettings = {
   showNextNumber: true,
   showDifficultyScore: false,
   soundEnabled: true,
-  inputMode: 'drag',
   chargeProgressMode: 'coins',
+  showPuzzleFlow: true,
   uiTheme: 'default',
   touchPreviewSize: 'off',
   touchPreviewFollowsPointer: false,

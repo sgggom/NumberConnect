@@ -10,6 +10,86 @@
     <title>Number Connect · Puzzle</title>
   </head>
   <body>
+    <aside id="level-debug-panel" class="level-debug-panel" aria-label="关卡调试面板">
+      <div class="level-debug-panel__inner">
+        <header class="level-debug-header">
+          <div>
+            <span class="level-debug-eyebrow">LEVEL WORKBENCH</span>
+            <h1>关卡调试</h1>
+            <p>检查配置映射并快速切换当前测试关卡。</p>
+          </div>
+          <span id="level-debug-status" class="level-debug-status">运行中</span>
+        </header>
+
+        <div class="level-debug-overview-grid">
+        <div class="level-debug-primary-column">
+        <section class="level-debug-card" aria-labelledby="level-debug-current-title">
+          <div class="level-debug-card__heading">
+            <div><span>当前运行</span><h2 id="level-debug-current-title">关卡信息</h2></div>
+            <strong id="level-debug-level-badge">Level —</strong>
+          </div>
+          <dl class="level-debug-metrics">
+            <div><dt>阶段</dt><dd id="level-debug-stage">—</dd></div>
+            <div><dt>阵型 ID</dt><dd id="level-debug-formation">—</dd></div>
+            <div><dt>默认难度</dt><dd id="level-debug-difficulty">—</dd></div>
+            <div><dt>棋盘尺寸</dt><dd id="level-debug-board-size">—</dd></div>
+            <div><dt>路径格数</dt><dd id="level-debug-cell-count">—</dd></div>
+            <div><dt>交叉次数</dt><dd id="level-debug-crossing-count">—</dd></div>
+            <div><dt>拼图流程</dt><dd id="level-debug-puzzle-flow">—</dd></div>
+          </dl>
+        </section>
+
+        <section class="level-debug-card" aria-labelledby="level-debug-jump-title">
+          <div class="level-debug-card__heading">
+            <div><span>定位</span><h2 id="level-debug-jump-title">加载关卡阶段</h2></div>
+          </div>
+          <div class="level-debug-fields">
+            <label><span>关卡 ID</span><input id="level-debug-level-input" type="number" min="1" step="1" inputmode="numeric" /></label>
+            <label><span>阶段</span><select id="level-debug-stage-select" aria-label="调试阶段"></select></label>
+          </div>
+          <button id="level-debug-load-button" class="level-debug-primary" type="button">加载关卡</button>
+          <div class="level-debug-button-grid">
+            <button id="level-debug-previous-stage" type="button">← 上一阶段</button>
+            <button id="level-debug-next-stage" type="button">下一阶段 →</button>
+            <button id="level-debug-reload-stage" type="button">重载当前阶段</button>
+            <button id="level-debug-quick-complete" type="button">快速完成棋盘</button>
+          </div>
+          <p id="level-debug-message" class="level-debug-message" role="status" aria-live="polite">可输入 1–1000 跳转到指定关卡。</p>
+        </section>
+        </div>
+
+        <section class="level-debug-card level-debug-experience" aria-labelledby="level-debug-experience-title">
+          <div class="level-debug-card__heading">
+            <div><span>PLAYTEST</span><h2 id="level-debug-experience-title">体验记录</h2></div>
+          </div>
+          <div class="level-debug-radar">
+            <svg id="level-debug-experience-radar" viewBox="0 0 240 220" role="img" aria-label="各阶段体验数据雷达图"></svg>
+            <div id="level-debug-experience-legend" class="level-debug-radar-legend" aria-label="阶段颜色图例"></div>
+          </div>
+          <dl class="level-debug-experience-list level-debug-experience-list--compact">
+            <div><dt>错误次数</dt><dd id="level-debug-error-count">0</dd></div>
+            <div><dt>松手次数</dt><dd id="level-debug-release-count">0</dd></div>
+            <div><dt>关卡计时</dt><dd id="level-debug-elapsed-time">00:00.0</dd></div>
+            <div><dt>复活次数</dt><dd id="level-debug-revive-count">0</dd></div>
+          </dl>
+        </section>
+
+        <section class="level-debug-card level-debug-error-card" aria-labelledby="level-debug-error-history-title">
+          <div class="level-debug-card__heading">
+            <div><span>ERROR LOG</span><h2 id="level-debug-error-history-title">每次错误</h2></div>
+          </div>
+          <div class="level-debug-error-history level-debug-error-history--standalone">
+            <ol id="level-debug-error-history-list"><li class="is-empty">暂时没有错误记录</li></ol>
+          </div>
+        </section>
+        </div>
+
+        <footer class="level-debug-footer">
+          <span>数据源</span>
+          <b>三模式关卡配置 · 1000 关</b>
+        </footer>
+      </div>
+    </aside>
     <main id="app" class="app-shell" data-primary-tab="lobby">
       <div class="lobby-ambient-field" aria-hidden="true">
         <svg viewBox="0 0 430 760" preserveAspectRatio="xMidYMid slice" role="presentation">
@@ -158,7 +238,10 @@
         <div class="play-top-zone">
           <header class="game-header">
             <div class="game-heading">
-              <button id="play-level-button" class="play-level-button" type="button" aria-haspopup="dialog" aria-controls="level-picker-dialog"><span id="play-level-label">Level 1-1</span></button>
+              <button id="play-level-button" class="play-level-button" type="button" aria-haspopup="dialog" aria-controls="level-picker-dialog">
+                <span id="play-level-label">Level 1-1</span>
+                <small id="play-formation-id" class="play-formation-id" hidden></small>
+              </button>
               <span id="play-lives" class="life-counter" role="status" aria-live="polite" aria-label="生命值 3" hidden>♥♥♥</span>
               <div id="daily-play-progress" class="daily-play-progress" role="progressbar" aria-label="每日挑战关卡进度" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" hidden>
                 <span class="daily-play-progress-track" aria-hidden="true"><i id="daily-play-progress-fill"></i></span>
@@ -190,9 +273,6 @@
             <button id="play-settings-button" class="header-settings-image-button play-settings-image-button" aria-label="打开设置"><img src="./theme-default/settings.png" alt="" draggable="false" /></button>
           </header>
           <div class="play-top-spacer">
-            <figure class="play-bead-showcase">
-              <div id="play-bead-showcase-art" class="play-bead-showcase__art" role="img"></div>
-            </figure>
             <figure class="play-puzzle-showcase" hidden>
               <div id="play-puzzle-showcase-art" class="play-puzzle-showcase__art" role="img"></div>
             </figure>
@@ -240,6 +320,22 @@
             <h2 id="result-title">漂亮的一笔！</h2>
             <p id="result-message">你已连接棋盘上的所有数字。</p>
             <div id="result-reward" class="result-reward" hidden>♥ +1</div>
+            <section id="result-experience" class="result-experience" aria-labelledby="result-experience-title" hidden>
+              <header class="result-experience__header">
+                <div><span>PLAYTEST REPORT</span><h3 id="result-experience-title">体验数据</h3></div>
+                <strong id="result-experience-stage-count">0 个阶段</strong>
+              </header>
+              <dl class="result-experience__summary" aria-label="整关体验汇总">
+                <div><dt>错误次数</dt><dd id="result-experience-errors">0</dd></div>
+                <div><dt>松手次数</dt><dd id="result-experience-releases">0</dd></div>
+                <div><dt>关卡计时</dt><dd id="result-experience-time">00:00.0</dd></div>
+                <div><dt>复活次数</dt><dd id="result-experience-revives">0</dd></div>
+              </dl>
+              <div class="result-experience__details">
+                <h4>各阶段明细</h4>
+                <div id="result-experience-stages" class="result-experience__stages"></div>
+              </div>
+            </section>
             <div id="result-actions" class="result-actions">
               <button id="restart-button" class="button button--secondary">重新挑战</button>
               <button id="next-button" class="button button--primary">下一关</button>
@@ -462,10 +558,8 @@
       <form method="dialog" class="settings-card">
         <header><div><h2>游戏设置</h2></div><button id="settings-close-button" class="icon-button" value="cancel" aria-label="关闭">×</button></header>
         <div class="settings-list">
-          <div class="setting-row setting-row--main-gameplay"><span><b>主玩法</b><small>当前精简版仅保留拼图玩法</small></span><div id="settings-main-gameplay" class="setting-segmented setting-main-gameplay-control" role="radiogroup" aria-label="主玩法"><label><input type="radio" name="main-gameplay" value="puzzle" checked /><span>拼图</span></label></div></div>
-          <label id="settings-main-difficulty-row" class="setting-row setting-row--main-difficulty"><span><b>难度</b><small>动态按最近5局调整；固定档位会立即重新生成关卡</small></span><select id="settings-main-difficulty" class="setting-main-difficulty-control" aria-label="主玩法难度"><option value="dynamic">动态</option><option value="1">难度 1</option><option value="2">难度 2</option><option value="3">难度 3</option><option value="4">难度 4</option><option value="5">难度 5</option><option value="6">难度 6</option><option value="7">难度 7</option><option value="8">难度 8</option><option value="9">难度 9</option><option value="10">难度 10</option></select></label>
-          <div class="setting-row setting-row--input-mode"><span><b>操作方式</b><small>逐格点击、自动连接连续显示数字，或拖动连线</small></span><div id="settings-input-mode" class="setting-segmented setting-input-mode-control" role="radiogroup" aria-label="操作方式"><label><input type="radio" name="input-mode" value="click" /><span>点击</span></label><label><input type="radio" name="input-mode" value="auto-click" /><span>自动点击</span></label><label><input type="radio" name="input-mode" value="drag" checked /><span>拖动</span></label></div></div>
           <div class="setting-row setting-row--charge-progress"><span><b>充能进度条</b><small>金币按连续操作充能；进度按本关全部数字累计且中断不清空</small></span><div id="settings-charge-progress-mode" class="setting-segmented setting-charge-progress-control" role="radiogroup" aria-label="充能进度条"><label><input type="radio" name="charge-progress-mode" value="off" /><span>关闭</span></label><label><input type="radio" name="charge-progress-mode" value="coins" checked /><span>金币</span></label><label><input type="radio" name="charge-progress-mode" value="progress" /><span>进度</span></label></div></div>
+          <label class="setting-row"><span><b>拼图流程</b><small>关闭后不展示阶段拼图和结算拼图流程</small></span><input id="settings-puzzle-flow" class="switch" type="checkbox" checked /></label>
           <label class="setting-row"><span><b>下一个数字提示</b><small>高亮下一处可见数字</small></span><input id="settings-next" class="switch" type="checkbox" checked /></label>
           <label class="setting-row"><span><b>显示难度分</b><small>按住棋盘时显示当前格的难度评分</small></span><input id="settings-difficulty-score" class="switch" type="checkbox" /></label>
           <label class="setting-row"><span><b>游戏声音</b><small>连击、错误和胜利反馈</small></span><input id="settings-sound" class="switch" type="checkbox" checked /></label>

@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { BoardShape } from '../../game/types';
 import type { ArrangementBoardFamily, ArrangementLibraryLevel } from './levelArrangement';
 import {
   DEFAULT_AUTO_ARRANGEMENT_FORM,
@@ -22,15 +21,10 @@ const entry = (formationId: number, pathId: number, difficultyId: number): Arran
   difficulty: difficultyId,
   pathMetrics: { directionRatios: {} },
   difficultyMetrics: {},
-  parameters: [],
-  level: {
-    levelId: 1,
-    boardShape: BoardShape.Square,
-    rows: 2,
-    columns: 2,
-    activeCells: [{ x: 0, y: 0 }],
-    solutionPath: [{ x: 0, y: 0 }],
-  },
+  parameterValues: [],
+  rows: 1,
+  columns: 1,
+  levelData: { data: [[1]] },
 });
 
 const family = (formationId: number, pathIds: number[]): ArrangementBoardFamily => {

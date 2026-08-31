@@ -17,7 +17,20 @@ export const mountLevelArrangementView = (host: HTMLElement): void => {
     </header>
     <div class="arranger-layout">
       <aside class="arranger-panel arranger-groups-panel" aria-labelledby="arranger-groups-title">
-        <header><div><small>关卡列表</small><h3 id="arranger-groups-title">游戏关卡</h3></div><div class="arranger-group-actions"><button id="arranger-auto-layout" type="button" disabled>自动排布</button><button id="arranger-copy-groups" type="button" disabled>复制关卡列表</button><button id="arranger-copy-level-data" type="button" disabled>复制关卡数据</button><button id="arranger-add-group" type="button">＋ 新增</button></div></header>
+        <header>
+          <div class="arranger-groups-heading">
+            <small>关卡列表</small>
+            <div class="arranger-groups-title-row">
+              <h3 id="arranger-groups-title">游戏关卡</h3>
+              <div id="arranger-config-switcher" class="arranger-config-switcher" role="tablist" aria-label="关卡配置模式">
+                <button type="button" role="tab" data-arrangement-mode="main" aria-selected="true">主玩法配置</button>
+                <button type="button" role="tab" data-arrangement-mode="daily" aria-selected="false">每日挑战配置</button>
+                <button type="button" role="tab" data-arrangement-mode="bead" aria-selected="false">拼豆玩法配置</button>
+              </div>
+            </div>
+          </div>
+          <div class="arranger-group-actions"><button id="arranger-auto-layout" type="button" disabled>自动排布</button><button id="arranger-copy-groups" type="button" disabled>复制当前配置</button><button id="arranger-copy-level-data" type="button" disabled>导出三模式关卡数据</button><button id="arranger-add-group" type="button">＋ 新增</button></div>
+        </header>
         <div id="arranger-group-list" class="arranger-group-list"></div>
       </aside>
       <section class="arranger-panel arranger-library-panel" aria-labelledby="arranger-library-title">

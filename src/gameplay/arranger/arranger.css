@@ -14,6 +14,13 @@
 .arranger-groups-panel { display: grid; grid-template-rows: auto minmax(0,1fr); }
 .arranger-groups-panel > header { min-height: 0; display: grid; grid-template-columns: minmax(0,1fr); align-items: start; gap: 10px; }
 .arranger-groups-panel > header h3 { white-space: nowrap; }
+.arranger-groups-heading { min-width: 0; }
+.arranger-groups-title-row { margin-top: 3px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.arranger-groups-title-row h3 { margin: 0; }
+.arranger-config-switcher { min-width: 180px; flex: 1 1 180px; display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 4px; }
+.arranger-groups-panel > header .arranger-config-switcher button { padding: 6px 4px; border-color: rgba(101,158,228,.18); color: var(--muted); background: rgba(101,158,228,.055); font-size: .55rem; }
+.arranger-groups-panel > header .arranger-config-switcher button:hover { border-color: rgba(101,158,228,.36); color: #d5e6f8; }
+.arranger-groups-panel > header .arranger-config-switcher button.is-active { border-color: rgba(88,208,170,.5); color: #d9fff2; background: rgba(88,208,170,.16); box-shadow: inset 0 -2px 0 var(--green); }
 .arranger-group-actions { width: 100%; display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 6px; }
 .arranger-groups-panel > header button { min-width: 0; padding: 7px 8px; border: 1px solid rgba(88,208,170,.22); border-radius: 9px; color: var(--green); background: rgba(88,208,170,.08); font-size: .62rem; font-weight: 850; white-space: nowrap; }
 .arranger-groups-panel > header button:disabled { opacity: .34; cursor: default; }

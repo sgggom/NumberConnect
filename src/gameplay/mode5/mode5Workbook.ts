@@ -66,10 +66,11 @@ export const parseMode5WorkbookSheets = (
       if (!data) throw new Error(`关卡 ${id} 引用了不存在的阵型 ${formationId}。`);
       const stageLevelId = levels.length + 1;
       const decodedLevel = decodeCompactLevelData({ data }, stageLevelId, false);
+      const formationLevel = { ...decodedLevel, formationId };
       levels.push(levelIndex === 0
-        ? decodedLevel
+        ? formationLevel
         : {
-            ...decodedLevel,
+            ...formationLevel,
             pathSource: 'generated',
             algorithm: { id: 'algorithm-1', parameters: {} },
           });

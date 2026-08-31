@@ -33,3 +33,20 @@ npm run build
 ## 拼豆数据
 
 `public/bead-patterns/patterns.json` 保存图案索引；各图案 JSON 使用 `data` 二维数组，颜色为 `#RRGGBB`，空格为 `null`。
+
+## 三模式关卡数据
+
+`public/levels/three-mode-level-library.json` 是玩法 3、4、5 共用的关卡库。普通阵型 ID 使用
+`level_阵型_路径_难度`，最后一段为 1–10 档难度；`guide_*` 为引导关卡。
+
+`public/levels/three-mode-level-config.txt` 保存三模式正式关卡配置。每行是一关，方括号中的阵型 ID
+按顺序分别代表这一关的各个阶段；普通 ID 的尾段同时是该阶段的默认难度。例如：
+
+```text
+id  "levelName"
+1   [guide_41_1,guide_33_1]
+11  [level_55_210_4,level_55_95_3,level_57_189_4,level_710_569_6]
+```
+
+解析与按难度取变体的入口位于 `src/gameplay/adaptive/threeModeLevelData.ts`。未传目标难度时使用配置
+ID 的默认档；传入动态难度时只替换 ID 的最后一段，并从同一个阵型/路径家族中取对应的 1–10 档数据。

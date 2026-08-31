@@ -20,6 +20,7 @@ import { selectHiddenCells } from './game/hidden';
 import { formatLives } from './game/lives';
 import { hasUnlimitedLives } from './game/lifeRules';
 import { levelBallColorCss } from './game/levelTheme';
+import { countCrossings } from './game/pathfinding';
 import {
   chooseWatercolorReveal,
   paintBucketRevealCells,
@@ -30,7 +31,6 @@ import {
   loadEditorLevelCollection,
   loadBeadLevels,
   loadLevelCollection,
-  loadMode3Levels,
   loadSettings,
   saveLevelCollection,
   saveSettings,
@@ -38,25 +38,19 @@ import {
 import {
   BoardShape,
   cellKey,
-  isInputMode,
   isChargeProgressMode,
-  isMainGameplay,
-  isMainGameplayDifficulty,
   isTouchPreviewSize,
   isUiTheme,
-  usesClickInput,
   type BoardNeighborhoodPreview,
   type BoardHoldScore,
   type BoardSessionInput,
+  type BoardWrongStepData,
   type ChargeProgressMode,
   type Cell,
   type EndlessStageSettings,
   type GameMode,
   type GameSettings,
-  type InputMode,
   type LevelData,
-  type MainGameplay,
-  type MainGameplayDifficulty,
   type TouchPreviewSize,
   type UiTheme,
 } from './game/types';
@@ -88,16 +82,6 @@ import {
   type BeadProgress,
 } from './gameplay/beads';
 import {
-  PLAY_BEAD_SHOWCASE_PATTERNS,
-  loadPlayBeadShowcaseProgress,
-  nextPlayBeadShowcasePattern,
-  playBeadShowcaseColorsForBoard,
-  renderPlayBeadShowcase,
-  savePlayBeadShowcaseProgress,
-  shouldUsePlayBeadShowcase,
-  type PlayBeadShowcasePattern,
-} from './gameplay/beads/playBeadShowcase';
-import {
   collectionArtworkName,
   collectionArtworkResourcePath,
   collectionArtworkUrl,
@@ -109,7 +93,6 @@ import {
   advancePlayPuzzleProgress,
   loadPlayPuzzleProgress,
   loadPlayPuzzleRotation,
-  nextPlayPuzzlePattern,
   playPuzzleTextureKey,
   puzzlePieceCount,
   renderPlayPuzzleShowcase,
@@ -120,29 +103,15 @@ import {
   type PlayPuzzleProgress,
   type PlayPuzzleRotation,
 } from './gameplay/puzzle/playPuzzleShowcase';
+import { loadMode5Workbook } from './gameplay/mode5/mode5Workbook';
 import {
-  createMode3HiddenCells,
-  createMode4HiddenCells,
-  loadDynamicDifficultyState,
-  loadMode4DynamicDifficultyState,
-  recordDynamicDifficultyGame,
-  saveDynamicDifficultyState,
-  saveMode4DynamicDifficultyState,
-  type DynamicDifficultyDecision,
-  type DynamicDifficultyGameResult,
-} from './gameplay/mode3';
-import {
-  createMode5StageHiddenCells,
-  loadMode5DynamicDifficultyState,
-  loadMode5Workbook,
-  mode5LevelCount,
-  mode5LevelProgressForId,
-  mode5LevelStartIndex,
-  mode5StageLevelId,
-  recordMode5DynamicDifficultyGame,
-  saveMode5DynamicDifficultyState,
-  type Mode5CampaignLevel,
-} from './gameplay/mode5';
+  loadThreeModeLevelConfiguration,
+  loadThreeModeLevelLibrary,
+  resolveThreeModeStage,
+  validateThreeModeConfigurationLibrary,
+  type ThreeModeConfiguredLevel,
+  type ThreeModeLevelLibrary,
+} from './gameplay/adaptive/threeModeLevelData';
 
 const UI_DESIGN_WIDTH = 750;
 const UI_DESIGN_HEIGHT = 1334;
@@ -154,9 +123,15 @@ const syncFixedUiScale = (): void => {
     window.innerWidth / UI_DESIGN_WIDTH,
     window.innerHeight / UI_DESIGN_HEIGHT,
   );
+  const uiScale = Math.max(0.01, designFitScale * UI_LOGICAL_TO_DESIGN_SCALE);
   document.documentElement.style.setProperty(
     '--ui-scale',
-    String(Math.max(0.01, designFitScale * UI_LOGICAL_TO_DESIGN_SCALE)),
+    String(uiScale),
+  );
+  document.documentElement.style.setProperty('--ui-visual-width', `${UI_LOGICAL_WIDTH * uiScale}px`);
+  document.documentElement.style.setProperty(
+    '--ui-visual-height',
+    `${UI_LOGICAL_WIDTH * UI_DESIGN_HEIGHT / UI_DESIGN_WIDTH * uiScale}px`,
   );
 };
 
@@ -302,16 +277,28 @@ const roundedRoutePath = (points: RoutePoint[], radius = 20): string => {
 
 type ResultContext = 'normal' | 'collection' | 'daily' | 'endless-stage' | 'life-depleted' | 'editor-playtest';
 type PlayContext = 'normal' | 'collection' | 'daily' | 'editor-playtest' | 'bead';
-type AdaptiveMainGameplay = Extract<MainGameplay, 'mode3' | 'mode4' | 'mode5'>;
 
-const isAdaptiveMainGameplay = (gameplay: MainGameplay): gameplay is AdaptiveMainGameplay => (
-  gameplay === 'mode3' || gameplay === 'mode4' || gameplay === 'mode5'
-);
+interface PuzzleStageExperience {
+  stage: number;
+  formationId: string;
+  errors: number;
+  releases: number;
+  elapsedMs: number;
+  revives: number;
+  errorRecords: PuzzleErrorExperience[];
+}
 
-const adaptiveGameplayName = (gameplay: AdaptiveMainGameplay): string => {
-  if (gameplay === 'mode5') return '玩法5';
-  return gameplay === 'mode4' ? '玩法4' : '玩法3';
-};
+interface PuzzleErrorExperience {
+  order: number;
+  stage: number;
+  stepNumber: number;
+  difficultyScore?: number;
+  choiceQuantity?: number;
+}
+
+interface ActivePuzzleStageExperience extends PuzzleStageExperience {
+  startedAt?: number;
+}
 
 interface ClientPoint {
   x: number;
@@ -370,6 +357,29 @@ interface TouchPreviewVisibilityAnimation {
 
 class NumberConnectApp {
   private readonly appShell = query<HTMLElement>('#app');
+  private readonly levelDebugStatus = query<HTMLElement>('#level-debug-status');
+  private readonly levelDebugLevelBadge = query<HTMLElement>('#level-debug-level-badge');
+  private readonly levelDebugStage = query<HTMLElement>('#level-debug-stage');
+  private readonly levelDebugFormation = query<HTMLElement>('#level-debug-formation');
+  private readonly levelDebugDifficulty = query<HTMLElement>('#level-debug-difficulty');
+  private readonly levelDebugBoardSize = query<HTMLElement>('#level-debug-board-size');
+  private readonly levelDebugCellCount = query<HTMLElement>('#level-debug-cell-count');
+  private readonly levelDebugCrossingCount = query<HTMLElement>('#level-debug-crossing-count');
+  private readonly levelDebugPuzzleFlow = query<HTMLElement>('#level-debug-puzzle-flow');
+  private readonly levelDebugErrorCount = query<HTMLElement>('#level-debug-error-count');
+  private readonly levelDebugReleaseCount = query<HTMLElement>('#level-debug-release-count');
+  private readonly levelDebugElapsedTime = query<HTMLElement>('#level-debug-elapsed-time');
+  private readonly levelDebugReviveCount = query<HTMLElement>('#level-debug-revive-count');
+  private readonly levelDebugExperienceRadar = query<SVGSVGElement>('#level-debug-experience-radar');
+  private readonly levelDebugExperienceLegend = query<HTMLElement>('#level-debug-experience-legend');
+  private readonly levelDebugErrorHistoryList = query<HTMLOListElement>('#level-debug-error-history-list');
+  private readonly levelDebugLevelInput = query<HTMLInputElement>('#level-debug-level-input');
+  private readonly levelDebugStageSelect = query<HTMLSelectElement>('#level-debug-stage-select');
+  private readonly levelDebugPreviousStage = query<HTMLButtonElement>('#level-debug-previous-stage');
+  private readonly levelDebugNextStage = query<HTMLButtonElement>('#level-debug-next-stage');
+  private readonly levelDebugReloadStage = query<HTMLButtonElement>('#level-debug-reload-stage');
+  private readonly levelDebugQuickComplete = query<HTMLButtonElement>('#level-debug-quick-complete');
+  private readonly levelDebugMessage = query<HTMLElement>('#level-debug-message');
   private readonly screenRouter = new ScreenRouter();
   private readonly primaryActionButton = query<HTMLButtonElement>('#primary-action-button');
   private readonly primaryActionLabel = query<HTMLElement>('#primary-action-label');
@@ -379,7 +389,6 @@ class NumberConnectApp {
   private readonly playCoinCount = query<HTMLElement>('#play-coin-count');
   private readonly comboCoinRewardLayer = query<HTMLElement>('#combo-coin-reward-layer');
   private readonly gameHost = query<HTMLElement>('#game-host');
-  private readonly playBeadShowcaseArt = query<HTMLElement>('#play-bead-showcase-art');
   private readonly playPuzzleShowcaseArt = query<HTMLElement>('#play-puzzle-showcase-art');
   private readonly playPuzzleRotationHandle = query<HTMLElement>('#play-puzzle-rotation-handle');
   private readonly playPuzzleProgressBar = query<HTMLElement>('#play-puzzle-progress');
@@ -389,6 +398,7 @@ class NumberConnectApp {
   private readonly playPuzzleFinaleButton = query<HTMLButtonElement>('#play-puzzle-finale-button');
   private readonly playLevelButton = query<HTMLButtonElement>('#play-level-button');
   private readonly levelLabel = query<HTMLElement>('#play-level-label');
+  private readonly formationIdLabel = query<HTMLElement>('#play-formation-id');
   private readonly holdScoreFormula = query<HTMLElement>('#hold-score-formula');
   private readonly holdScoreTotal = query<HTMLElement>('#hold-score-total');
   private readonly holdScoreChoice = query<HTMLElement>('#hold-score-choice');
@@ -416,16 +426,19 @@ class NumberConnectApp {
   private readonly touchPreviewPointerLine = query<SVGLineElement>('#touch-preview-pointer-line');
   private readonly touchPreviewViewport = query<HTMLElement>('#touch-preview-viewport');
   private readonly touchPreviewSizeControl = query<HTMLElement>('#touch-preview-size');
-  private readonly inputModeControl = query<HTMLElement>('#settings-input-mode');
   private readonly chargeProgressModeControl = query<HTMLElement>('#settings-charge-progress-mode');
-  private readonly mainGameplayControl = query<HTMLElement>('#settings-main-gameplay');
-  private readonly mainGameplayDifficultyRow = query<HTMLElement>('#settings-main-difficulty-row');
-  private readonly mainGameplayDifficultyControl = query<HTMLSelectElement>('#settings-main-difficulty');
   private readonly uiThemeControl = query<HTMLElement>('#settings-theme');
   private readonly resultOverlay = query<HTMLElement>('#result-overlay');
   private readonly resultTitle = query<HTMLElement>('#result-title');
   private readonly resultMessage = query<HTMLElement>('#result-message');
   private readonly resultReward = query<HTMLElement>('#result-reward');
+  private readonly resultExperience = query<HTMLElement>('#result-experience');
+  private readonly resultExperienceStageCount = query<HTMLElement>('#result-experience-stage-count');
+  private readonly resultExperienceErrors = query<HTMLElement>('#result-experience-errors');
+  private readonly resultExperienceReleases = query<HTMLElement>('#result-experience-releases');
+  private readonly resultExperienceTime = query<HTMLElement>('#result-experience-time');
+  private readonly resultExperienceRevives = query<HTMLElement>('#result-experience-revives');
+  private readonly resultExperienceStages = query<HTMLElement>('#result-experience-stages');
   private readonly resultActions = query<HTMLElement>('#result-actions');
   private readonly restartButton = query<HTMLButtonElement>('#restart-button');
   private readonly nextButton = query<HTMLButtonElement>('#next-button');
@@ -493,13 +506,11 @@ class NumberConnectApp {
 
   private builtInLevels: LevelData[] = [];
   private beadLevels: LevelData[] = [];
-  private mode3Levels: LevelData[] = [];
-  private mode5Levels: LevelData[] = [];
-  private mode5Campaign: Mode5CampaignLevel[] = [];
+  private threeModeLibrary?: ThreeModeLevelLibrary;
+  private threeModeCampaign: ThreeModeConfiguredLevel[] = [];
   private levels: LevelData[] = [];
   private editorLevels: LevelData[] = [];
-  private settings: GameSettings = { ...loadSettings(), mainGameplay: 'puzzle' };
-  private activeMainGameplay: MainGameplay = this.settings.mainGameplay;
+  private settings: GameSettings = loadSettings();
   private mode: GameMode = 'normal';
   private stage = initialEndlessRunState.stage;
   private lives = 3;
@@ -508,15 +519,15 @@ class NumberConnectApp {
   private coinRewardAnimationFrame?: number;
   private editorPlaytestErrorCount = 0;
   private editorPlaytestReturnScreen: 'editor' | 'arranger' = 'editor';
-  private mode3DifficultyState = loadDynamicDifficultyState();
-  private mode4DifficultyState = loadMode4DynamicDifficultyState();
-  private mode5DifficultyState = loadMode5DynamicDifficultyState();
-  private currentAdaptiveDifficulty = this.mode3DifficultyState.currentDifficulty;
-  private currentAdaptiveUsesDynamicDifficulty = true;
-  private currentAdaptiveAttemptErrors = 0;
-  private currentAdaptiveAttemptRecorded = true;
-  private currentAdaptiveAttemptEligible = false;
-  private currentAdaptiveLifeDepleted = false;
+  private currentAdaptiveStage = 1;
+  private levelDebugExperienceLevelId?: number;
+  private levelDebugExperienceErrors = 0;
+  private levelDebugExperienceReleases = 0;
+  private levelDebugExperienceRevives = 0;
+  private levelDebugExperienceElapsedMs = 0;
+  private levelDebugExperienceStartedAt?: number;
+  private levelDebugStageExperiences: PuzzleStageExperience[] = [];
+  private levelDebugActiveStageExperience?: ActivePuzzleStageExperience;
   private endlessSeed = initialEndlessRunState.seed;
   private endlessSessionActive = initialEndlessRunState.active;
   private endlessLives = initialEndlessRunState.lives;
@@ -543,9 +554,6 @@ class NumberConnectApp {
   private beadProgress?: BeadProgress;
   private currentBeadReward: BeadJarItem[] = [];
   private currentBeadLevelIndex = 0;
-  private currentPlayBeadReward: PlayBeadShowcasePattern['pixels'] = [];
-  private playBeadShowcasePattern = PLAY_BEAD_SHOWCASE_PATTERNS[0];
-  private playBeadShowcaseCollected = 0;
   private playPuzzleProgress: PlayPuzzleProgress = loadPlayPuzzleProgress();
   private playPuzzlePattern: PlayPuzzlePattern = PLAY_PUZZLE_PATTERNS.find(
     (pattern) => pattern.id === this.playPuzzleProgress.patternId,
@@ -660,33 +668,30 @@ class NumberConnectApp {
   }
 
   public async initialize(): Promise<void> {
-    const [mode5Workbook, beadLevels, mode3Levels, beadPatterns] = await Promise.all([
+    const [mode5Workbook, beadLevels, beadPatterns, threeModeLibrary, threeModeCampaign] = await Promise.all([
       loadMode5Workbook(),
       loadBeadLevels(),
-      loadMode3Levels(),
       loadBeadPatterns(),
+      loadThreeModeLevelLibrary(),
+      loadThreeModeLevelConfiguration(),
       this.boardScene.whenReady(),
     ]);
+    validateThreeModeConfigurationLibrary(threeModeLibrary, threeModeCampaign);
     const beadSequence = loadBeadSequence(beadPatterns);
     this.builtInLevels = mode5Workbook.levels;
     this.beadLevels = beadLevels;
-    this.mode3Levels = mode3Levels;
-    this.mode5Levels = mode5Workbook.levels;
-    this.mode5Campaign = mode5Workbook.campaign;
+    this.threeModeLibrary = threeModeLibrary;
+    this.threeModeCampaign = threeModeCampaign;
     this.beadPatterns = beadPatterns;
     this.beadPattern = beadSequence.pattern;
     this.beadProgress = beadSequence.progress;
     this.beadJar = loadBeadJarQueue(beadPatterns, beadSequence.progress);
     this.completedBeadPatternIds = new Set(loadCompletedBeadPatternIds(beadPatterns));
-    const showcaseProgress = loadPlayBeadShowcaseProgress();
-    this.playBeadShowcasePattern = PLAY_BEAD_SHOWCASE_PATTERNS.find(
-      (pattern) => pattern.id === showcaseProgress.patternId,
-    ) ?? PLAY_BEAD_SHOWCASE_PATTERNS[0];
-    this.playBeadShowcaseCollected = showcaseProgress.collected;
     this.normalizePlayPuzzleLevel();
     this.refreshLevels();
     this.bindLobby();
     this.bindPlayControls();
+    this.bindLevelDebugPanel();
     this.bindSettings();
     this.editor.bind();
     this.arranger.bind();
@@ -697,7 +702,11 @@ class NumberConnectApp {
     this.renderEndlessHub();
     this.renderFavoritesScreen();
     this.renderTouchPreviewState();
-    this.renderInputMode();
+    this.renderLevelDebugPanel();
+    window.setInterval(
+      () => this.renderLevelDebugExperience(),
+      100,
+    );
     // The Phaser canvas exists beneath the DOM screens from startup onward.
     // Keep its input disabled until an actual gameplay screen is entered.
     this.boardScene.setPaused(this.currentScreen !== 'play');
@@ -796,6 +805,427 @@ class NumberConnectApp {
     this.restartButton.addEventListener('click', () => this.handleResultPrimary());
     this.nextButton.addEventListener('click', () => this.handleResultSecondary());
     this.resultLobbyButton.addEventListener('click', () => this.leavePlayScreen());
+  }
+
+  private bindLevelDebugPanel(): void {
+    this.levelDebugLevelInput.max = String(this.threeModeCampaign.length);
+    this.levelDebugLevelInput.addEventListener('input', () => {
+      const levelId = Number(this.levelDebugLevelInput.value);
+      this.populateLevelDebugStages(levelId, 1);
+    });
+    query<HTMLButtonElement>('#level-debug-load-button').addEventListener('click', () => {
+      this.loadLevelDebugSelection(
+        Number(this.levelDebugLevelInput.value),
+        Number(this.levelDebugStageSelect.value),
+      );
+    });
+    this.levelDebugPreviousStage.addEventListener('click', () => {
+      this.loadLevelDebugSelection(this.settings.puzzleMainLevelId, this.currentAdaptiveStage - 1);
+    });
+    this.levelDebugNextStage.addEventListener('click', () => {
+      this.loadLevelDebugSelection(this.settings.puzzleMainLevelId, this.currentAdaptiveStage + 1);
+    });
+    this.levelDebugReloadStage.addEventListener('click', () => {
+      this.loadLevelDebugSelection(this.settings.puzzleMainLevelId, this.currentAdaptiveStage);
+    });
+    this.levelDebugQuickComplete.addEventListener('click', () => {
+      if (!this.canUseLevelDebugControls()) return;
+      this.setLevelDebugMessage('正在快速完成当前棋盘。');
+      this.boardScene.quickComplete();
+    });
+  }
+
+  private canUseLevelDebugControls(): boolean {
+    return this.currentScreen === 'play'
+      && this.playContext === 'normal'
+      && this.mode === 'normal'
+      ;
+  }
+
+  private populateLevelDebugStages(levelId: number, selectedStage: number): void {
+    const configuredLevel = this.threeModeCampaign.find((level) => level.id === levelId);
+    if (!configuredLevel) {
+      this.levelDebugStageSelect.replaceChildren();
+      this.levelDebugStageSelect.disabled = true;
+      return;
+    }
+    const stage = Math.max(1, Math.min(configuredLevel.stages.length, selectedStage));
+    const options = configuredLevel.stages.map(({ index, formationId }) => {
+      const option = document.createElement('option');
+      option.value = String(index);
+      option.textContent = `阶段 ${index} · ${formationId}`;
+      option.selected = index === stage;
+      return option;
+    });
+    this.levelDebugStageSelect.replaceChildren(...options);
+    this.levelDebugStageSelect.disabled = false;
+  }
+
+  private setLevelDebugMessage(message: string, error = false): void {
+    this.levelDebugMessage.textContent = message;
+    this.levelDebugMessage.classList.toggle('is-error', error);
+  }
+
+  private loadLevelDebugSelection(levelId: number, requestedStage: number): void {
+    if (!this.canUseLevelDebugControls()) {
+      this.setLevelDebugMessage('仅普通拼图关卡可使用调试跳转。', true);
+      return;
+    }
+    const configuredLevel = this.threeModeCampaign.find((level) => level.id === levelId);
+    if (!configuredLevel) {
+      this.setLevelDebugMessage(`找不到关卡 ${Number.isFinite(levelId) ? levelId : '—'}。`, true);
+      return;
+    }
+    const stage = Math.max(1, Math.min(
+      configuredLevel.stages.length,
+      Number.isFinite(requestedStage) ? Math.floor(requestedStage) : 1,
+    ));
+    const pattern = this.playPuzzlePatternForLevel(levelId);
+    this.settings.puzzleMainLevelId = levelId;
+    this.currentAdaptiveStage = stage;
+    this.playPuzzlePattern = pattern;
+    this.playPuzzleProgress = {
+      patternId: pattern.id,
+      revealed: Math.min(puzzlePieceCount(pattern), stage - 1),
+    };
+    saveSettings(this.settings);
+    savePlayPuzzleProgress(this.playPuzzleProgress);
+    this.stopPlayPuzzleCornerPresses();
+    this.stopPlayPuzzlePieceFloats();
+    this.playPuzzleFinale.hidden = true;
+    this.playPuzzleFinaleBusy = false;
+    this.resultOverlay.hidden = true;
+    this.lives = 3;
+    this.renderLives();
+    this.boardScene.setPaused(false);
+    this.resetLevelDebugExperience(levelId);
+    this.setCurrentBoard(this.createNormalLevel());
+    this.renderDefaultLobbyLevelNumber();
+    this.setLevelDebugMessage(`已加载 Level ${levelId}-${stage}。`);
+  }
+
+  private renderLevelDebugPanel(level = this.currentLevel): void {
+    const enabled = this.canUseLevelDebugControls();
+    const levelId = this.settings.puzzleMainLevelId;
+    const configuredLevel = this.threeModeCampaign.find((item) => item.id === levelId);
+    const totalStages = configuredLevel?.stages.length ?? 0;
+    const stage = Math.max(1, Math.min(totalStages || 1, this.currentAdaptiveStage));
+    const configuredFormation = configuredLevel?.stages[stage - 1]?.formationId;
+    const difficultyMatch = configuredFormation?.match(/_(10|[1-9])$/);
+
+    this.levelDebugStatus.textContent = enabled ? '运行中' : '等待普通关卡';
+    this.levelDebugLevelBadge.textContent = configuredLevel ? `Level ${levelId}` : 'Level —';
+    this.levelDebugStage.textContent = configuredLevel ? `${stage} / ${totalStages}` : '—';
+    this.levelDebugFormation.textContent = level?.formationId === undefined
+      ? configuredFormation ?? '—'
+      : String(level.formationId);
+    this.levelDebugFormation.title = this.levelDebugFormation.textContent;
+    this.levelDebugDifficulty.textContent = configuredFormation?.startsWith('guide_')
+      ? '引导关'
+      : difficultyMatch?.[1] ?? '—';
+    this.levelDebugBoardSize.textContent = level ? `${level.columns} × ${level.rows}` : '—';
+    this.levelDebugCellCount.textContent = level ? String(level.solutionPath.length) : '—';
+    this.levelDebugCrossingCount.textContent = level
+      ? String(countCrossings(level.solutionPath, level.boardShape))
+      : '—';
+    this.levelDebugPuzzleFlow.textContent = this.settings.showPuzzleFlow ? '开启' : '关闭';
+
+    if (document.activeElement !== this.levelDebugLevelInput) {
+      this.levelDebugLevelInput.value = String(levelId);
+    }
+    this.populateLevelDebugStages(levelId, stage);
+    this.levelDebugPreviousStage.disabled = !enabled || stage <= 1;
+    this.levelDebugNextStage.disabled = !enabled || stage >= totalStages;
+    this.levelDebugReloadStage.disabled = !enabled;
+    this.levelDebugQuickComplete.disabled = !enabled;
+    this.renderLevelDebugExperience();
+  }
+
+  private resetLevelDebugExperience(levelId = this.settings.puzzleMainLevelId): void {
+    this.levelDebugExperienceLevelId = levelId;
+    this.levelDebugExperienceErrors = 0;
+    this.levelDebugExperienceReleases = 0;
+    this.levelDebugExperienceRevives = 0;
+    this.levelDebugExperienceElapsedMs = 0;
+    this.levelDebugExperienceStartedAt = undefined;
+    this.levelDebugStageExperiences = [];
+    this.levelDebugActiveStageExperience = undefined;
+    this.beginLevelDebugStageExperience();
+    this.renderLevelDebugExperience();
+  }
+
+  private beginLevelDebugStageExperience(): void {
+    const stage = this.currentAdaptiveStage;
+    const formationId = this.adaptiveConfiguredLevel()?.stages[stage - 1]?.formationId ?? '—';
+    const startedAt = performance.now();
+    this.levelDebugExperienceStartedAt = startedAt;
+    this.levelDebugActiveStageExperience = {
+      stage,
+      formationId,
+      errors: 0,
+      releases: 0,
+      elapsedMs: 0,
+      revives: 0,
+      errorRecords: [],
+      startedAt,
+    };
+  }
+
+  private finishLevelDebugStageExperience(): void {
+    const active = this.levelDebugActiveStageExperience;
+    if (active?.startedAt === undefined) return;
+    const now = performance.now();
+    active.elapsedMs += now - active.startedAt;
+    active.startedAt = undefined;
+    const completed: PuzzleStageExperience = {
+      stage: active.stage,
+      formationId: active.formationId,
+      errors: active.errors,
+      releases: active.releases,
+      elapsedMs: active.elapsedMs,
+      revives: active.revives,
+      errorRecords: [...active.errorRecords],
+    };
+    this.levelDebugStageExperiences = [
+      ...this.levelDebugStageExperiences.filter(({ stage }) => stage !== completed.stage),
+      completed,
+    ].sort((left, right) => left.stage - right.stage);
+    this.stopLevelDebugExperience();
+  }
+
+  private recordLevelDebugError(step: BoardWrongStepData): void {
+    this.levelDebugExperienceErrors += 1;
+    const record: PuzzleErrorExperience = {
+      order: this.levelDebugExperienceErrors,
+      stage: this.currentAdaptiveStage,
+      stepNumber: step.stepNumber,
+    };
+    this.levelDebugActiveStageExperience?.errorRecords.push(record);
+    if (this.levelDebugActiveStageExperience) this.levelDebugActiveStageExperience.errors += 1;
+    this.renderLevelDebugExperience();
+    void step.score.then((score) => {
+      record.difficultyScore = score?.badgeScore;
+      record.choiceQuantity = score?.choiceQuantity;
+      this.renderLevelDebugErrorHistory();
+      if (!this.resultExperience.hidden) {
+        this.renderPuzzleResultExperience(this.adaptiveTotalStages(this.settings.puzzleMainLevelId));
+      }
+    }).catch(() => this.renderLevelDebugErrorHistory());
+  }
+
+  private recordLevelDebugExperience(metric: 'releases' | 'revives'): void {
+    if (metric === 'releases') this.levelDebugExperienceReleases += 1;
+    if (metric === 'revives') this.levelDebugExperienceRevives += 1;
+    if (this.levelDebugActiveStageExperience) {
+      this.levelDebugActiveStageExperience[metric] += 1;
+    }
+    this.renderLevelDebugExperience();
+  }
+
+  private stopLevelDebugExperience(): void {
+    if (this.levelDebugExperienceStartedAt !== undefined) {
+      this.levelDebugExperienceElapsedMs += performance.now() - this.levelDebugExperienceStartedAt;
+      this.levelDebugExperienceStartedAt = undefined;
+    }
+    this.renderLevelDebugExperience();
+  }
+
+  private levelDebugElapsedMs(): number {
+    return this.levelDebugExperienceElapsedMs + (
+      this.levelDebugExperienceStartedAt === undefined
+        ? 0
+        : performance.now() - this.levelDebugExperienceStartedAt
+    );
+  }
+
+  private formatExperienceTime(elapsedMs: number): string {
+    const totalTenths = Math.max(0, Math.floor(elapsedMs / 100));
+    const minutes = Math.floor(totalTenths / 600);
+    const seconds = Math.floor(totalTenths % 600 / 10);
+    const tenths = totalTenths % 10;
+    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${tenths}`;
+  }
+
+  private renderLevelDebugExperience(): void {
+    this.levelDebugErrorCount.textContent = String(this.levelDebugExperienceErrors);
+    this.levelDebugReleaseCount.textContent = String(this.levelDebugExperienceReleases);
+    this.levelDebugElapsedTime.textContent = this.formatExperienceTime(this.levelDebugElapsedMs());
+    this.levelDebugReviveCount.textContent = String(this.levelDebugExperienceRevives);
+    this.renderLevelDebugExperienceRadar();
+    this.renderLevelDebugErrorHistory();
+  }
+
+  private renderLevelDebugExperienceRadar(): void {
+    const active = this.levelDebugActiveStageExperience;
+    const activeElapsedMs = active
+      ? active.elapsedMs + (
+          active.startedAt === undefined ? 0 : performance.now() - active.startedAt
+        )
+      : 0;
+    const stageRecords: PuzzleStageExperience[] = [
+      ...this.levelDebugStageExperiences.filter(({ stage }) => stage !== active?.stage),
+      ...(active ? [{
+        stage: active.stage,
+        formationId: active.formationId,
+        errors: active.errors,
+        releases: active.releases,
+        elapsedMs: activeElapsedMs,
+        revives: active.revives,
+        errorRecords: active.errorRecords,
+      }] : []),
+    ].sort((left, right) => left.stage - right.stage);
+    const cumulativeStages = stageRecords.reduce<PuzzleStageExperience[]>((result, stage) => {
+      const previous = result.at(-1);
+      result.push({
+        stage: stage.stage,
+        formationId: stage.formationId,
+        errors: (previous?.errors ?? 0) + stage.errors,
+        releases: (previous?.releases ?? 0) + stage.releases,
+        elapsedMs: (previous?.elapsedMs ?? 0) + stage.elapsedMs,
+        revives: (previous?.revives ?? 0) + stage.revives,
+        errorRecords: [
+          ...(previous?.errorRecords ?? []),
+          ...stage.errorRecords,
+        ],
+      });
+      return result;
+    }, []);
+    const metrics = [
+      { label: '错误', value: (stage: PuzzleStageExperience) => stage.errors },
+      { label: '松手', value: (stage: PuzzleStageExperience) => stage.releases },
+      { label: '计时(min)', value: (stage: PuzzleStageExperience) => stage.elapsedMs / 60_000 },
+      { label: '复活', value: (stage: PuzzleStageExperience) => stage.revives },
+    ];
+    const maxima = metrics.map((metric) => Math.max(1, ...cumulativeStages.map(metric.value)));
+    const centerX = 120;
+    const centerY = 104;
+    const radius = 72;
+    const labelRadius = 91;
+    const angleAt = (index: number): number => -Math.PI / 2 + index * Math.PI * 2 / metrics.length;
+    const pointAt = (index: number, distance: number): [number, number] => {
+      const angle = angleAt(index);
+      return [
+        centerX + Math.cos(angle) * distance,
+        centerY + Math.sin(angle) * distance,
+      ];
+    };
+    const pointsAt = (distances: number[]): string => distances
+      .map((distance, index) => pointAt(index, distance).map((value) => value.toFixed(2)).join(','))
+      .join(' ');
+    const pathAt = (distances: number[]): string => distances
+      .map((distance, index) => {
+        const point = pointAt(index, distance).map((value) => value.toFixed(2)).join(',');
+        return `${index === 0 ? 'M' : 'L'}${point}`;
+      })
+      .join(' ') + ' Z';
+    const svgElement = (name: string): SVGElement => (
+      document.createElementNS('http://www.w3.org/2000/svg', name)
+    );
+
+    const grid = [0.25, 0.5, 0.75, 1].map((level) => {
+      const polygon = svgElement('polygon');
+      polygon.setAttribute('class', 'level-debug-radar-grid');
+      polygon.setAttribute('points', pointsAt(metrics.map(() => radius * level)));
+      return polygon;
+    });
+    const axes = metrics.map((_, index) => {
+      const [x, y] = pointAt(index, radius);
+      const line = svgElement('line');
+      line.setAttribute('class', 'level-debug-radar-axis');
+      line.setAttribute('x1', String(centerX));
+      line.setAttribute('y1', String(centerY));
+      line.setAttribute('x2', String(x));
+      line.setAttribute('y2', String(y));
+      return line;
+    });
+    const plots = cumulativeStages.flatMap((stage, stageIndex) => {
+      const hue = (stage.stage * 73 + 145) % 360;
+      const color = `hsl(${hue} 68% 48%)`;
+      const distances = metrics.map((metric, index) => (
+        radius * metric.value(stage) / maxima[index]
+      ));
+      const previousStage = cumulativeStages[stageIndex - 1];
+      const previousDistances = previousStage
+        ? metrics.map((metric, index) => radius * metric.value(previousStage) / maxima[index])
+        : undefined;
+      const layer = svgElement('path');
+      layer.setAttribute('class', 'level-debug-radar-layer');
+      layer.setAttribute(
+        'd',
+        `${pathAt(distances)}${previousDistances ? ` ${pathAt(previousDistances)}` : ''}`,
+      );
+      layer.setAttribute('fill', color);
+      const polygon = svgElement('polygon');
+      polygon.setAttribute('class', 'level-debug-radar-plot');
+      polygon.setAttribute('points', pointsAt(distances));
+      polygon.setAttribute('fill', 'none');
+      polygon.setAttribute('stroke', color);
+      const points = distances.map((distance, index) => {
+        const [x, y] = pointAt(index, distance);
+        const circle = svgElement('circle');
+        circle.setAttribute('class', 'level-debug-radar-point');
+        circle.setAttribute('cx', String(x));
+        circle.setAttribute('cy', String(y));
+        circle.setAttribute('r', '3');
+        circle.setAttribute('fill', color);
+        return circle;
+      });
+      return [layer, polygon, ...points];
+    });
+    const labels = metrics.map((metric, index) => {
+      const [x, y] = pointAt(index, labelRadius);
+      const label = svgElement('text');
+      label.setAttribute('class', 'level-debug-radar-label');
+      label.setAttribute('x', String(x));
+      label.setAttribute('y', String(y));
+      label.textContent = metric.label;
+      return label;
+    });
+    this.levelDebugExperienceRadar.replaceChildren(...grid, ...axes, ...plots, ...labels);
+    this.levelDebugExperienceRadar.setAttribute(
+      'aria-label',
+      `各阶段独立体验数据堆叠雷达图，共 ${stageRecords.length} 个阶段`,
+    );
+
+    const legend = stageRecords.map((stage) => {
+      const hue = (stage.stage * 73 + 145) % 360;
+      const item = document.createElement('div');
+      const swatch = document.createElement('i');
+      const title = document.createElement('strong');
+      const values = document.createElement('small');
+      item.style.setProperty('--stage-color', `hsl(${hue} 68% 48%)`);
+      title.textContent = `阶段 ${stage.stage}`;
+      values.textContent = `错 ${stage.errors} · 松 ${stage.releases} · ${(stage.elapsedMs / 60_000).toFixed(2)}min · 复 ${stage.revives}`;
+      values.title = `${stage.formationId} · ${values.textContent}`;
+      item.append(swatch, title, values);
+      return item;
+    });
+    this.levelDebugExperienceLegend.replaceChildren(...legend);
+  }
+
+  private renderLevelDebugErrorHistory(): void {
+    const records = [
+      ...this.levelDebugStageExperiences.flatMap(({ errorRecords }) => errorRecords),
+      ...(this.levelDebugActiveStageExperience?.errorRecords ?? []),
+    ].filter((record, index, all) => all.findIndex(({ order }) => order === record.order) === index)
+      .sort((left, right) => left.order - right.order);
+    if (records.length === 0) {
+      const empty = document.createElement('li');
+      empty.className = 'is-empty';
+      empty.textContent = '暂时没有错误记录';
+      this.levelDebugErrorHistoryList.replaceChildren(empty);
+      return;
+    }
+    const items = records.map((record) => {
+      const item = document.createElement('li');
+      const position = document.createElement('span');
+      const values = document.createElement('strong');
+      position.textContent = `错误 ${record.order} · 阶段 ${record.stage} · 第 ${record.stepNumber} 步`;
+      values.textContent = `难度分 ${record.difficultyScore ?? '计算中'} · ${record.choiceQuantity ?? '计算中'} 个选择`;
+      item.append(position, values);
+      return item;
+    });
+    this.levelDebugErrorHistoryList.replaceChildren(...items);
   }
 
   private applyPlayPuzzleRotation(): void {
@@ -1634,19 +2064,6 @@ class NumberConnectApp {
     });
   }
 
-  private selectedInputMode(): InputMode {
-    const value = this.inputModeControl.querySelector<HTMLInputElement>(
-      'input[name="input-mode"]:checked',
-    )?.value;
-    return isInputMode(value) ? value : 'drag';
-  }
-
-  private setInputModeControl(mode: InputMode): void {
-    this.inputModeControl.querySelectorAll<HTMLInputElement>('input[name="input-mode"]').forEach((input) => {
-      input.checked = input.value === mode;
-    });
-  }
-
   private selectedChargeProgressMode(): ChargeProgressMode {
     const value = this.chargeProgressModeControl.querySelector<HTMLInputElement>(
       'input[name="charge-progress-mode"]:checked',
@@ -1662,78 +2079,36 @@ class NumberConnectApp {
     });
   }
 
-  private selectedMainGameplay(): MainGameplay {
-    const value = this.mainGameplayControl.querySelector<HTMLInputElement>(
-      'input[name="main-gameplay"]:checked',
-    )?.value;
-    return isMainGameplay(value) ? value : 'beads';
+  private adaptiveConfiguredLevel(levelId = this.settings.puzzleMainLevelId) {
+    return this.threeModeCampaign.find((level) => level.id === levelId);
   }
 
-  private setMainGameplayControl(gameplay: MainGameplay): void {
-    this.mainGameplayControl.querySelectorAll<HTMLInputElement>('input[name="main-gameplay"]').forEach((input) => {
-      input.checked = input.value === gameplay;
-    });
-  }
-
-  private selectedMainGameplayDifficulty(): MainGameplayDifficulty {
-    const value = this.mainGameplayDifficultyControl.value;
-    if (value === 'dynamic') return 'dynamic';
-    const difficulty = Number(value);
-    return isMainGameplayDifficulty(difficulty) ? difficulty : 'dynamic';
-  }
-
-  private setMainGameplayDifficultyControl(difficulty: MainGameplayDifficulty): void {
-    this.mainGameplayDifficultyControl.value = String(difficulty);
-  }
-
-  private mainGameplayLevels(gameplay: MainGameplay = this.settings.mainGameplay): LevelData[] {
-    if (gameplay === 'mode5') return this.mode5Levels;
-    return gameplay === 'mode3' || gameplay === 'mode4' ? this.mode3Levels : this.levels;
-  }
-
-  private mainGameplayLevelId(gameplay: MainGameplay = this.settings.mainGameplay): number {
-    if (gameplay === 'beads') return this.settings.beadMainLevelId;
-    if (gameplay === 'puzzle') return this.settings.puzzleMainLevelId;
-    if (gameplay === 'mode3') return this.settings.mode3MainLevelId;
-    if (gameplay === 'mode4') return this.settings.mode4MainLevelId;
-    return this.settings.mode5MainLevelId;
-  }
-
-  private setMainGameplayLevelId(levelId: number, gameplay: MainGameplay): void {
-    if (gameplay === 'beads') this.settings.beadMainLevelId = levelId;
-    else if (gameplay === 'puzzle') this.settings.puzzleMainLevelId = levelId;
-    else if (gameplay === 'mode3') this.settings.mode3MainLevelId = levelId;
-    else if (gameplay === 'mode4') this.settings.mode4MainLevelId = levelId;
-    else this.settings.mode5MainLevelId = levelId;
-  }
-
-  private mode5LevelProgress(levelId = this.settings.mode5MainLevelId) {
-    return mode5LevelProgressForId(this.mode5Campaign, levelId);
+  private adaptiveTotalStages(levelId = this.settings.puzzleMainLevelId): number {
+    return this.adaptiveConfiguredLevel(levelId)?.stages.length ?? 1;
   }
 
   private playPuzzlePatternForLevel(levelId = this.settings.puzzleMainLevelId): PlayPuzzlePattern {
-    const index = Math.max(0, Math.min(PLAY_PUZZLE_PATTERNS.length - 1, Math.floor(levelId) - 1));
+    const index = (Math.max(1, Math.floor(levelId)) - 1) % PLAY_PUZZLE_PATTERNS.length;
     return PLAY_PUZZLE_PATTERNS[index] ?? PLAY_PUZZLE_PATTERNS[0];
   }
 
   private normalizePlayPuzzleLevel(): void {
-    if (this.playPuzzleProgress.revealed >= puzzlePieceCount(this.playPuzzlePattern)) {
-      this.playPuzzlePattern = nextPlayPuzzlePattern(this.playPuzzlePattern);
-      this.playPuzzleProgress = { patternId: this.playPuzzlePattern.id, revealed: 0 };
+    const completed = this.playPuzzleProgress.revealed >= puzzlePieceCount(this.playPuzzlePattern);
+    if (completed) {
+      const levelCount = Math.max(1, this.threeModeCampaign.length);
+      this.settings.puzzleMainLevelId = this.settings.puzzleMainLevelId % levelCount + 1;
+    }
+    const expectedPattern = this.playPuzzlePatternForLevel();
+    if (completed || this.playPuzzlePattern.id !== expectedPattern.id) {
+      this.playPuzzlePattern = expectedPattern;
+      this.playPuzzleProgress = { patternId: expectedPattern.id, revealed: 0 };
       savePlayPuzzleProgress(this.playPuzzleProgress);
     }
-    const patternIndex = PLAY_PUZZLE_PATTERNS.findIndex(
-      (pattern) => pattern.id === this.playPuzzlePattern.id,
+    this.currentAdaptiveStage = Math.min(
+      this.adaptiveTotalStages(this.settings.puzzleMainLevelId),
+      this.playPuzzleProgress.revealed + 1,
     );
-    const levelId = Math.max(0, patternIndex) + 1;
-    if (this.settings.puzzleMainLevelId !== levelId) {
-      this.settings.puzzleMainLevelId = levelId;
-      saveSettings(this.settings);
-    }
-  }
-
-  private renderInputMode(): void {
-    this.playScreen.classList.toggle('is-click-input', usesClickInput(this.settings.inputMode));
+    saveSettings(this.settings);
   }
 
   private selectedUiTheme(): UiTheme {
@@ -1758,7 +2133,6 @@ class NumberConnectApp {
       if (this.settingsContext !== 'play') return;
       this.settingsDialog.close();
       this.boardScene.setPaused(false);
-      if (this.isAdaptiveGameplaySession()) this.currentAdaptiveAttemptEligible = false;
       this.boardScene.quickComplete();
     });
     this.settingsRestartButton.addEventListener('click', () => this.restartFromSettings());
@@ -1778,22 +2152,10 @@ class NumberConnectApp {
   private refreshLevels(): void {
     this.editorLevels = loadEditorLevelCollection();
     this.levels = loadLevelCollection(this.builtInLevels);
-    if (!this.levels.some((level) => level.levelId === this.settings.beadMainLevelId)) {
-      this.settings.beadMainLevelId = this.levels[0]?.levelId ?? 1;
-    }
-    if (!this.mode3Levels.some((level) => level.levelId === this.settings.mode3MainLevelId)) {
-      this.settings.mode3MainLevelId = this.mode3Levels[0]?.levelId ?? 1;
-    }
-    if (!this.mode3Levels.some((level) => level.levelId === this.settings.mode4MainLevelId)) {
-      this.settings.mode4MainLevelId = this.mode3Levels[0]?.levelId ?? 1;
-    }
-    if (!this.mode5Levels.some((level) => level.levelId === this.settings.mode5MainLevelId)) {
-      this.settings.mode5MainLevelId = this.mode5Levels[0]?.levelId ?? 1;
-    }
     if (
       !Number.isInteger(this.settings.puzzleMainLevelId)
       || this.settings.puzzleMainLevelId < 1
-      || this.settings.puzzleMainLevelId > PLAY_PUZZLE_PATTERNS.length
+      || this.settings.puzzleMainLevelId > this.threeModeCampaign.length
     ) this.settings.puzzleMainLevelId = 1;
   }
 
@@ -1802,7 +2164,9 @@ class NumberConnectApp {
     this.cancelPrimaryActionTransition();
     if (name !== 'play') this.boardScene.setPaused(true);
     this.currentScreen = name;
+    document.body.classList.toggle('is-play-debug-layout', name === 'play');
     this.screenRouter.show(name);
+    this.renderLevelDebugPanel();
     this.transitionPrimaryAction(previousScreen, name);
   }
 
@@ -1885,13 +2249,13 @@ class NumberConnectApp {
 
     if (screen === 'lobby') {
       this.primaryActionButton.dataset.actionTheme = 'lobby';
-      if (this.mainGameplayLevels().length === 0) {
+      if (this.threeModeCampaign.length === 0) {
         this.primaryActionButton.disabled = true;
         this.primaryActionLabel.textContent = '暂无关卡';
         this.primaryActionButton.setAttribute('aria-label', '暂无可用关卡');
         return;
       }
-      const levelId = this.mainGameplayLevelId();
+      const levelId = this.settings.puzzleMainLevelId;
       this.primaryActionLabel.textContent = `第 ${levelId} 关`;
       this.primaryActionButton.setAttribute('aria-label', `开始第 ${levelId} 关`);
       return;
@@ -1936,42 +2300,26 @@ class NumberConnectApp {
   }
 
   private selectLevelFromPicker(levelId: number): void {
-    if (this.activeMainGameplay === 'puzzle') {
-      const pattern = PLAY_PUZZLE_PATTERNS[levelId - 1];
-      if (!pattern) return;
-      const changed = this.settings.puzzleMainLevelId !== levelId;
-      this.settings.shape = BoardShape.Level;
-      this.settings.puzzleMainLevelId = levelId;
-      if (changed) {
-        this.playPuzzlePattern = pattern;
-        this.playPuzzleProgress = { patternId: pattern.id, revealed: 0 };
-        savePlayPuzzleProgress(this.playPuzzleProgress);
-      }
-      saveSettings(this.settings);
-      this.renderDefaultLobbyLevelNumber();
-      if (changed) this.setCurrentBoard(this.createNormalLevel());
-      this.levelPickerDialog.close();
-      return;
-    }
-
-    const level = this.mainGameplayLevels(this.activeMainGameplay)
-      .find((candidate) => candidate.levelId === levelId);
-    if (!level) return;
-    const changed = this.currentLevel?.levelId !== levelId;
-    if (changed && this.isAdaptiveGameplaySession() && this.currentAdaptiveLifeDepleted) {
-      this.recordAdaptiveAttempt('life-depleted');
-    }
+    const configuredLevel = this.threeModeCampaign.find((level) => level.id === levelId);
+    if (!configuredLevel) return;
+    const pattern = this.playPuzzlePatternForLevel(levelId);
+    const changed = this.settings.puzzleMainLevelId !== levelId;
     this.settings.shape = BoardShape.Level;
-    this.setMainGameplayLevelId(levelId, this.activeMainGameplay);
+    this.settings.puzzleMainLevelId = levelId;
+    if (changed) {
+      this.currentAdaptiveStage = 1;
+      this.playPuzzlePattern = pattern;
+      this.playPuzzleProgress = { patternId: pattern.id, revealed: 0 };
+      savePlayPuzzleProgress(this.playPuzzleProgress);
+    }
     saveSettings(this.settings);
     this.renderDefaultLobbyLevelNumber();
-    if (changed) this.setCurrentBoard(level);
+    if (changed) this.setCurrentBoard(this.createNormalLevel());
     this.levelPickerDialog.close();
   }
 
   private setSolutionReveal(revealed: boolean): void {
     if (revealed && this.activePowerUp === 'paint-bucket') this.cancelPowerUpTargeting();
-    if (revealed && this.isAdaptiveGameplaySession()) this.currentAdaptiveAttemptEligible = false;
     this.solutionRevealed = revealed;
     this.solutionToggle.checked = revealed;
     this.boardScene.setSolutionReveal(revealed);
@@ -1980,13 +2328,17 @@ class NumberConnectApp {
   }
 
   private async startNormalMode(): Promise<void> {
-    if (this.mainGameplayLevels().length === 0) return;
-    this.activeMainGameplay = this.settings.mainGameplay;
+    if (this.threeModeCampaign.length === 0) return;
     this.playContext = 'normal';
     this.mode = 'normal';
+    this.currentAdaptiveStage = Math.min(
+      this.adaptiveTotalStages(this.settings.puzzleMainLevelId),
+      this.playPuzzleProgress.revealed + 1,
+    );
     this.lives = 3;
     this.renderLives();
     await this.showPlayScreen();
+    this.resetLevelDebugExperience(this.settings.puzzleMainLevelId);
     this.setCurrentBoard(this.createNormalLevel());
   }
 
@@ -2063,40 +2415,14 @@ class NumberConnectApp {
   }
 
   private createNormalLevel(): LevelData {
-    if (this.activeMainGameplay === 'puzzle') {
-      const patternIndex = Math.max(0, Math.min(
-        PLAY_PUZZLE_PATTERNS.length - 1,
-        this.settings.puzzleMainLevelId - 1,
-      ));
-      const stageIndex = Math.max(0, Math.min(
-        puzzlePieceCount(this.playPuzzlePattern) - 1,
-        this.playPuzzleProgress.revealed,
-      ));
-      // Published puzzle formations come from the workbook. Editor-local levels
-      // must not override the configured campaign mapping.
-      const puzzleBoards = this.mode5Levels.filter(
-        (level) => level.activeCells.length === level.rows * level.columns,
-      );
-      const configuredLevelId = mode5StageLevelId(
-        this.mode5Campaign,
-        this.settings.puzzleMainLevelId,
-        stageIndex + 1,
-      );
-      const fallbackBoardIndex = puzzleBoards.length > 0
-        ? (patternIndex * puzzlePieceCount(this.playPuzzlePattern) + stageIndex) % puzzleBoards.length
-        : -1;
-      const stageLevel = configuredLevelId === undefined
-        ? puzzleBoards[fallbackBoardIndex]
-        : this.mode5Levels.find((level) => level.levelId === configuredLevelId);
-      if (!stageLevel) throw new Error('没有可用的拼图阶段。');
-      return stageLevel;
-    }
-
-    const selectedLevelId = this.mainGameplayLevelId(this.activeMainGameplay);
-    const levels = this.mainGameplayLevels(this.activeMainGameplay);
-    const selected = levels.find((level) => level.levelId === selectedLevelId) ?? levels[0];
-    if (!selected) throw new Error('没有可用的关卡。');
-    return selected;
+    const configuredLevel = this.adaptiveConfiguredLevel();
+    if (!configuredLevel || !this.threeModeLibrary) throw new Error('没有可用的拼图关卡配置。');
+    const stage = Math.max(1, Math.min(this.currentAdaptiveStage, configuredLevel.stages.length));
+    this.currentAdaptiveStage = stage;
+    return resolveThreeModeStage(this.threeModeLibrary, configuredLevel, {
+      stage,
+      runtimeLevelId: configuredLevel.id,
+    }).level;
   }
 
   private createBeadLevel(): LevelData {
@@ -2109,38 +2435,15 @@ class NumberConnectApp {
     return generateEndlessLevel(profile, this.endlessSeed + stage * 1000003);
   }
 
-  private activeAdaptiveGameplay(): AdaptiveMainGameplay | undefined {
-    if (this.playContext !== 'normal' || this.mode !== 'normal') return undefined;
-    return isAdaptiveMainGameplay(this.activeMainGameplay)
-      ? this.activeMainGameplay
-      : undefined;
-  }
-
-  private isAdaptiveGameplaySession(): boolean {
-    return this.activeAdaptiveGameplay() !== undefined;
-  }
-
-  private adaptiveDifficultyFor(gameplay: AdaptiveMainGameplay): number {
-    if (this.settings.mainGameplayDifficulty !== 'dynamic') {
-      return this.settings.mainGameplayDifficulty;
-    }
-    if (gameplay === 'mode5') return this.mode5DifficultyState.currentDifficulty;
-    return gameplay === 'mode4'
-      ? this.mode4DifficultyState.currentDifficulty
-      : this.mode3DifficultyState.currentDifficulty;
-  }
-
   private makeSession(level: LevelData, profile?: EndlessStageSettings): BoardSessionInput {
     const hiddenPercent = profile?.hiddenPercent ?? this.settings.hiddenPercent;
     const maxHiddenRun = profile?.maxHiddenRun ?? this.settings.maxHiddenRun;
     const maxVisibleRun = profile?.maxVisibleRun ?? this.settings.maxVisibleRun;
     const usesPuzzleStage = this.playContext === 'normal'
-      && this.mode === 'normal'
-      && this.activeMainGameplay === 'puzzle';
-    const adaptiveGameplay = this.activeAdaptiveGameplay();
+      && this.mode === 'normal';
     const puzzleStage = Math.min(
-      puzzlePieceCount(this.playPuzzlePattern),
-      this.playPuzzleProgress.revealed + 1,
+      this.adaptiveTotalStages(this.settings.puzzleMainLevelId),
+      this.currentAdaptiveStage,
     );
     const seed = (
       this.mode === 'endless'
@@ -2152,23 +2455,15 @@ class NumberConnectApp {
     const eventContext = {
       mode: this.mode,
       levelId: usesPuzzleStage ? this.settings.puzzleMainLevelId : level.levelId,
-      stage: this.mode === 'endless' ? this.stage : usesPuzzleStage ? puzzleStage : undefined,
+      stage: this.mode === 'endless'
+        ? this.stage
+        : usesPuzzleStage
+          ? puzzleStage
+          : undefined,
     };
-    const usesPlayShowcase = this.activeMainGameplay === 'beads'
-      && shouldUsePlayBeadShowcase(this.playContext, this.mode);
     return {
       level,
-      hiddenCells: adaptiveGameplay === 'mode3'
-        ? createMode3HiddenCells(level, this.currentAdaptiveDifficulty)
-        : adaptiveGameplay === 'mode4'
-          ? createMode4HiddenCells(level, this.currentAdaptiveDifficulty)
-          : adaptiveGameplay === 'mode5'
-            ? createMode5StageHiddenCells(
-                level,
-                this.currentAdaptiveDifficulty,
-                this.mode5LevelProgress(level.levelId).level === 1,
-              )
-        : level.hiddenCells === undefined
+      hiddenCells: level.hiddenCells === undefined
           ? selectHiddenCells(level.solutionPath, hiddenPercent, maxHiddenRun, maxVisibleRun, seed)
           : new Set(level.hiddenCells.map(cellKey)),
       artwork: usesPuzzleStage
@@ -2181,17 +2476,11 @@ class NumberConnectApp {
         : undefined,
       completionGemColors: this.playContext === 'bead'
         ? this.currentBeadReward.map((bead) => bead.color)
-        : usesPlayShowcase
-          ? playBeadShowcaseColorsForBoard(
-            this.currentPlayBeadReward,
-            level.solutionPath.length,
-          )
-          : undefined,
-      completionGemDestination: usesPlayShowcase ? 'showcase' : 'jar',
+        : undefined,
+      completionGemDestination: 'jar',
       showNextNumber: this.settings.showNextNumber,
       showDifficultyScore: this.settings.showDifficultyScore,
       soundEnabled: this.settings.soundEnabled,
-      inputMode: this.settings.inputMode,
       chargeProgressMode: this.settings.chargeProgressMode,
       touchPreviewRingDepth: this.settings.touchPreviewSize === 'large' ? 2 : 1,
       boardZoomEnabled: this.isTouchPreviewZoomMode(),
@@ -2205,11 +2494,16 @@ class NumberConnectApp {
           this.events.emit('level.progressed', { ...eventContext, current, total });
         }
       },
-      onWrong: (message, shouldLoseLife) => {
+      onWrong: (message, shouldLoseLife, step) => {
+        if (shouldLoseLife) this.handleWrong();
+        if (usesPuzzleStage) this.recordLevelDebugError(step);
         if (this.playContext !== 'editor-playtest') {
           this.events.emit('level.wrong-move', { ...eventContext, current: this.currentProgress, message });
         }
-        if (shouldLoseLife) this.handleWrong();
+      },
+      onRelease: () => {
+        if (!usesPuzzleStage) return;
+        this.recordLevelDebugExperience('releases');
       },
       onComplete: () => {
         if (this.playContext !== 'editor-playtest') {
@@ -2227,85 +2521,50 @@ class NumberConnectApp {
 
   private setCurrentBoard(level: LevelData, profile?: EndlessStageSettings): void {
     this.currentLevel = level;
-    const adaptiveGameplay = this.activeAdaptiveGameplay();
-    if (adaptiveGameplay) {
-      this.currentAdaptiveUsesDynamicDifficulty = this.settings.mainGameplayDifficulty === 'dynamic';
-      this.currentAdaptiveDifficulty = this.adaptiveDifficultyFor(adaptiveGameplay);
-      this.currentAdaptiveAttemptErrors = 0;
-      this.currentAdaptiveAttemptRecorded = false;
-      this.currentAdaptiveAttemptEligible = this.currentAdaptiveUsesDynamicDifficulty;
-      this.currentAdaptiveLifeDepleted = false;
-    } else {
-      this.currentAdaptiveUsesDynamicDifficulty = false;
-      this.currentAdaptiveAttemptRecorded = true;
-      this.currentAdaptiveAttemptEligible = false;
-      this.currentAdaptiveLifeDepleted = false;
-    }
+    if (
+      this.canUseLevelDebugControls()
+      && this.levelDebugExperienceLevelId !== this.settings.puzzleMainLevelId
+    ) this.resetLevelDebugExperience(this.settings.puzzleMainLevelId);
     this.resetPowerUps();
     this.currentProgress = 0;
     this.currentTotal = level.solutionPath.length;
     this.renderDailyPlayProgress();
     this.updateGameHeading(level);
-    this.prepareMainGameplayShowcase(level);
+    this.preparePuzzleShowcase();
     this.boardScene.setBoard(this.makeSession(level, profile));
+    this.renderLevelDebugPanel(level);
     this.renderPowerUps();
     if (this.playContext !== 'editor-playtest') {
       const usesPuzzleStage = this.playContext === 'normal'
-        && this.mode === 'normal'
-        && this.activeMainGameplay === 'puzzle';
+        && this.mode === 'normal';
       this.events.emit('level.started', {
         mode: this.mode,
         levelId: usesPuzzleStage ? this.settings.puzzleMainLevelId : level.levelId,
         stage: this.mode === 'endless'
           ? this.stage
           : usesPuzzleStage
-            ? Math.min(puzzlePieceCount(this.playPuzzlePattern), this.playPuzzleProgress.revealed + 1)
+            ? this.currentAdaptiveStage
             : undefined,
         total: level.solutionPath.length,
       });
     }
   }
 
-  private prepareMainGameplayShowcase(level: LevelData): void {
+  private preparePuzzleShowcase(): void {
     const isEditorPlaytest = this.playContext === 'editor-playtest';
-    const supportsMainShowcase = shouldUsePlayBeadShowcase(this.playContext, this.mode);
-    const usesBeadShowcase = supportsMainShowcase && this.activeMainGameplay === 'beads';
-    const usesPuzzleShowcase = supportsMainShowcase && this.activeMainGameplay === 'puzzle';
-    const usesMainShowcase = usesBeadShowcase || usesPuzzleShowcase;
-    const showcaseSpacer = this.playBeadShowcaseArt.closest<HTMLElement>('.play-top-spacer');
-    const beadShowcase = this.playBeadShowcaseArt.closest<HTMLElement>('.play-bead-showcase');
+    const supportsMainShowcase = this.playContext === 'normal' && this.mode === 'normal';
+    const usesPuzzleShowcase = supportsMainShowcase && this.settings.showPuzzleFlow;
+    const usesMainShowcase = usesPuzzleShowcase;
     const puzzleShowcase = this.playPuzzleShowcaseArt.closest<HTMLElement>('.play-puzzle-showcase');
+    const showcaseSpacer = puzzleShowcase?.closest<HTMLElement>('.play-top-spacer');
     this.playScreen.classList.toggle('is-editor-playtest', isEditorPlaytest);
     this.playScreen.classList.toggle('is-play-showcase-hidden', !usesMainShowcase);
     this.playScreen.classList.toggle('is-puzzle-main-gameplay', usesPuzzleShowcase);
     if (showcaseSpacer) showcaseSpacer.hidden = !usesMainShowcase;
-    if (beadShowcase) beadShowcase.hidden = !usesBeadShowcase;
     if (puzzleShowcase) puzzleShowcase.hidden = !usesPuzzleShowcase;
     this.playPuzzleRotationHandle.hidden = true;
     this.playPuzzleProgressBar.hidden = !usesPuzzleShowcase;
-    this.currentPlayBeadReward = [];
-    if (usesBeadShowcase) this.preparePlayBeadShowcase(level);
     if (usesPuzzleShowcase) this.preparePlayPuzzleShowcase();
-  }
-
-  private preparePlayBeadShowcase(level: LevelData): void {
-    if (this.playBeadShowcaseCollected >= this.playBeadShowcasePattern.pixels.length) {
-      this.playBeadShowcasePattern = nextPlayBeadShowcasePattern(this.playBeadShowcasePattern);
-      this.playBeadShowcaseCollected = 0;
-      savePlayBeadShowcaseProgress({
-        patternId: this.playBeadShowcasePattern.id,
-        collected: 0,
-      });
-    }
-    renderPlayBeadShowcase(
-      this.playBeadShowcaseArt,
-      this.playBeadShowcasePattern,
-      this.playBeadShowcaseCollected,
-    );
-    this.currentPlayBeadReward = this.playBeadShowcasePattern.pixels.slice(
-      this.playBeadShowcaseCollected,
-      this.playBeadShowcaseCollected + level.solutionPath.length,
-    );
   }
 
   private preparePlayPuzzleShowcase(): void {
@@ -2352,6 +2611,15 @@ class NumberConnectApp {
     const canSelectLevel = this.playContext === 'normal' && this.mode === 'normal';
     this.playLevelButton.disabled = !canSelectLevel;
     this.playLevelButton.title = canSelectLevel ? '选择关卡' : '';
+    this.formationIdLabel.hidden = true;
+    this.formationIdLabel.textContent = '';
+
+    const showFormationId = (formationId: string | number | undefined): void => {
+      if (formationId === undefined) return;
+      this.formationIdLabel.textContent = `阵型 ID：${formationId}`;
+      this.formationIdLabel.title = String(formationId);
+      this.formationIdLabel.hidden = false;
+    };
 
     if (this.playContext === 'daily') {
       const date = parseDailyDateKey(this.dailyChallengeDateKey);
@@ -2376,26 +2644,10 @@ class NumberConnectApp {
       this.levelLabel.textContent = `无尽 · 阶段 ${this.stage}`;
       return;
     }
-    if (this.activeMainGameplay === 'puzzle') {
-      const totalStages = puzzlePieceCount(this.playPuzzlePattern);
-      const currentStage = Math.min(totalStages, this.playPuzzleProgress.revealed + 1);
-      this.levelLabel.textContent = `Level ${this.settings.puzzleMainLevelId}-${currentStage}`;
-      return;
-    }
-    if (isAdaptiveMainGameplay(this.activeMainGameplay)) {
-      const gameplayName = adaptiveGameplayName(this.activeMainGameplay);
-      const difficultyLabel = this.currentAdaptiveUsesDynamicDifficulty
-        ? `${this.currentAdaptiveDifficulty}（动态）`
-        : String(this.currentAdaptiveDifficulty);
-      if (this.activeMainGameplay === 'mode5' && !level.custom) {
-        const progress = this.mode5LevelProgress(level.levelId);
-        this.levelLabel.textContent = `${gameplayName} · 难度 ${difficultyLabel} · 关卡 ${progress.level} · 阶段 ${progress.stage}/${progress.totalStages}`;
-      } else {
-        this.levelLabel.textContent = `${gameplayName} · 难度 ${difficultyLabel} · ${level.custom ? '自制关卡' : '关卡'} ${level.levelId}`;
-      }
-      return;
-    }
-    this.levelLabel.textContent = `拼豆 · ${level.custom ? '自制关卡' : '关卡'} ${level.levelId}`;
+    const totalStages = this.adaptiveTotalStages(this.settings.puzzleMainLevelId);
+    const currentStage = Math.min(totalStages, this.currentAdaptiveStage);
+    this.levelLabel.textContent = `Level ${this.settings.puzzleMainLevelId}-${currentStage}`;
+    showFormationId(level.formationId);
   }
 
   private setPowerUpMessage(
@@ -2474,7 +2726,6 @@ class NumberConnectApp {
   private undoLastConnectionStep(): void {
     if (this.activePowerUp === 'paint-bucket') this.cancelPowerUpTargeting();
     if (!this.boardScene.canUndoStep()) {
-      if (this.isAdaptiveGameplaySession()) this.currentAdaptiveAttemptEligible = false;
       if (this.boardScene.quickComplete()) {
         this.setPowerUpMessage('已直接完成当前阶段。', 'success');
       } else {
@@ -2974,9 +3225,6 @@ class NumberConnectApp {
       return;
     }
     if (this.lives <= 0) return;
-    if (this.isAdaptiveGameplaySession() && !this.currentAdaptiveAttemptRecorded) {
-      this.currentAdaptiveAttemptErrors += 1;
-    }
     this.lives -= 1;
     this.renderLives({ lost: true });
     if (this.lives === 0) this.handleLifeDepleted();
@@ -2989,11 +3237,11 @@ class NumberConnectApp {
   }
 
   private handleLifeDepleted(): void {
-    if (this.isAdaptiveGameplaySession()) this.currentAdaptiveLifeDepleted = true;
     this.cancelPowerUpTargeting();
     this.renderPowerUps();
     this.boardScene.setPaused(true);
     this.resultContext = 'life-depleted';
+    this.resultExperience.hidden = true;
     this.resultTitle.textContent = '生命已耗尽';
     const progress = `当前数字进度 ${this.currentProgress} / ${this.currentTotal}`;
     this.resultMessage.textContent = this.mode === 'endless' ? `阶段 ${this.stage} · ${progress}` : progress;
@@ -3018,6 +3266,7 @@ class NumberConnectApp {
   private showEditorPlaytestResult(): void {
     const returnsToArranger = this.editorPlaytestReturnScreen === 'arranger';
     this.resultContext = 'editor-playtest';
+    this.resultExperience.hidden = true;
     this.resultTitle.textContent = '试玩完成';
     this.resultMessage.textContent = `${returnsToArranger ? '当前排布关卡' : '当前编辑器关卡'}可以完整通关，本次错误 ${this.editorPlaytestErrorCount} 次。`;
     this.resultReward.hidden = true;
@@ -3031,6 +3280,7 @@ class NumberConnectApp {
 
   private showNormalResult(): void {
     this.resultContext = 'normal';
+    this.resultExperience.hidden = true;
     this.resultTitle.textContent = '漂亮的一笔！';
     this.resultMessage.textContent = '你已连接棋盘上的所有数字。';
     this.resultReward.hidden = true;
@@ -3043,83 +3293,79 @@ class NumberConnectApp {
     this.resultOverlay.hidden = false;
   }
 
-  private recordAdaptiveAttempt(
-    result: DynamicDifficultyGameResult,
-  ): DynamicDifficultyDecision | undefined {
-    const gameplay = this.activeAdaptiveGameplay();
-    if (
-      !gameplay
-      || this.currentAdaptiveAttemptRecorded
-      || !this.currentLevel
-    ) return undefined;
-
-    this.currentAdaptiveAttemptRecorded = true;
-    if (!this.currentAdaptiveUsesDynamicDifficulty || !this.currentAdaptiveAttemptEligible) {
-      return undefined;
-    }
-
-    const currentState = gameplay === 'mode5'
-      ? this.mode5DifficultyState
-      : gameplay === 'mode4'
-        ? this.mode4DifficultyState
-        : this.mode3DifficultyState;
-    const record = {
-      errors: this.currentAdaptiveAttemptErrors,
-      result,
-      levelId: this.currentLevel.levelId,
-      finishedAtUtc: new Date().toISOString(),
-    };
-    const decision = gameplay === 'mode5'
-      ? recordMode5DynamicDifficultyGame(currentState, record)
-      : recordDynamicDifficultyGame(currentState, record);
-    if (gameplay === 'mode5') {
-      this.mode5DifficultyState = decision.state;
-      saveMode5DynamicDifficultyState(this.mode5DifficultyState);
-    } else if (gameplay === 'mode4') {
-      this.mode4DifficultyState = decision.state;
-      saveMode4DynamicDifficultyState(this.mode4DifficultyState);
-    } else {
-      this.mode3DifficultyState = decision.state;
-      saveDynamicDifficultyState(this.mode3DifficultyState);
-    }
-    return decision;
+  private showPuzzleLevelResult(): void {
+    this.stopLevelDebugExperience();
+    this.showNormalResult();
+    const totalStages = this.adaptiveTotalStages(this.settings.puzzleMainLevelId);
+    this.resultTitle.textContent = `Level ${this.settings.puzzleMainLevelId} 完成！`;
+    this.resultMessage.textContent = `已完成本关全部 ${totalStages} 个阶段。`;
+    this.renderPuzzleResultExperience(totalStages);
   }
 
-  private showAdaptiveResult(decision: DynamicDifficultyDecision | undefined): void {
-    this.showNormalResult();
-    const gameplayName = isAdaptiveMainGameplay(this.activeMainGameplay)
-      ? adaptiveGameplayName(this.activeMainGameplay)
-      : '玩法';
-    this.resultTitle.textContent = `${gameplayName}完成！`;
-    const attempt = `本局错误 ${this.currentAdaptiveAttemptErrors} 次。`;
-    if (!this.currentAdaptiveUsesDynamicDifficulty) {
-      this.resultMessage.textContent = `${attempt} 当前使用固定难度 ${this.currentAdaptiveDifficulty}，本局不计入动态难度。`;
-      return;
-    }
-    if (!decision) {
-      this.resultMessage.textContent = `${attempt} 本局使用过答案或快速完成，不计入动态难度。`;
-      return;
-    }
-    if (decision.delta !== 0) {
-      const direction = decision.delta > 0 ? '提升' : '降低';
-      this.resultMessage.textContent = `${attempt} 动态难度由 ${decision.previousDifficulty} ${direction}到 ${decision.currentDifficulty}，下一关生效。`;
-      return;
-    }
-    if (decision.reason === 'warm-up') {
-      this.resultMessage.textContent = `${attempt} 动态难度采样 ${decision.state.recentGames.length}/5，当前维持 ${decision.currentDifficulty}。`;
-      return;
-    }
-    if (decision.reason === 'cooldown') {
-      this.resultMessage.textContent = `${attempt} 调整冷却期继续采样，难度维持 ${decision.currentDifficulty}。`;
-      return;
-    }
-    this.resultMessage.textContent = `${attempt} 最近5局计分错误 ${decision.windowErrors} 次，难度维持 ${decision.currentDifficulty}。`;
+  private renderPuzzleResultExperience(totalStages: number): void {
+    const records = [...this.levelDebugStageExperiences].sort((left, right) => left.stage - right.stage);
+    this.resultExperienceStageCount.textContent = `${records.length} / ${totalStages} 个阶段`;
+    this.resultExperienceErrors.textContent = String(this.levelDebugExperienceErrors);
+    this.resultExperienceReleases.textContent = String(this.levelDebugExperienceReleases);
+    this.resultExperienceTime.textContent = this.formatExperienceTime(this.levelDebugElapsedMs());
+    this.resultExperienceRevives.textContent = String(this.levelDebugExperienceRevives);
+
+    const metric = (label: string, value: string): HTMLDivElement => {
+      const item = document.createElement('div');
+      const term = document.createElement('dt');
+      const detail = document.createElement('dd');
+      term.textContent = label;
+      detail.textContent = value;
+      item.append(term, detail);
+      return item;
+    };
+    const cards = records.map((record) => {
+      const card = document.createElement('article');
+      card.className = 'result-experience-stage';
+      const header = document.createElement('header');
+      const title = document.createElement('strong');
+      const formation = document.createElement('small');
+      title.textContent = `阶段 ${record.stage}`;
+      formation.textContent = record.formationId;
+      formation.title = record.formationId;
+      header.append(title, formation);
+      const metrics = document.createElement('dl');
+      metrics.append(
+        metric('错误', String(record.errors)),
+        metric('松手', String(record.releases)),
+        metric('计时', this.formatExperienceTime(record.elapsedMs)),
+        metric('复活', String(record.revives)),
+      );
+      const errors = document.createElement('ol');
+      errors.className = 'result-experience-stage-errors';
+      if (record.errorRecords.length === 0) {
+        const empty = document.createElement('li');
+        empty.className = 'is-empty';
+        empty.textContent = '本阶段无错误';
+        errors.append(empty);
+      } else {
+        errors.append(...record.errorRecords.map((error, index) => {
+          const item = document.createElement('li');
+          const step = document.createElement('span');
+          const values = document.createElement('strong');
+          step.textContent = `错误 ${index + 1} · 第 ${error.stepNumber} 步`;
+          values.textContent = `难度分 ${error.difficultyScore ?? '计算中'} · ${error.choiceQuantity ?? '计算中'} 个选择`;
+          item.append(step, values);
+          return item;
+        }));
+      }
+      card.append(header, metrics, errors);
+      return card;
+    });
+    this.resultExperienceStages.replaceChildren(...cards);
+    this.resultExperience.hidden = false;
   }
 
   private showCollectionResult(): void {
     const total = this.collectionLevelCount();
     const hasNext = this.currentCollectionIndex + 1 < total;
     this.resultContext = 'collection';
+    this.resultExperience.hidden = true;
     this.resultTitle.textContent = `图片 ${this.currentCollectionIndex + 1} 已收集`;
     this.resultMessage.textContent = hasNext
       ? `图片已放入路线节点，关卡 ${this.currentCollectionIndex + 2} 已解锁。`
@@ -3137,6 +3383,7 @@ class NumberConnectApp {
   private showDailyChallengeResult(): void {
     const date = parseDailyDateKey(this.dailyChallengeDateKey);
     this.resultContext = 'daily';
+    this.resultExperience.hidden = true;
     this.resultTitle.textContent = '今日打卡完成！';
     this.resultMessage.textContent = date
       ? `${date.getFullYear()} 年 ${date.getMonth() + 1} 月 ${date.getDate()} 日已点亮。`
@@ -3152,6 +3399,7 @@ class NumberConnectApp {
 
   private showEndlessStageResult(): void {
     this.resultContext = 'endless-stage';
+    this.resultExperience.hidden = true;
     this.resultTitle.textContent = `阶段 ${this.stage}`;
     this.resultMessage.textContent = '已完成';
     this.resultReward.textContent = '♥ +1';
@@ -3180,6 +3428,8 @@ class NumberConnectApp {
       this.editorPlaytestErrorCount = 0;
       this.renderLives();
       this.restartCurrent();
+    } else if (this.resultContext === 'normal') {
+      this.restartPuzzleLevel();
     } else {
       this.lives = 3;
       this.renderLives();
@@ -3200,35 +3450,12 @@ class NumberConnectApp {
     }
   }
 
-  private async showPlayBeadCompletion(commitProgress = true): Promise<boolean> {
-    const level = this.currentLevel;
-    if (!level || this.currentPlayBeadReward.length === 0) {
-      await this.boardScene.showCompletion();
-      return false;
-    }
-    const sources = level.solutionPath
-      .map((cell) => this.boardScene.cellClientPosition(cell));
-    await this.boardScene.showCompletion();
-    await this.flyBoardBeadsToShowcase(sources);
-    if (!commitProgress) return false;
-    this.playBeadShowcaseCollected = Math.min(
-      this.playBeadShowcasePattern.pixels.length,
-      this.playBeadShowcaseCollected + this.currentPlayBeadReward.length,
-    );
-    savePlayBeadShowcaseProgress({
-      patternId: this.playBeadShowcasePattern.id,
-      collected: this.playBeadShowcaseCollected,
-    });
-    return this.playBeadShowcaseCollected >= this.playBeadShowcasePattern.pixels.length;
-  }
-
   private async showPlayPuzzleCompletion(): Promise<boolean> {
     const revealedPieceIndex = this.playPuzzleProgress.revealed;
     await this.boardScene.showCompletion();
     if (
       this.playContext !== 'normal'
       || this.mode !== 'normal'
-      || this.activeMainGameplay !== 'puzzle'
     ) return false;
 
     await this.flyBoardPuzzlePieceToShowcase(
@@ -3565,96 +3792,7 @@ class NumberConnectApp {
     this.playPuzzleFinaleButton.disabled = false;
     this.playPuzzleFinaleBusy = false;
     this.boardScene.setPaused(false);
-    this.nextLevel();
-  }
-
-  private async flyBoardBeadsToShowcase(
-    sources: Array<{ x: number; y: number } | undefined>,
-  ): Promise<void> {
-    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const layer = document.createElement('div');
-    layer.className = 'bead-flight-layer play-showcase-flight-layer';
-    layer.setAttribute('aria-hidden', 'true');
-    this.appShell.append(layer);
-    const appRect = this.appShell.getBoundingClientRect();
-    const scale = this.uiVisualScale();
-    const stagger = reducedMotion
-      ? 0
-      : Math.max(10, Math.min(26, Math.round(960 / Math.max(1, sources.length))));
-
-    const flights = sources.map(async (source, index) => {
-      const targetOffset = Math.min(
-        this.currentPlayBeadReward.length - 1,
-        Math.floor(index * this.currentPlayBeadReward.length / Math.max(1, sources.length)),
-      );
-      const bead = this.currentPlayBeadReward[targetOffset];
-      const target = this.playBeadShowcaseArt.querySelector<HTMLElement>(
-        `[data-bead-order="${this.playBeadShowcaseCollected + targetOffset}"]`,
-      );
-      if (!source || !target || !bead) return;
-      const targetRect = target.getBoundingClientRect();
-      const startX = (source.x - appRect.left) / scale;
-      const startY = (source.y - appRect.top) / scale;
-      const targetX = (targetRect.left - appRect.left + targetRect.width * 0.5) / scale;
-      const targetY = (targetRect.top - appRect.top + targetRect.height * 0.5) / scale;
-      const deltaX = targetX - startX;
-      const deltaY = targetY - startY;
-      const landingScale = Math.max(0.18, Math.min(0.62, targetRect.width / scale / 26));
-      const gem = document.createElement('i');
-      gem.className = 'bead-flight-gem play-showcase-flight-gem';
-      gem.style.left = `${startX}px`;
-      gem.style.top = `${startY}px`;
-      gem.style.setProperty('--bead-color', bead.color);
-      layer.append(gem);
-
-      if (!reducedMotion) {
-        const animation = gem.animate([
-          {
-            opacity: 0,
-            transform: 'translate(-50%, -50%) rotate(-8deg) scale(.9)',
-          },
-          {
-            opacity: 1,
-            transform: 'translate(-50%, -50%) rotate(-8deg) scale(1)',
-            offset: 0.08,
-          },
-          {
-            opacity: 1,
-            transform: `translate(calc(-50% + ${deltaX * 0.5}px), calc(-50% + ${deltaY * 0.5 - 42}px)) rotate(14deg) scale(.82)`,
-            offset: 0.5,
-          },
-          {
-            opacity: 1,
-            transform: `translate(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px)) rotate(0deg) scale(${landingScale})`,
-          },
-        ], {
-          delay: index * stagger,
-          duration: 560,
-          easing: 'cubic-bezier(.2,.72,.2,1)',
-          fill: 'both',
-        });
-        try {
-          await animation.finished;
-        } catch {
-          // A canceled flight still settles the bead into its target position.
-        }
-      }
-
-      target.classList.add('is-filled');
-      const nextTargetOffset = index + 1 < sources.length
-        ? Math.floor((index + 1) * this.currentPlayBeadReward.length / sources.length)
-        : this.currentPlayBeadReward.length;
-      if (nextTargetOffset > targetOffset) this.emitBeadPlacementSparkles(target);
-      gem.remove();
-    });
-
-    try {
-      await Promise.all(flights);
-      this.playBeadShowcaseArt.parentElement?.classList.add('is-complete');
-      if (!reducedMotion) await waitFor(220);
-    } finally {
-      layer.remove();
-    }
+    this.showPuzzleLevelResult();
   }
 
   private async handleComplete(): Promise<void> {
@@ -3702,37 +3840,43 @@ class NumberConnectApp {
       await this.boardScene.showCompletion({ revealImage: true });
       this.completeCollectionLevel();
       this.showCollectionResult();
-    } else if (this.isAdaptiveGameplaySession()) {
-      const completedMode5Progress = this.activeMainGameplay === 'mode5' && this.currentLevel
-        ? this.mode5LevelProgress(this.currentLevel.levelId)
-        : undefined;
-      await this.boardScene.showCompletion();
-      const decision = this.recordAdaptiveAttempt('completed');
-      if (completedMode5Progress && !completedMode5Progress.isFinalStage) {
-        this.nextLevel();
-      } else {
-        this.showAdaptiveResult(decision);
-      }
-    } else if (this.activeMainGameplay === 'puzzle') {
-      const advancesToAnotherPuzzleStage = (
-        this.playPuzzleProgress.revealed + 1 < puzzlePieceCount(this.playPuzzlePattern)
+    } else {
+      this.finishLevelDebugStageExperience();
+      const hasNextStage = this.currentAdaptiveStage < this.adaptiveTotalStages(
+        this.settings.puzzleMainLevelId,
       );
-      if (advancesToAnotherPuzzleStage) this.boardScene.beginStageCompletionEdge();
-      const patternComplete = await this.showPlayPuzzleCompletion();
-      if (!patternComplete) {
+      if (!this.settings.showPuzzleFlow) {
+        await this.boardScene.showCompletion({ revealArtwork: false });
+        this.gainNormalLife();
+        if (hasNextStage) {
+          this.nextPuzzleStage();
+        } else {
+          this.showPuzzleLevelResult();
+        }
+        return;
+      }
+      if (hasNextStage) this.boardScene.beginStageCompletionEdge();
+      await this.showPlayPuzzleCompletion();
+      if (hasNextStage) {
         this.nextPuzzleStage();
         await this.boardScene.finishStageCompletionEdge();
         return;
       }
+      if (this.playPuzzleProgress.revealed < puzzlePieceCount(this.playPuzzlePattern)) {
+        this.playPuzzleProgress = {
+          patternId: this.playPuzzlePattern.id,
+          revealed: puzzlePieceCount(this.playPuzzlePattern),
+        };
+        savePlayPuzzleProgress(this.playPuzzleProgress);
+        renderPlayPuzzleShowcase(
+          this.playPuzzleShowcaseArt,
+          this.playPuzzlePattern,
+          this.playPuzzleProgress.revealed,
+        );
+        this.renderPlayPuzzleProgress();
+      }
       const onChargePanel = await this.boardScene.fillChargeProgressScreen();
       await this.showPlayPuzzleFinale(onChargePanel);
-    } else {
-      const patternComplete = await this.showPlayBeadCompletion();
-      if (!patternComplete) {
-        this.nextLevel();
-        return;
-      }
-      this.showNormalResult();
     }
   }
 
@@ -3760,7 +3904,7 @@ class NumberConnectApp {
     this.currentProgress = 0;
     this.currentTotal = next.solutionPath.length;
     this.updateGameHeading(next);
-    this.prepareMainGameplayShowcase(next);
+    this.preparePuzzleShowcase();
     this.resetPowerUps();
     this.setPowerUpMessage('正在准备下一关。');
     this.renderPowerUps();
@@ -3776,7 +3920,6 @@ class NumberConnectApp {
   }
 
   private restartAfterFailure(): void {
-    if (this.isAdaptiveGameplaySession()) this.recordAdaptiveAttempt('life-depleted');
     this.lives = 3;
     this.renderLives();
     this.restartCurrent();
@@ -3786,9 +3929,6 @@ class NumberConnectApp {
     if (this.settingsContext !== 'play') return;
     this.settingsDialog.close();
     this.setSolutionReveal(false);
-    if (this.isAdaptiveGameplaySession() && this.currentAdaptiveLifeDepleted) {
-      this.recordAdaptiveAttempt('life-depleted');
-    }
     if (this.playContext === 'editor-playtest') {
       this.editorPlaytestErrorCount = 0;
     } else if (this.mode !== 'endless') {
@@ -3802,6 +3942,9 @@ class NumberConnectApp {
     const previousLives = this.lives;
     this.lives = 3;
     this.renderLives({ gainedFrom: previousLives });
+    if (this.canUseLevelDebugControls()) {
+      this.recordLevelDebugExperience('revives');
+    }
     const placement = this.mode === 'endless' ? 'endless-life-depleted' : 'normal-life-depleted';
     this.videoViews.push(createVideoView(placement, this.mode === 'endless' ? this.stage : undefined));
     this.events.emit('video.rewarded', { placement, stage: this.mode === 'endless' ? this.stage : undefined });
@@ -3814,6 +3957,9 @@ class NumberConnectApp {
   private restartCurrent(): void {
     this.resultOverlay.hidden = true;
     this.boardScene.setPaused(false);
+    if (this.canUseLevelDebugControls()) {
+      this.resetLevelDebugExperience(this.settings.puzzleMainLevelId);
+    }
     if (this.mode === 'endless') {
       const profile = getEndlessStageSettings(this.stage);
       this.setCurrentBoard(this.createEndlessLevel(this.stage, profile), profile);
@@ -3832,6 +3978,20 @@ class NumberConnectApp {
 
   private nextPuzzleStage(): void {
     this.resultOverlay.hidden = true;
+    this.currentAdaptiveStage += 1;
+    this.beginLevelDebugStageExperience();
+    this.setCurrentBoard(this.createNormalLevel());
+  }
+
+  private restartPuzzleLevel(): void {
+    this.resultOverlay.hidden = true;
+    this.boardScene.setPaused(false);
+    this.currentAdaptiveStage = 1;
+    this.playPuzzleProgress = { patternId: this.playPuzzlePattern.id, revealed: 0 };
+    savePlayPuzzleProgress(this.playPuzzleProgress);
+    this.lives = 3;
+    this.renderLives();
+    this.resetLevelDebugExperience(this.settings.puzzleMainLevelId);
     this.setCurrentBoard(this.createNormalLevel());
   }
 
@@ -3849,23 +4009,14 @@ class NumberConnectApp {
   }
 
   private selectNextNormalLevel(): void {
-    const levels = this.mainGameplayLevels(this.activeMainGameplay);
-    if (levels.length === 0) return;
-    if (this.activeMainGameplay === 'puzzle') {
-      const nextLevelId = this.settings.puzzleMainLevelId % PLAY_PUZZLE_PATTERNS.length + 1;
-      const nextPattern = this.playPuzzlePatternForLevel(nextLevelId);
-      this.settings.puzzleMainLevelId = nextLevelId;
-      this.playPuzzlePattern = nextPattern;
-      this.playPuzzleProgress = { patternId: nextPattern.id, revealed: 0 };
-      savePlayPuzzleProgress(this.playPuzzleProgress);
-      saveSettings(this.settings);
-      this.renderDefaultLobbyLevelNumber();
-      return;
-    }
-    const currentId = this.currentLevel?.levelId ?? this.mainGameplayLevelId(this.activeMainGameplay);
-    const index = levels.findIndex((level) => level.levelId === currentId);
-    const nextIndex = (Math.max(0, index) + 1) % levels.length;
-    this.setMainGameplayLevelId(levels[nextIndex].levelId, this.activeMainGameplay);
+    if (this.threeModeCampaign.length === 0) return;
+    const nextLevelId = this.settings.puzzleMainLevelId % this.threeModeCampaign.length + 1;
+    const nextPattern = this.playPuzzlePatternForLevel(nextLevelId);
+    this.settings.puzzleMainLevelId = nextLevelId;
+    this.currentAdaptiveStage = 1;
+    this.playPuzzlePattern = nextPattern;
+    this.playPuzzleProgress = { patternId: nextPattern.id, revealed: 0 };
+    savePlayPuzzleProgress(this.playPuzzleProgress);
     saveSettings(this.settings);
     this.renderDefaultLobbyLevelNumber();
   }
@@ -3884,9 +4035,7 @@ class NumberConnectApp {
   }
 
   private leavePlayScreen(): void {
-    if (this.isAdaptiveGameplaySession() && this.currentAdaptiveLifeDepleted) {
-      this.recordAdaptiveAttempt('life-depleted');
-    }
+    this.stopLevelDebugExperience();
     this.resultOverlay.hidden = true;
     this.cancelPowerUpTargeting();
     this.boardScene.setPaused(true);
@@ -3996,13 +4145,11 @@ class NumberConnectApp {
   }
 
   private populateSettingsForm(): void {
-    this.setMainGameplayControl(this.settings.mainGameplay);
-    this.setMainGameplayDifficultyControl(this.settings.mainGameplayDifficulty);
-    this.setInputModeControl(this.settings.inputMode);
     this.setChargeProgressModeControl(this.settings.chargeProgressMode);
     query<HTMLInputElement>('#settings-next').checked = this.settings.showNextNumber;
     query<HTMLInputElement>('#settings-difficulty-score').checked = this.settings.showDifficultyScore;
     query<HTMLInputElement>('#settings-sound').checked = this.settings.soundEnabled;
+    query<HTMLInputElement>('#settings-puzzle-flow').checked = this.settings.showPuzzleFlow;
     this.setUiThemeControl(this.settings.uiTheme);
     this.solutionToggle.checked = this.solutionRevealed;
     this.setTouchPreviewSizeControl(this.settings.touchPreviewSize);
@@ -4011,38 +4158,12 @@ class NumberConnectApp {
   }
 
   private refreshLevelOptions(): void {
-    const gameplay = this.playContext === 'normal' && this.mode === 'normal'
-      ? this.activeMainGameplay
-      : this.settings.mainGameplay;
-    const levelOptions = gameplay === 'puzzle'
-      ? PLAY_PUZZLE_PATTERNS.map((pattern, index) => ({
-        levelId: index + 1,
-        displayId: index + 1,
-        label: pattern.name,
-        selected: index + 1 === this.mainGameplayLevelId(gameplay),
-      }))
-      : gameplay === 'mode5'
-        ? Array.from({ length: mode5LevelCount(this.mode5Campaign) }, (_, index) => index + 1).flatMap((level) => {
-          const stageLevel = this.mode5Levels[mode5LevelStartIndex(this.mode5Campaign, level)];
-          if (!stageLevel) return [];
-          const progress = this.mode5LevelProgress(stageLevel.levelId);
-          return [{
-            levelId: stageLevel.levelId,
-            displayId: level,
-            label: `玩法5关卡 · ${progress.totalStages}个阶段`,
-            selected: this.mode5LevelProgress().level === level,
-          }];
-        })
-      : this.mainGameplayLevels(gameplay).map((level) => ({
-          levelId: level.levelId,
-          displayId: level.levelId,
-          label: gameplay === 'mode3'
-            ? '玩法3关卡'
-            : gameplay === 'mode4'
-              ? '玩法4关卡'
-              : level.custom ? '自制关卡' : '关卡',
-          selected: level.levelId === this.mainGameplayLevelId(gameplay),
-        }));
+    const levelOptions = this.threeModeCampaign.map((level) => ({
+        levelId: level.id,
+        displayId: level.id,
+        label: `拼图关卡 · ${level.stages.length}个阶段`,
+        selected: level.id === this.settings.puzzleMainLevelId,
+      }));
     const options = levelOptions.map((level) => {
       const option = document.createElement('button');
       const selected = level.selected;
@@ -4068,11 +4189,9 @@ class NumberConnectApp {
   }
 
   private renderDefaultLobbyLevelNumber(): void {
-    const hasLevels = this.mainGameplayLevels().length > 0;
+    const hasLevels = this.threeModeCampaign.length > 0;
     query<HTMLElement>('#default-level-number').textContent = hasLevels
-      ? String(this.settings.mainGameplay === 'mode5'
-        ? this.mode5LevelProgress().level
-        : this.mainGameplayLevelId())
+      ? String(this.settings.puzzleMainLevelId)
       : '—';
     query<HTMLButtonElement>('#default-start-button').disabled = !hasLevels;
     query<HTMLButtonElement>('#start-button').disabled = !hasLevels;
@@ -4081,77 +4200,46 @@ class NumberConnectApp {
 
   private refreshSettingsControls(): void {
     const previewSize = this.selectedTouchPreviewSize();
-    const mainGameplay = this.selectedMainGameplay();
-    const supportsDifficulty = isAdaptiveMainGameplay(mainGameplay);
-    this.mainGameplayDifficultyControl.disabled = !supportsDifficulty;
-    this.mainGameplayDifficultyRow.classList.toggle('is-disabled', !supportsDifficulty);
-    this.mainGameplayDifficultyRow.setAttribute('aria-disabled', String(!supportsDifficulty));
     query<HTMLInputElement>('#settings-touch-preview-follow').disabled = (
       previewSize === 'off' || previewSize === 'zoom'
     );
-    query<HTMLInputElement>('#settings-next').disabled = usesClickInput(this.selectedInputMode());
   }
 
   private applySettingsChange(): void {
-    const previousMainGameplay = this.settings.mainGameplay;
-    const previousMainGameplayDifficulty = this.settings.mainGameplayDifficulty;
-    const nextMainGameplay = this.selectedMainGameplay();
-    const nextMainGameplayDifficulty = this.selectedMainGameplayDifficulty();
-    const mainGameplayChanged = previousMainGameplay !== nextMainGameplay;
-    const mainGameplayDifficultyChanged = (
-      previousMainGameplayDifficulty !== nextMainGameplayDifficulty
-    );
     const isNormalPlay = this.settingsContext === 'play'
       && this.playContext === 'normal'
       && this.mode === 'normal';
-    const shouldRegenerateBoard = isNormalPlay && (
-      mainGameplayChanged
-      || (
-        mainGameplayDifficultyChanged
-        && isAdaptiveMainGameplay(this.activeMainGameplay)
-      )
-    );
-
-    if (
-      shouldRegenerateBoard
-      && this.isAdaptiveGameplaySession()
-      && this.currentAdaptiveLifeDepleted
-    ) {
-      this.recordAdaptiveAttempt('life-depleted');
-    }
-
-    this.settings.mainGameplay = nextMainGameplay;
-    this.settings.mainGameplayDifficulty = nextMainGameplayDifficulty;
-    this.settings.inputMode = this.selectedInputMode();
     this.settings.chargeProgressMode = this.selectedChargeProgressMode();
     this.settings.showNextNumber = query<HTMLInputElement>('#settings-next').checked;
     this.settings.showDifficultyScore = query<HTMLInputElement>('#settings-difficulty-score').checked;
     this.settings.soundEnabled = query<HTMLInputElement>('#settings-sound').checked;
+    const puzzleFlowChanged = this.settings.showPuzzleFlow
+      !== query<HTMLInputElement>('#settings-puzzle-flow').checked;
+    this.settings.showPuzzleFlow = query<HTMLInputElement>('#settings-puzzle-flow').checked;
     this.settings.uiTheme = this.selectedUiTheme();
     this.settings.touchPreviewSize = this.selectedTouchPreviewSize();
     this.settings.touchPreviewFollowsPointer = query<HTMLInputElement>('#settings-touch-preview-follow').checked;
     applyUiTheme(this.settings.uiTheme);
     saveSettings(this.settings);
+    this.renderLevelDebugPanel();
     this.renderDefaultLobbyLevelNumber();
     this.refreshSettingsControls();
     this.renderTouchPreviewState();
-    this.renderInputMode();
     if (!this.settings.showDifficultyScore) this.renderHoldScore(null);
     this.boardScene.setRuntimePreferences({
       showNextNumber: this.settings.showNextNumber,
       soundEnabled: this.settings.soundEnabled,
-      inputMode: this.settings.inputMode,
       chargeProgressMode: this.settings.chargeProgressMode,
       touchPreviewRingDepth: this.settings.touchPreviewSize === 'large' ? 2 : 1,
       boardZoomEnabled: this.isTouchPreviewZoomMode(),
     });
 
-    if (shouldRegenerateBoard) {
-      this.activeMainGameplay = this.settings.mainGameplay;
-      this.resultOverlay.hidden = true;
-      this.lives = 3;
-      this.renderLives();
-      this.setCurrentBoard(this.createNormalLevel());
+    if (
+      puzzleFlowChanged
+      && isNormalPlay
+      && this.currentLevel
+    ) {
+      this.preparePuzzleShowcase();
     }
 
     if (this.settingsContext === 'play') {

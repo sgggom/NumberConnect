@@ -1,9 +1,9 @@
-import { encodeCompactLevelData } from '../../game/levelDataFormat';
+import { decodeCompactLevelData } from '../../game/levelDataFormat';
 import type { LevelData } from '../../game/types';
 import {
   addArrangementLevels,
   arrangementBoardFamilies,
-  arrangementLevelDataJson,
+  combinedArrangementLevelDataJson,
   arrangementRows,
   findArrangementLevelLocation,
   parseArrangementClipboardText,
@@ -30,21 +30,6 @@ import {
 import './arranger.css';
 
 const PAGE_SIZE = 100;
-const PATH_PARAMETER_HEADERS = new Set([
-  '实际路径交叉数量', '直角拐弯占比', '锐角拐弯占比', '钝角拐弯占比',
-  '平均路径长度（拐弯的拐点算作端点，看整个棋盘中的线段平均长度）',
-  '向上移动占比', '向下移动占比', '向左移动占比', '向右移动占比',
-  '向左上移动占比', '向右上移动占比', '向左下移动占比', '向右下移动占比',
-  '连续向右数量', '连续向下数量', '连续向右下数量', '连续遮挡计数',
-  '起点位置（分为左上/右上/左下/右下/靠中）', '终点位置',
-]);
-const DIFFICULTY_PARAMETER_HEADERS = new Set([
-  '目标难度', '实际隐藏数', '实际隐藏占比 %', '实际最长连续显示', '实际最长连续隐藏',
-  '平均总步数', '低推理平均错误数', '中推理平均错误数', '高推理平均错误数',
-  '平均可连接数量', '直接连接占比 %', '平均距离下个显示数字', '平均每步难度分',
-  '前期平均难度分', '中期平均难度分', '后期平均难度分',
-]);
-
 interface LibraryParameterGroup {
   title: string;
   items: Array<{ label: string; value: string }>;
@@ -57,6 +42,24 @@ interface LibraryParameterTarget {
   variantIndex?: number;
 }
 
+type ArrangementMode = 'main' | 'daily' | 'bead';
+
+interface ArrangementConfiguration {
+  groups: ArrangementLevelGroup[];
+  selectedGroupId: number;
+}
+
+const ARRANGEMENT_MODE_LABELS: Record<ArrangementMode, string> = {
+  main: '主玩法配置',
+  daily: '每日挑战配置',
+  bead: '拼豆玩法配置',
+};
+
+const createEmptyArrangementConfiguration = (): ArrangementConfiguration => ({
+  groups: [{ id: 1, levelIds: [] }],
+  selectedGroupId: 1,
+});
+
 export interface LevelArrangementControllerOptions {
   onBack: () => void;
   onPlaytest: (level: LevelData) => void;
@@ -65,9 +68,14 @@ export interface LevelArrangementControllerOptions {
 export class LevelArrangementController {
   private library: ArrangementLibraryLevel[] = [];
   private libraryById = new Map<string, ArrangementLibraryLevel>();
+  private libraryParameterHeaders: string[] = [];
   private families: ArrangementBoardFamily[] = [];
-  private groups: ArrangementLevelGroup[] = [{ id: 1, levelIds: [] }];
-  private selectedGroupId = 1;
+  private arrangementMode: ArrangementMode = 'main';
+  private arrangementConfigurations: Record<ArrangementMode, ArrangementConfiguration> = {
+    main: createEmptyArrangementConfiguration(),
+    daily: createEmptyArrangementConfiguration(),
+    bead: createEmptyArrangementConfiguration(),
+  };
   private selectedLibraryLevelIds = new Set<string>();
   private selectedPoolLevelIds: string[] = [];
   private selectedPoolLevelIdSet = new Set<string>();
@@ -93,6 +101,7 @@ export class LevelArrangementController {
     this.query('#arranger-open-file').addEventListener('click', () => this.fileInput.click());
     this.fileInput.addEventListener('change', () => void this.readSelectedFile());
     this.query('#arranger-add-group').addEventListener('click', () => this.addGroup());
+    this.query('#arranger-config-switcher').addEventListener('click', (event) => this.switchArrangementMode(event));
     this.query('#arranger-auto-layout').addEventListener('click', () => this.openAutoArrangementDialog());
     this.query('#arranger-auto-close').addEventListener('click', () => this.closeAutoArrangementDialog());
     this.query('#arranger-auto-cancel').addEventListener('click', () => this.closeAutoArrangementDialog());
@@ -104,7 +113,7 @@ export class LevelArrangementController {
       this.closeAutoArrangementDialog();
     });
     this.query('#arranger-copy-groups').addEventListener('click', () => void this.copyGroups());
-    this.query('#arranger-copy-level-data').addEventListener('click', () => void this.copyLevelData());
+    this.query('#arranger-copy-level-data').addEventListener('click', () => this.exportLevelData());
     this.query<HTMLInputElement>('#arranger-search').addEventListener('input', () => {
       this.page = 0;
       this.renderLibrary();
@@ -122,7 +131,7 @@ export class LevelArrangementController {
     });
     this.query('#arranger-playtest-button').addEventListener('click', () => {
       const entry = this.previewLevelId ? this.libraryById.get(this.previewLevelId) : undefined;
-      if (entry) this.options.onPlaytest(this.cloneLevel(entry.level));
+      if (entry) this.options.onPlaytest(this.decodeLevel(entry));
     });
     this.groupList.addEventListener('click', (event) => this.handleGroupClick(event));
     this.groupList.addEventListener('pointerover', (event) => this.handleGroupHover(event));
@@ -145,6 +154,12 @@ export class LevelArrangementController {
   private get groupList(): HTMLElement { return this.query('#arranger-group-list'); }
   private get libraryList(): HTMLElement { return this.query('#arranger-library-list'); }
   private get autoStageList(): HTMLElement { return this.query('#arranger-auto-stage-list'); }
+  private get groups(): ArrangementLevelGroup[] { return this.arrangementConfigurations[this.arrangementMode].groups; }
+  private set groups(groups: ArrangementLevelGroup[]) { this.arrangementConfigurations[this.arrangementMode].groups = groups; }
+  private get selectedGroupId(): number { return this.arrangementConfigurations[this.arrangementMode].selectedGroupId; }
+  private set selectedGroupId(selectedGroupId: number) {
+    this.arrangementConfigurations[this.arrangementMode].selectedGroupId = selectedGroupId;
+  }
 
   private async readSelectedFile(): Promise<void> {
     const file = this.fileInput.files?.[0];
@@ -155,8 +170,10 @@ export class LevelArrangementController {
     status.textContent = `正在读取 ${file.name}…`;
     this.cacheRestoreAttempted = true;
     try {
-      const result = await readArrangementLibraryFile(file);
-      this.applyLibrary(result.levels, result.skippedRows, `已读取 ${file.name}`);
+      const result = await readArrangementLibraryFile(file, (message) => {
+        status.textContent = message;
+      });
+      this.applyLibrary(result.levels, result.parameterHeaders, result.skippedRows, `已读取 ${file.name}`);
       await saveArrangementLibraryFile(file);
     } catch (error) {
       status.textContent = error instanceof Error ? error.message : '读取跑关结果失败。';
@@ -177,8 +194,10 @@ export class LevelArrangementController {
         status.textContent = '尚未读取关卡库';
         return;
       }
-      const result = await readArrangementLibraryFile(file);
-      this.applyLibrary(result.levels, result.skippedRows, `已自动恢复 ${file.name}`);
+      const result = await readArrangementLibraryFile(file, (message) => {
+        status.textContent = message;
+      });
+      this.applyLibrary(result.levels, result.parameterHeaders, result.skippedRows, `已自动恢复 ${file.name}`);
     } catch {
       status.textContent = '上次的关卡库缓存已失效，请重新读取文件。';
       await clearArrangementLibraryFile().catch(() => undefined);
@@ -187,12 +206,22 @@ export class LevelArrangementController {
     }
   }
 
-  private applyLibrary(levels: ArrangementLibraryLevel[], skippedRows: number, prefix: string): void {
+  private applyLibrary(
+    levels: ArrangementLibraryLevel[],
+    parameterHeaders: string[],
+    skippedRows: number,
+    prefix: string,
+  ): void {
     this.library = levels;
     this.libraryById = new Map(levels.map((level) => [level.id, level]));
+    this.libraryParameterHeaders = parameterHeaders;
     this.families = arrangementBoardFamilies(this.library);
-    this.groups = [{ id: 1, levelIds: [] }];
-    this.selectedGroupId = 1;
+    this.arrangementMode = 'main';
+    this.arrangementConfigurations = {
+      main: createEmptyArrangementConfiguration(),
+      daily: createEmptyArrangementConfiguration(),
+      bead: createEmptyArrangementConfiguration(),
+    };
     this.selectedLibraryLevelIds.clear();
     this.selectedPoolLevelIds = [];
     this.selectedPoolLevelIdSet.clear();
@@ -209,6 +238,22 @@ export class LevelArrangementController {
     this.renderGroups();
     this.renderLibrary();
     this.renderPreview();
+  }
+
+  private switchArrangementMode(event: Event): void {
+    const target = (event.target as HTMLElement).closest<HTMLElement>('[data-arrangement-mode]');
+    const mode = target?.dataset.arrangementMode;
+    if (mode !== 'main' && mode !== 'daily' && mode !== 'bead') return;
+    this.arrangementMode = mode;
+    this.selectedLibraryLevelIds.clear();
+    this.syncSelectedPoolFromCurrentGroups();
+    this.renderGroups();
+    this.renderLibrary();
+  }
+
+  private syncSelectedPoolFromCurrentGroups(): void {
+    this.selectedPoolLevelIds = this.groups.flatMap((group) => group.levelIds);
+    this.selectedPoolLevelIdSet = new Set(this.selectedPoolLevelIds);
   }
 
   private addGroup(): void {
@@ -302,8 +347,7 @@ export class LevelArrangementController {
       this.groups = groups;
       this.selectedGroupId = groups[0].id;
       this.selectedLibraryLevelIds.clear();
-      this.selectedPoolLevelIds = groups.flatMap((group) => group.levelIds);
-      this.selectedPoolLevelIdSet = new Set(this.selectedPoolLevelIds);
+      this.syncSelectedPoolFromCurrentGroups();
       this.renderGroups();
       this.renderLibrary();
       this.query('#arranger-file-status').textContent = `已从剪贴板读取 ${groups.length} 关排布`;
@@ -341,8 +385,7 @@ export class LevelArrangementController {
       this.groups = groups;
       this.selectedGroupId = groups[0]?.id ?? 1;
       this.selectedLibraryLevelIds.clear();
-      this.selectedPoolLevelIds = groups.flatMap((group) => group.levelIds);
-      this.selectedPoolLevelIdSet = new Set(this.selectedPoolLevelIds);
+      this.syncSelectedPoolFromCurrentGroups();
       this.renderGroups();
       this.renderLibrary();
       this.query('#arranger-file-status').textContent = `自动排布完成：${groups.length} 关、每关 ${groups[0]?.levelIds.length ?? 0} 个棋盘`;
@@ -361,21 +404,31 @@ export class LevelArrangementController {
     ].map((row) => row.join('\t')).join('\r\n');
     try {
       await navigator.clipboard.writeText(text);
-      this.query('#arranger-file-status').textContent = `已复制 ${this.groups.length} 关排布配置`;
+      this.query('#arranger-file-status').textContent = `已复制${ARRANGEMENT_MODE_LABELS[this.arrangementMode]}：${this.groups.length} 关`;
     } catch {
       this.query('#arranger-file-status').textContent = '复制失败，请允许浏览器访问剪贴板。';
     }
   }
 
-  private async copyLevelData(): Promise<void> {
-    if (this.groups.some((group) => group.levelIds.length === 0)) return;
-    const text = arrangementLevelDataJson(this.groups, this.library);
+  private exportLevelData(): void {
+    const configurations = Object.values(this.arrangementConfigurations)
+      .map((configuration) => configuration.groups);
+    if (!configurations.some((groups) => groups.some((group) => group.levelIds.length > 0))) return;
+    const text = combinedArrangementLevelDataJson(configurations, this.library);
     const levelCount = Object.keys(JSON.parse(text) as Record<string, unknown>).length;
     try {
-      await navigator.clipboard.writeText(text);
-      this.query('#arranger-file-status').textContent = `已复制 ${levelCount} 条关卡数据（所用路径的动态难度 1～10）`;
+      const blob = new Blob([text], { type: 'application/json;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = '三模式关卡数据.json';
+      document.body.append(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      this.query('#arranger-file-status').textContent = `已导出三种模式共用关卡库：${levelCount} 条关卡数据（所用路径的动态难度 1～10）`;
     } catch {
-      this.query('#arranger-file-status').textContent = '复制失败，请允许浏览器访问剪贴板。';
+      this.query('#arranger-file-status').textContent = '导出失败，请重试。';
     }
   }
 
@@ -555,6 +608,11 @@ export class LevelArrangementController {
   }
 
   private renderGroups(): void {
+    this.queryAll<HTMLButtonElement>('[data-arrangement-mode]').forEach((button) => {
+      const selected = button.dataset.arrangementMode === this.arrangementMode;
+      button.setAttribute('aria-selected', String(selected));
+      button.classList.toggle('is-active', selected);
+    });
     this.groupList.replaceChildren(...this.groups.map((group) => {
       const card = document.createElement('article');
       card.className = `arranger-group${group.id === this.selectedGroupId ? ' is-selected' : ''}`;
@@ -578,9 +636,11 @@ export class LevelArrangementController {
       return card;
     }));
     const hasEmptyGroup = this.groups.some((group) => group.levelIds.length === 0);
+    const hasAnyConfiguredLevel = Object.values(this.arrangementConfigurations)
+      .some((configuration) => configuration.groups.some((group) => group.levelIds.length > 0));
     this.query<HTMLButtonElement>('#arranger-add-group').disabled = hasEmptyGroup;
     this.query<HTMLButtonElement>('#arranger-copy-groups').disabled = hasEmptyGroup;
-    this.query<HTMLButtonElement>('#arranger-copy-level-data').disabled = hasEmptyGroup;
+    this.query<HTMLButtonElement>('#arranger-copy-level-data').disabled = !hasAnyConfiguredLevel;
   }
 
   private renderLibrary(): void {
@@ -719,6 +779,34 @@ export class LevelArrangementController {
     return row;
   }
 
+  private pathParameterItems(level: ArrangementLibraryLevel): Array<{ label: string; value: string }> {
+    const metrics = level.pathMetrics;
+    const item = (label: string, value: number | string | undefined): { label: string; value: string } | undefined => (
+      value === undefined || value === '' ? undefined : { label, value: String(value) }
+    );
+    return [
+      item('实际路径交叉数量', metrics.crossings),
+      item('直角拐弯占比', metrics.rightAngleRatio),
+      item('锐角拐弯占比', metrics.acuteAngleRatio),
+      item('钝角拐弯占比', metrics.obtuseAngleRatio),
+      item('平均路径长度（拐弯的拐点算作端点，看整个棋盘中的线段平均长度）', metrics.averageSegmentLength),
+      item('向上移动占比', metrics.directionRatios.上),
+      item('向下移动占比', metrics.directionRatios.下),
+      item('向左移动占比', metrics.directionRatios.左),
+      item('向右移动占比', metrics.directionRatios.右),
+      item('向左上移动占比', metrics.directionRatios.左上),
+      item('向右上移动占比', metrics.directionRatios.右上),
+      item('向左下移动占比', metrics.directionRatios.左下),
+      item('向右下移动占比', metrics.directionRatios.右下),
+      item('连续向右数量', metrics.consecutiveRightCount),
+      item('连续向下数量', metrics.consecutiveDownCount),
+      item('连续向右下数量', metrics.consecutiveLowerRightCount),
+      item('连续遮挡计数', metrics.consecutiveOcclusionCount),
+      item('起点位置（分为左上/右上/左下/右下/靠中）', metrics.startPosition),
+      item('终点位置', metrics.endPosition),
+    ].filter((candidate): candidate is { label: string; value: string } => Boolean(candidate));
+  }
+
   private difficultyParameterItems(levels: ReadonlyArray<ArrangementLibraryLevel>): Array<{ label: string; value: string }> {
     const average = (read: (metrics: ArrangementLibraryLevel['difficultyMetrics']) => number | undefined): number | undefined => {
       const values = levels.map((level) => read(level.difficultyMetrics)).filter((value): value is number => value !== undefined);
@@ -773,7 +861,7 @@ export class LevelArrangementController {
           { label: '阵型 ID', value: String(board.representative.formationId) },
         ]),
         { label: '棋盘形状', value: board.representative.shapeName || '自定义' },
-        { label: '棋盘尺寸', value: `${board.representative.level.columns} × ${board.representative.level.rows}` },
+        { label: '棋盘尺寸', value: `${board.representative.columns} × ${board.representative.rows}` },
         { label: '路径数量', value: String(board.paths.length) },
         { label: '关卡结果', value: String(this.boardLevels(board).length) },
       ],
@@ -786,7 +874,7 @@ export class LevelArrangementController {
           ...(path.representative.pathId === undefined ? [] : [
             { label: '路径 ID', value: String(path.representative.pathId) },
           ]),
-          ...path.representative.parameters.filter(({ label }) => PATH_PARAMETER_HEADERS.has(label)),
+          ...this.pathParameterItems(path.representative),
         ],
       }];
     }
@@ -799,7 +887,7 @@ export class LevelArrangementController {
             ...(path!.representative.pathId === undefined ? [] : [
               { label: '路径 ID', value: String(path!.representative.pathId) },
             ]),
-            ...path!.representative.parameters.filter(({ label }) => PATH_PARAMETER_HEADERS.has(label)),
+            ...this.pathParameterItems(path!.representative),
           ],
         },
         {
@@ -815,13 +903,14 @@ export class LevelArrangementController {
     }
     if (variant) {
       heading = `隐藏结果 ${target.variantIndex! + 1} 参数`;
-      const basicItems = variant.parameters.filter(({ label }) => (
-        !PATH_PARAMETER_HEADERS.has(label) && !DIFFICULTY_PARAMETER_HEADERS.has(label)
-      ));
+      const basicItems = this.libraryParameterHeaders.flatMap((label, index) => {
+        const value = variant.parameterValues[index];
+        return value ? [{ label, value }] : [];
+      });
       groups = [
         { title: '关卡信息', items: basicItems },
-        { title: '路径参数', items: variant.parameters.filter(({ label }) => PATH_PARAMETER_HEADERS.has(label)) },
-        { title: '难度参数', items: variant.parameters.filter(({ label }) => DIFFICULTY_PARAMETER_HEADERS.has(label)) },
+        { title: '路径参数', items: this.pathParameterItems(variant) },
+        { title: '难度参数', items: this.difficultyParameterItems([variant]) },
       ];
     }
     title.textContent = heading;
@@ -857,16 +946,17 @@ export class LevelArrangementController {
       return;
     }
     this.query('#arranger-preview-title').textContent = entry.id;
-    const data = encodeCompactLevelData(entry.level).data;
+    const level = this.decodeLevel(entry);
+    const data = entry.levelData.data;
     const svgNamespace = 'http://www.w3.org/2000/svg';
     const board = document.createElementNS(svgNamespace, 'svg');
     board.classList.add('arranger-preview-board');
-    board.setAttribute('viewBox', `0 0 ${entry.level.columns} ${entry.level.rows}`);
+    board.setAttribute('viewBox', `0 0 ${entry.columns} ${entry.rows}`);
     board.setAttribute('preserveAspectRatio', 'xMidYMid meet');
     board.setAttribute('role', 'img');
-    board.setAttribute('aria-label', `${entry.level.columns} 列 ${entry.level.rows} 行棋盘及完整连接路径`);
+    board.setAttribute('aria-label', `${entry.columns} 列 ${entry.rows} 行棋盘及完整连接路径`);
 
-    const trendPoints = this.showTrend ? buildPathTrend(entry.level.solutionPath.map((cell) => ({
+    const trendPoints = this.showTrend ? buildPathTrend(level.solutionPath.map((cell) => ({
       x: cell.x + 0.5,
       y: cell.y + 0.5,
     }))) : [];
@@ -911,7 +1001,7 @@ export class LevelArrangementController {
 
     const path = document.createElementNS(svgNamespace, 'polyline');
     path.classList.add('arranger-preview-path');
-    path.setAttribute('points', entry.level.solutionPath
+    path.setAttribute('points', level.solutionPath
       .map((cell) => `${cell.x + 0.5},${cell.y + 0.5}`)
       .join(' '));
     if (this.showConnection) board.append(path);
@@ -942,7 +1032,7 @@ export class LevelArrangementController {
       group.classList.add('arranger-preview-cell');
       if (value < 0) group.classList.add('is-hidden');
       if (Math.abs(value) === 1) group.classList.add('is-start');
-      if (Math.abs(value) === entry.level.solutionPath.length) group.classList.add('is-end');
+      if (Math.abs(value) === level.solutionPath.length) group.classList.add('is-end');
       const circle = document.createElementNS(svgNamespace, 'circle');
       circle.setAttribute('cx', String(x + 0.5));
       circle.setAttribute('cy', String(y + 0.5));
@@ -957,18 +1047,17 @@ export class LevelArrangementController {
     preview.replaceChildren(board);
   }
 
-  private cloneLevel(level: LevelData): LevelData {
-    return {
-      ...level,
-      activeCells: level.activeCells.map((cell) => ({ ...cell })),
-      solutionPath: level.solutionPath.map((cell) => ({ ...cell })),
-      hiddenCells: level.hiddenCells?.map((cell) => ({ ...cell })),
-    };
+  private decodeLevel(entry: ArrangementLibraryLevel): LevelData {
+    return decodeCompactLevelData(entry.levelData, entry.sourceRow, false);
   }
 
   private query<T extends HTMLElement = HTMLElement>(selector: string): T {
     const element = this.host.querySelector<T>(selector);
     if (!element) throw new Error(`Missing arrangement tool element: ${selector}`);
     return element;
+  }
+
+  private queryAll<T extends HTMLElement = HTMLElement>(selector: string): T[] {
+    return [...this.host.querySelectorAll<T>(selector)];
   }
 }

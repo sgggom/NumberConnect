@@ -4,8 +4,6 @@ import {
   loadBuiltInLevels,
   loadEditorLevelCollection,
   loadLevelCollection,
-  loadMode3Levels,
-  loadMode5Levels,
   loadSettings,
   saveLevelCollection,
 } from '../game/storage';
@@ -53,17 +51,11 @@ describe('game settings migration', () => {
         hiddenPercent: DEFAULT_SETTINGS.hiddenPercent,
         maxHiddenRun: DEFAULT_SETTINGS.maxHiddenRun,
         targetCrossings: DEFAULT_SETTINGS.targetCrossings,
-        mainGameplay: 'beads',
-        mainGameplayDifficulty: 'dynamic',
-        beadMainLevelId: 4,
         puzzleMainLevelId: 4,
-        mode3MainLevelId: 4,
-        mode4MainLevelId: 4,
-        mode5MainLevelId: 4,
         showNextNumber: false,
         showDifficultyScore: false,
-        inputMode: DEFAULT_SETTINGS.inputMode,
         chargeProgressMode: 'coins',
+        showPuzzleFlow: true,
         touchPreviewSize: DEFAULT_SETTINGS.touchPreviewSize,
         touchPreviewFollowsPointer: DEFAULT_SETTINGS.touchPreviewFollowsPointer,
       });
@@ -81,6 +73,20 @@ describe('game settings migration', () => {
     try {
       expect(loadSettings().showDifficultyScore).toBe(false);
       expect(loadSettings().showDifficultyScore).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('keeps the puzzle flow enabled by default and persists an explicit disabled setting', () => {
+    const getItem = vi.fn()
+      .mockReturnValueOnce(JSON.stringify({}))
+      .mockReturnValueOnce(JSON.stringify({ showPuzzleFlow: false }));
+    vi.stubGlobal('window', { localStorage: { getItem } });
+
+    try {
+      expect(loadSettings().showPuzzleFlow).toBe(true);
+      expect(loadSettings().showPuzzleFlow).toBe(false);
     } finally {
       vi.unstubAllGlobals();
     }
@@ -141,22 +147,6 @@ describe('game settings migration', () => {
     }
   });
 
-  it('loads a valid input mode and falls back from an invalid one', () => {
-    const getItem = vi.fn()
-      .mockReturnValueOnce(JSON.stringify({ inputMode: 'auto-click' }))
-      .mockReturnValueOnce(JSON.stringify({ inputMode: 'click' }))
-      .mockReturnValueOnce(JSON.stringify({ inputMode: 'keyboard' }));
-    vi.stubGlobal('window', { localStorage: { getItem } });
-
-    try {
-      expect(loadSettings().inputMode).toBe('auto-click');
-      expect(loadSettings().inputMode).toBe('click');
-      expect(loadSettings().inputMode).toBe('drag');
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
-
   it('loads a valid charge progress mode and keeps the current coin mode as the fallback', () => {
     const getItem = vi.fn()
       .mockReturnValueOnce(JSON.stringify({ chargeProgressMode: 'off' }))
@@ -173,7 +163,7 @@ describe('game settings migration', () => {
     }
   });
 
-  it('keeps the five main gameplay selections and level progress independent', () => {
+  it('keeps puzzle campaign progress and removes obsolete gameplay preferences', () => {
     const getItem = vi.fn(() => JSON.stringify({
       mainGameplay: 'mode5',
       mainGameplayDifficulty: 8,
@@ -187,34 +177,11 @@ describe('game settings migration', () => {
 
     try {
       expect(loadSettings()).toMatchObject({
-        mainGameplay: 'mode5',
-        mainGameplayDifficulty: 8,
-        beadMainLevelId: 3,
         puzzleMainLevelId: 8,
-        mode3MainLevelId: 5,
-        mode4MainLevelId: 7,
-        mode5MainLevelId: 9,
       });
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
-
-  it('loads dynamic or fixed main gameplay difficulty and rejects invalid values', () => {
-    const getItem = vi.fn()
-      .mockReturnValueOnce(JSON.stringify({ mainGameplayDifficulty: 'dynamic' }))
-      .mockReturnValueOnce(JSON.stringify({ mainGameplayDifficulty: 1 }))
-      .mockReturnValueOnce(JSON.stringify({ mainGameplayDifficulty: 10 }))
-      .mockReturnValueOnce(JSON.stringify({ mainGameplayDifficulty: '6' }))
-      .mockReturnValueOnce(JSON.stringify({ mainGameplayDifficulty: 11 }));
-    vi.stubGlobal('window', { localStorage: { getItem } });
-
-    try {
-      expect(loadSettings().mainGameplayDifficulty).toBe('dynamic');
-      expect(loadSettings().mainGameplayDifficulty).toBe(1);
-      expect(loadSettings().mainGameplayDifficulty).toBe(10);
-      expect(loadSettings().mainGameplayDifficulty).toBe('dynamic');
-      expect(loadSettings().mainGameplayDifficulty).toBe('dynamic');
+      expect(loadSettings()).not.toHaveProperty('mainGameplay');
+      expect(loadSettings()).not.toHaveProperty('mainGameplayDifficulty');
+      expect(loadSettings()).not.toHaveProperty('inputMode');
     } finally {
       vi.unstubAllGlobals();
     }
@@ -268,7 +235,7 @@ describe('level collection migration', () => {
     }
   });
 
-  it('loads separate official level pools for the campaign, bead gameplay, gameplay 3, and gameplay 5', async () => {
+  it('loads the retained built-in and bead level pools', async () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,
       json: async () => [{ data: [[1]] }],
@@ -288,22 +255,8 @@ describe('level collection migration', () => {
         algorithm: { id: 'algorithm-1' },
         custom: false,
       }]);
-      await expect(loadMode3Levels()).resolves.toMatchObject([{
-        levelId: 1,
-        pathSource: 'generated',
-        algorithm: { id: 'algorithm-1' },
-        custom: false,
-      }]);
-      await expect(loadMode5Levels()).resolves.toMatchObject([{
-        levelId: 1,
-        pathSource: 'generated',
-        algorithm: { id: 'algorithm-1' },
-        custom: false,
-      }]);
       expect(fetchMock).toHaveBeenNthCalledWith(1, './levels/mode5-levels.json');
       expect(fetchMock).toHaveBeenNthCalledWith(2, './levels/bead-levels.json');
-      expect(fetchMock).toHaveBeenNthCalledWith(3, './levels/mode3-levels.json');
-      expect(fetchMock).toHaveBeenNthCalledWith(4, './levels/mode5-levels.json');
     } finally {
       vi.unstubAllGlobals();
     }

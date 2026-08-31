@@ -3,12 +3,26 @@ import indexMarkup from '../../index.html?raw';
 import { EDITOR_ALGORITHMS } from '../gameplay/editor/algorithms/registry';
 
 describe('migrated product scope', () => {
-  it('exposes puzzle as the only selectable main gameplay', () => {
-    const values = [...indexMarkup.matchAll(/name="main-gameplay" value="([^"]+)"/g)]
-      .map((match) => match[1]);
+  it('uses puzzle directly without exposing obsolete gameplay, difficulty, or input selectors', () => {
+    expect(indexMarkup).not.toContain('name="main-gameplay"');
+    expect(indexMarkup).not.toContain('id="settings-main-difficulty"');
+    expect(indexMarkup).not.toContain('id="settings-input-mode"');
+  });
 
-    expect(values).toEqual(['puzzle']);
-    expect(indexMarkup).toContain('value="puzzle" checked');
+  it('shows the actual path crossing count in the level debug panel', () => {
+    expect(indexMarkup).toContain('id="level-debug-crossing-count"');
+    expect(indexMarkup).toContain('<dt>交叉次数</dt>');
+  });
+
+  it('provides whole-level and per-stage experience sections in the result panel', () => {
+    expect(indexMarkup).toContain('id="result-experience"');
+    expect(indexMarkup).toContain('aria-label="整关体验汇总"');
+    expect(indexMarkup).toContain('id="result-experience-stages"');
+    expect(indexMarkup).toContain('各阶段明细');
+    expect(indexMarkup).toContain('id="level-debug-error-history-list"');
+    expect(indexMarkup).toContain('每次错误');
+    expect(indexMarkup).toContain('id="level-debug-experience-radar"');
+    expect(indexMarkup).toContain('id="level-debug-experience-legend"');
   });
 
   it('keeps daily challenge, bead gameplay, and gallery as standalone lobby destinations', () => {

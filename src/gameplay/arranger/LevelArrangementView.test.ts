@@ -34,6 +34,14 @@ describe('level arrangement view', () => {
     expect(markup).toContain('id="arranger-add-group"');
     expect(markup).toContain('id="arranger-copy-groups"');
     expect(markup).toContain('id="arranger-copy-level-data"');
+    expect(markup).toContain('id="arranger-config-switcher"');
+    expect(markup).toContain('data-arrangement-mode="main"');
+    expect(markup).toContain('data-arrangement-mode="daily"');
+    expect(markup).toContain('data-arrangement-mode="bead"');
+    expect(markup).toContain('主玩法配置');
+    expect(markup).toContain('每日挑战配置');
+    expect(markup).toContain('拼豆玩法配置');
+    expect(markup).toContain('导出三模式关卡数据');
     expect(markup).toContain('id="arranger-page-next"');
     expect(markup).toContain('id="arranger-show-trend"');
     expect(markup).toContain('id="arranger-show-connection"');

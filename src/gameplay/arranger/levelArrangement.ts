@@ -1,5 +1,4 @@
-import { decodeCompactLevelData, encodeCompactLevelData } from '../../game/levelDataFormat';
-import type { LevelData } from '../../game/types';
+import { decodeCompactLevelData, type CompactLevelData } from '../../game/levelDataFormat';
 
 export interface ArrangementLibraryLevel {
   id: string;
@@ -16,8 +15,10 @@ export interface ArrangementLibraryLevel {
   mediumErrorCount?: number;
   pathMetrics: ArrangementPathMetrics;
   difficultyMetrics: ArrangementDifficultyMetrics;
-  parameters: Array<{ label: string; value: string }>;
-  level: LevelData;
+  rows: number;
+  columns: number;
+  parameterValues: string[];
+  levelData: CompactLevelData;
 }
 
 export interface ArrangementPathMetrics {
@@ -84,7 +85,13 @@ export interface ArrangementLevelLocation {
 
 export interface ArrangementLibraryParseResult {
   levels: ArrangementLibraryLevel[];
+  parameterHeaders: string[];
   skippedRows: number;
+}
+
+export interface ArrangementLibraryRowParser {
+  addRow: (row: ReadonlyArray<unknown>, sourceRow: number) => void;
+  finish: () => ArrangementLibraryParseResult;
 }
 
 export const findArrangementLevelLocation = (
@@ -107,6 +114,22 @@ export const findArrangementLevelLocation = (
 const REQUIRED_HEADERS = [
   '关卡名', '关卡JSON', '路径JSON', '棋盘形状', '目标难度',
 ] as const;
+
+export const ARRANGEMENT_PATH_PARAMETER_HEADERS = new Set([
+  '实际路径交叉数量', '直角拐弯占比', '锐角拐弯占比', '钝角拐弯占比',
+  '平均路径长度（拐弯的拐点算作端点，看整个棋盘中的线段平均长度）',
+  '向上移动占比', '向下移动占比', '向左移动占比', '向右移动占比',
+  '向左上移动占比', '向右上移动占比', '向左下移动占比', '向右下移动占比',
+  '连续向右数量', '连续向下数量', '连续向右下数量', '连续遮挡计数',
+  '起点位置（分为左上/右上/左下/右下/靠中）', '终点位置',
+]);
+
+export const ARRANGEMENT_DIFFICULTY_PARAMETER_HEADERS = new Set([
+  '目标难度', '实际隐藏数', '实际隐藏占比 %', '实际最长连续显示', '实际最长连续隐藏',
+  '平均总步数', '低推理平均错误数', '中推理平均错误数', '高推理平均错误数',
+  '平均可连接数量', '直接连接占比 %', '平均距离下个显示数字', '平均每步难度分',
+  '前期平均难度分', '中期平均难度分', '后期平均难度分',
+]);
 
 const numericCell = (value: unknown): number | undefined => {
   const number = Number(value);
@@ -145,6 +168,10 @@ const transposeGrid = (grid: ReadonlyArray<ReadonlyArray<number>>): number[][] =
 );
 
 const configuredSize = (configId: string): { width: number; height: number } | undefined => {
+  const compactMatch = /^level_(\d)(\d{1,2})(?:_|$)/i.exec(configId.trim());
+  if (compactMatch) {
+    return { width: Number(compactMatch[1]), height: Number(compactMatch[2]) };
+  }
   const match = /(?:^|_)(\d+)_(\d+)$/.exec(configId);
   if (!match) return undefined;
   return { width: Number(match[1]), height: Number(match[2]) };
@@ -183,21 +210,35 @@ const TRANSPOSED_DIRECTION_HEADERS: Record<string, string> = {
   连续遮挡计数: '连续遮挡计数',
 };
 
-export const parseArrangementLibraryRows = (
-  rows: ReadonlyArray<ReadonlyArray<unknown>>,
-): ArrangementLibraryParseResult => {
-  if (rows.length === 0) throw new Error('跑关结果中没有数据。');
-  const headers = rows[0].map((value) => String(value ?? '').trim());
+export const createArrangementLibraryRowParser = (
+  headerRow: ReadonlyArray<unknown>,
+): ArrangementLibraryRowParser => {
+  const headers = headerRow.map((value) => String(value ?? '').trim());
   REQUIRED_HEADERS.forEach((header) => {
     if (!headers.includes(header)) throw new Error(`跑关结果缺少“${header}”列。`);
   });
   const indexOf = (header: string): number => headers.indexOf(header);
+  const parameterColumns = headers.flatMap((header, columnIndex) => (
+    !header
+    || header === '关卡JSON'
+    || header === '路径JSON'
+    || ARRANGEMENT_PATH_PARAMETER_HEADERS.has(header)
+    || ARRANGEMENT_DIFFICULTY_PARAMETER_HEADERS.has(header)
+      ? []
+      : [{ header, columnIndex }]
+  ));
+  const parameterHeaders = parameterColumns.map(({ header }) => header);
   const levels: ArrangementLibraryLevel[] = [];
   const seenLevelIds = new Set<string>();
+  const pathCacheByConfig = new Map<string, Map<string, {
+    transpose: boolean;
+    pathKey: string;
+    boardKey: string;
+  }>>();
+  const pathMetricsByKey = new Map<string, ArrangementPathMetrics>();
   let skippedRows = 0;
 
-  rows.slice(1).forEach((row, rowIndex) => {
-    const sourceRow = rowIndex + 2;
+  const addRow = (row: ReadonlyArray<unknown>, sourceRow: number): void => {
     const rawJson = String(row[indexOf('关卡JSON')] ?? '').trim();
     const rawPathJson = String(row[indexOf('路径JSON')] ?? '').trim();
     if (!rawJson || !rawPathJson) {
@@ -207,19 +248,40 @@ export const parseArrangementLibraryRows = (
     try {
       const libraryIndex = levels.length + 1;
       const sourceName = String(row[indexOf('关卡名')] ?? '').trim();
-      if (!sourceName || seenLevelIds.has(sourceName)) throw new Error('关卡名为空或重复');
+      if (!sourceName) throw new Error('关卡名为空');
+      const configRow = numericCell(row[indexOf('配置表行号')]) ?? sourceRow;
+      const hiddenSequence = numericCell(row[indexOf('配置内隐藏序号')]) ?? 1;
+      let levelId = sourceName;
+      if (seenLevelIds.has(levelId)) {
+        const suffix = `__row_${configRow}__hidden_${hiddenSequence}`;
+        levelId = `${sourceName}${suffix}`;
+        let collision = 2;
+        while (seenLevelIds.has(levelId)) levelId = `${sourceName}${suffix}_${collision++}`;
+      }
       const structuredId = parseStructuredLevelId(sourceName);
       const configId = String(row[indexOf('配置ID')] ?? '').trim();
       const rawLevelGrid = normalizedPathGrid(rawJson);
-      const rawPathGrid = normalizedPathGrid(rawPathJson);
-      const transpose = shouldTransposeGrid(configId, rawPathGrid);
+      let configPathCache = pathCacheByConfig.get(configId);
+      if (!configPathCache) {
+        configPathCache = new Map();
+        pathCacheByConfig.set(configId, configPathCache);
+      }
+      let cachedPath = configPathCache.get(rawPathJson);
+      if (!cachedPath) {
+        const rawPathGrid = normalizedPathGrid(rawPathJson);
+        const transpose = shouldTransposeGrid(configId, rawPathGrid);
+        const pathGrid = transpose ? transposeGrid(rawPathGrid) : rawPathGrid;
+        cachedPath = {
+          transpose,
+          pathKey: JSON.stringify(pathGrid),
+          boardKey: JSON.stringify(pathGrid.map((pathRow) => pathRow.map((value) => value === 0 ? 0 : 1))),
+        };
+        configPathCache.set(rawPathJson, cachedPath);
+      }
+      const { transpose, pathKey, boardKey } = cachedPath;
       const levelGrid = transpose ? transposeGrid(rawLevelGrid) : rawLevelGrid;
-      const pathGrid = transpose ? transposeGrid(rawPathGrid) : rawPathGrid;
-      const level = decodeCompactLevelData({ data: levelGrid }, libraryIndex, false);
-      const pathKey = JSON.stringify(pathGrid);
-      const boardKey = JSON.stringify(pathGrid.map((pathRow) => pathRow.map((value) => value === 0 ? 0 : 1)));
-      const parameters = headers.flatMap((header, columnIndex): Array<{ label: string; value: string }> => {
-        if (!header || header === '关卡JSON' || header === '路径JSON') return [];
+      decodeCompactLevelData({ data: levelGrid }, libraryIndex, false);
+      const parameterValues = parameterColumns.map(({ header, columnIndex }): string => {
         const sourceHeader = transpose ? TRANSPOSED_DIRECTION_HEADERS[header] ?? header : header;
         let value = row[indexOf(sourceHeader) >= 0 ? indexOf(sourceHeader) : columnIndex];
         if (transpose && header === '行数') value = row[indexOf('列数')];
@@ -227,8 +289,8 @@ export const parseArrangementLibraryRows = (
         if (transpose && (header === '起点位置（分为左上/右上/左下/右下/靠中）' || header === '终点位置')) {
           value = transposePosition(String(value ?? '').trim());
         }
-        if (value === undefined || value === null || String(value).trim() === '') return [];
-        return [{ label: header, value: String(value) }];
+        if (value === undefined || value === null || String(value).trim() === '') return '';
+        return String(value);
       });
       const metricCell = (header: string): unknown => row[indexOf(
         transpose ? TRANSPOSED_DIRECTION_HEADERS[header] ?? header : header,
@@ -237,18 +299,9 @@ export const parseArrangementLibraryRows = (
         const value = String(row[indexOf(header)] ?? '').trim();
         return transpose ? transposePosition(value) : value;
       };
-      levels.push({
-        id: sourceName,
-        boardKey,
-        pathKey,
-        shapeName: String(row[indexOf('棋盘形状')] ?? '').trim(),
-        sourceRow,
-        sourceName,
-        ...structuredId,
-        configId,
-        difficulty: numericCell(row[indexOf('目标难度')]),
-        mediumErrorCount: numericCell(row[indexOf('中推理平均错误数')]),
-        pathMetrics: {
+      let pathMetrics = pathMetricsByKey.get(pathKey);
+      if (!pathMetrics) {
+        pathMetrics = {
           crossings: numericCell(row[indexOf('实际路径交叉数量')]),
           rightAngleRatio: numericCell(row[indexOf('直角拐弯占比')]),
           acuteAngleRatio: numericCell(row[indexOf('锐角拐弯占比')]),
@@ -270,7 +323,21 @@ export const parseArrangementLibraryRows = (
           consecutiveOcclusionCount: numericCell(metricCell('连续遮挡计数')),
           startPosition: positionCell('起点位置（分为左上/右上/左下/右下/靠中）') || undefined,
           endPosition: positionCell('终点位置') || undefined,
-        },
+        };
+        pathMetricsByKey.set(pathKey, pathMetrics);
+      }
+      levels.push({
+        id: levelId,
+        boardKey,
+        pathKey,
+        shapeName: String(row[indexOf('棋盘形状')] ?? '').trim(),
+        sourceRow,
+        sourceName,
+        ...structuredId,
+        configId,
+        difficulty: numericCell(row[indexOf('目标难度')]),
+        mediumErrorCount: numericCell(row[indexOf('中推理平均错误数')]),
+        pathMetrics,
         difficultyMetrics: {
           hiddenCount: numericCell(row[indexOf('实际隐藏数')]),
           hiddenRatio: numericCell(row[indexOf('实际隐藏占比 %')]),
@@ -288,17 +355,33 @@ export const parseArrangementLibraryRows = (
           middleScore: numericCell(row[indexOf('中期平均难度分')]),
           lateScore: numericCell(row[indexOf('后期平均难度分')]),
         },
-        parameters,
-        level,
+        rows: levelGrid.length,
+        columns: levelGrid[0].length,
+        parameterValues,
+        levelData: { data: levelGrid },
       });
-      seenLevelIds.add(sourceName);
+      seenLevelIds.add(levelId);
     } catch {
       skippedRows += 1;
     }
-  });
+  };
 
-  if (levels.length === 0) throw new Error('没有读取到有效的关卡JSON。');
-  return { levels, skippedRows };
+  return {
+    addRow,
+    finish: () => {
+      if (levels.length === 0) throw new Error('没有读取到有效的关卡JSON。');
+      return { levels, parameterHeaders, skippedRows };
+    },
+  };
+};
+
+export const parseArrangementLibraryRows = (
+  rows: ReadonlyArray<ReadonlyArray<unknown>>,
+): ArrangementLibraryParseResult => {
+  if (rows.length === 0) throw new Error('跑关结果中没有数据。');
+  const parser = createArrangementLibraryRowParser(rows[0]);
+  rows.slice(1).forEach((row, rowIndex) => parser.addRow(row, rowIndex + 2));
+  return parser.finish();
 };
 
 export const arrangementBoardFamilies = (
@@ -331,13 +414,15 @@ export const arrangementBoardFamilies = (
           representative: variants[0],
           variants: [...variants].sort((left, right) => left.sourceRow - right.sourceRow),
         }));
-      return { key: pathKey, representative: pathLevels[0], difficulties };
+      const representative = pathLevels.find((level) => level.pathId !== undefined) ?? pathLevels[0];
+      return { key: pathKey, representative, difficulties };
     }).sort((left, right) => (
       (left.representative.pathId ?? Number.MAX_SAFE_INTEGER)
       - (right.representative.pathId ?? Number.MAX_SAFE_INTEGER)
       || left.representative.sourceRow - right.representative.sourceRow
     ));
-    return { key, representative: boardLevels[0], paths };
+    const representative = boardLevels.find((level) => level.formationId !== undefined) ?? boardLevels[0];
+    return { key, representative, paths };
   }).sort((left, right) => (
     (left.representative.formationId ?? Number.MAX_SAFE_INTEGER)
     - (right.representative.formationId ?? Number.MAX_SAFE_INTEGER)
@@ -345,9 +430,40 @@ export const arrangementBoardFamilies = (
   ));
 };
 
-export const readArrangementLibraryFile = async (file: Blob): Promise<ArrangementLibraryParseResult> => {
-  const { readSheet } = await import('read-excel-file/browser');
-  return parseArrangementLibraryRows(await readSheet(file));
+export const readArrangementLibraryFile = async (
+  file: File,
+  onProgress?: (message: string) => void,
+): Promise<ArrangementLibraryParseResult> => {
+  if (typeof Worker === 'undefined') {
+    const { readSheet } = await import('read-excel-file/browser');
+    return parseArrangementLibraryRows(await readSheet(file));
+  }
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(new URL('./arrangementLibrary.worker.ts', import.meta.url), { type: 'module' });
+    worker.onmessage = (event: MessageEvent<{
+      type: 'progress' | 'complete' | 'error';
+      message?: string;
+      result?: ArrangementLibraryParseResult;
+    }>) => {
+      if (event.data.type === 'progress') {
+        if (event.data.message) onProgress?.(event.data.message);
+        return;
+      }
+      worker.terminate();
+      if (event.data.type === 'complete' && event.data.result) resolve(event.data.result);
+      else reject(new Error(event.data.message ?? '读取关卡库失败。'));
+    };
+    worker.onerror = (event) => {
+      worker.terminate();
+      reject(new Error(event.message || '关卡库读取线程异常退出，文件可能过大。'));
+    };
+    void file.arrayBuffer().then((buffer) => {
+      worker.postMessage({ buffer }, [buffer]);
+    }, (error) => {
+      worker.terminate();
+      reject(error);
+    });
+  });
 };
 
 export const addArrangementLevels = (
@@ -430,6 +546,11 @@ export const arrangementLevelDataJson = (
   ));
   return JSON.stringify(Object.fromEntries(selected.map((level) => [
     level.id,
-    encodeCompactLevelData(level.level),
+    level.levelData,
   ])));
 };
+
+export const combinedArrangementLevelDataJson = (
+  configurations: ReadonlyArray<ReadonlyArray<ArrangementLevelGroup>>,
+  library: ReadonlyArray<ArrangementLibraryLevel>,
+): string => arrangementLevelDataJson(configurations.flatMap((groups) => groups), library);

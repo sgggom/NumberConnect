@@ -4,6 +4,7 @@ import {
   arrangementBoardFamilies,
   arrangementLevelDataJson,
   arrangementRows,
+  combinedArrangementLevelDataJson,
   findArrangementLevelLocation,
   parseArrangementClipboardText,
   parseArrangementLibraryRows,
@@ -41,11 +42,11 @@ describe('level arrangement data', () => {
       mediumErrorCount: 1.25,
       pathMetrics: { crossings: 3, rightAngleRatio: 0.25 },
       difficultyMetrics: { hiddenCount: 6, lowErrors: 1.5, mediumErrors: 1.25 },
-      level: { rows: 2, columns: 2 },
+      rows: 2,
+      columns: 2,
     });
-    expect(result.levels[0].level.hiddenCells).toEqual([{ x: 1, y: 0 }]);
-    expect(result.levels[0].parameters).toContainEqual({ label: '实际路径交叉数量', value: '3' });
-    expect(result.levels[0].parameters.some(({ label }) => label.endsWith('JSON'))).toBe(false);
+    expect(result.levels[0].levelData.data).toEqual([[1, -2], [4, 3]]);
+    expect(result.parameterHeaders.some((label) => label.endsWith('JSON'))).toBe(false);
   });
 
   it('requires the two source columns and skips invalid data rows', () => {
@@ -57,6 +58,20 @@ describe('level arrangement data', () => {
     ]);
     expect(result.skippedRows).toBe(1);
     expect(result.levels[0].id).toBe('good');
+  });
+
+  it('keeps repeated level names as distinct hidden variants', () => {
+    const result = parseArrangementLibraryRows([
+      headers,
+      ['path_4_4_1', 'path_4_4', 2, 1, levelJson, pathJson, '正方形', 1, 0],
+      ['path_4_4_1', 'path_4_4', 2, 2, levelJson, pathJson, '正方形', 1, 0],
+    ]);
+
+    expect(result.skippedRows).toBe(0);
+    expect(result.levels.map(({ id }) => id)).toEqual([
+      'path_4_4_1',
+      'path_4_4_1__row_2__hidden_2',
+    ]);
   });
 
   it('restores width-height order encoded in rectangular configuration ids', () => {
@@ -77,7 +92,7 @@ describe('level arrangement data', () => {
       ],
     ]);
 
-    expect(result.levels[0].level).toMatchObject({ columns: 2, rows: 3 });
+    expect(result.levels[0]).toMatchObject({ columns: 2, rows: 3 });
     expect(result.levels[0].pathMetrics).toMatchObject({
       directionRatios: { 上: 0.2, 左: 0.1 },
       consecutiveRightCount: 5,
@@ -87,14 +102,62 @@ describe('level arrangement data', () => {
       startPosition: '左下',
       endPosition: '右上',
     });
-    expect(result.levels[0].parameters).toEqual(expect.arrayContaining([
-      { label: '行数', value: '3' },
-      { label: '列数', value: '2' },
-      { label: '连续向右数量', value: '5' },
-      { label: '连续向下数量', value: '4' },
-      { label: '连续向右下数量', value: '6' },
-      { label: '连续遮挡计数', value: '7' },
-    ]));
+    const parameters = Object.fromEntries(result.parameterHeaders.map((header, index) => (
+      [header, result.levels[0].parameterValues[index]]
+    )));
+    expect(parameters).toMatchObject({ 行数: '3', 列数: '2' });
+  });
+
+  it.each([
+    ['level_44', 4, 4],
+    ['level_45', 4, 5],
+    ['level_46', 4, 6],
+    ['level_54', 5, 4],
+    ['level_55', 5, 5],
+    ['level_56', 5, 6],
+    ['level_57', 5, 7],
+    ['level_58', 5, 8],
+    ['level_66', 6, 6],
+    ['level_67', 6, 7],
+    ['level_68', 6, 8],
+    ['level_69', 6, 9],
+    ['level_77', 7, 7],
+    ['level_78', 7, 8],
+    ['level_79', 7, 9],
+    ['level_710', 7, 10],
+    ['level_88', 8, 8],
+    ['level_89', 8, 9],
+    ['level_810', 8, 10],
+    ['level_811', 8, 11],
+    ['level_812', 8, 12],
+  ] as const)('supports the compact rectangular size id %s', (configId, width, height) => {
+    let value = 1;
+    const path = Array.from({ length: width }, (_, row) => {
+      const values = Array.from({ length: height }, () => value++);
+      return row % 2 === 0 ? values : values.reverse();
+    });
+    const json = JSON.stringify({ data: path });
+    const result = parseArrangementLibraryRows([
+      headers,
+      [`${configId}_1_1`, `${configId}_1`, 2, 1, json, json, '长方形', 1, 0],
+    ]);
+
+    expect(result.levels[0]).toMatchObject({ columns: width, rows: height });
+    expect(JSON.parse(result.levels[0].boardKey)).toHaveLength(height);
+    expect(JSON.parse(result.levels[0].boardKey)[0]).toHaveLength(width);
+  });
+
+  it('keeps a structured level as the board and path representative when guide levels come first', () => {
+    const result = parseArrangementLibraryRows([
+      headers,
+      ['guide_45_1', 'guide_45_1', 2, 1, levelJson, pathJson, '长方形', 1, 0],
+      ['level_45_12_5', 'level_45_12', 3, 1, levelJson, pathJson, '长方形', 5, 0],
+    ]);
+
+    const families = arrangementBoardFamilies(result.levels);
+    expect(families).toHaveLength(1);
+    expect(families[0].representative).toMatchObject({ id: 'level_45_12_5', formationId: 45 });
+    expect(families[0].paths[0].representative).toMatchObject({ id: 'level_45_12_5', pathId: 12 });
   });
 
   it('groups levels by board, then path, then difficulty', () => {
@@ -203,5 +266,24 @@ describe('level arrangement data', () => {
       'level_56_44_11',
     ]);
     expect(exported.level_56_44_1).toEqual(JSON.parse(levelJson));
+  });
+
+  it('exports one level library containing levels used by all three configurations', () => {
+    const secondPathJson = JSON.stringify({ data: [[1, 4], [2, 3]] });
+    const thirdPathJson = JSON.stringify({ data: [[3, 4], [2, 1]] });
+    const result = parseArrangementLibraryRows([
+      headers,
+      ['level_44_1_1', 'main', 2, 1, levelJson, pathJson, '正方形', 1, 0],
+      ['level_44_2_1', 'daily', 3, 1, levelJson, secondPathJson, '正方形', 1, 0],
+      ['level_44_3_1', 'bead', 4, 1, levelJson, thirdPathJson, '正方形', 1, 0],
+      ['level_44_4_1', 'unused', 5, 1, levelJson, JSON.stringify({ data: [[2, 1], [3, 4]] }), '正方形', 1, 0],
+    ]);
+    const exported = JSON.parse(combinedArrangementLevelDataJson([
+      [{ id: 1, levelIds: ['level_44_1_1'] }],
+      [{ id: 1, levelIds: ['level_44_2_1'] }],
+      [{ id: 1, levelIds: ['level_44_3_1'] }],
+    ], result.levels));
+
+    expect(Object.keys(exported)).toEqual(['level_44_1_1', 'level_44_2_1', 'level_44_3_1']);
   });
 });
