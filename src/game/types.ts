@@ -131,6 +131,7 @@ export interface BoardHoldScore {
 
 export interface BoardWrongStepData {
   stepNumber: number;
+  connectionLength: number;
   score: Promise<BoardHoldScore | undefined>;
 }
 

@@ -229,6 +229,7 @@ export class BoardScene extends Phaser.Scene {
   private isDrawing = false;
   private drawingPointerId?: number;
   private drawingNativePointerId?: number;
+  private currentStrokeConnectionLength = 0;
   private wrongFeedbackActive = false;
   private readonly wrongCellIndexes = new Set<number>();
   private locked = true;
@@ -317,6 +318,7 @@ export class BoardScene extends Phaser.Scene {
     this.isDrawing = false;
     this.drawingPointerId = undefined;
     this.drawingNativePointerId = undefined;
+    this.currentStrokeConnectionLength = 0;
     this.pointerLineTarget = undefined;
     this.raisedConnectedCellIndex = undefined;
     this.pendingStepReward = undefined;
@@ -717,6 +719,7 @@ export class BoardScene extends Phaser.Scene {
     this.isDrawing = false;
     this.drawingPointerId = undefined;
     this.drawingNativePointerId = undefined;
+    this.currentStrokeConnectionLength = 0;
     this.pointerLineTarget = undefined;
     this.raisedConnectedCellIndex = undefined;
     this.pendingStepReward = undefined;
@@ -2051,6 +2054,7 @@ export class BoardScene extends Phaser.Scene {
     }
     this.session?.onInteraction?.();
     this.isDrawing = true;
+    this.currentStrokeConnectionLength = 1;
     this.drawingPointerId = pointer.id;
     this.wrongFeedbackActive = false;
     this.handleConnectionAction(this.connection.begin(index, this.solutionRevealed));
@@ -2116,6 +2120,7 @@ export class BoardScene extends Phaser.Scene {
       } else {
         const session = this.session;
         const connection = this.connection;
+        const strokeConnectionLength = this.currentStrokeConnectionLength;
         this.completionCheckPending = true;
         void connection.extendAsync(closest.index, (request) => (
           findPathCompletionInWorker(session.level.solutionPath, session.level.boardShape, request)
@@ -2124,7 +2129,7 @@ export class BoardScene extends Phaser.Scene {
             this.session === session
             && this.connection === connection
             && shouldHandleDragAction(closestJudgmentMode, action.type === 'wrong')
-          ) this.handleConnectionAction(action, true, stepReward);
+          ) this.handleConnectionAction(action, true, stepReward, strokeConnectionLength);
         }).catch(() => undefined).finally(() => {
           if (this.connection === connection) this.completionCheckPending = false;
         });
@@ -2146,6 +2151,7 @@ export class BoardScene extends Phaser.Scene {
   private finishPointerInteraction(countRelease = false): void {
     const wasDrawing = this.isDrawing;
     this.isDrawing = false;
+    this.currentStrokeConnectionLength = 0;
     this.drawingPointerId = undefined;
     this.drawingNativePointerId = undefined;
     this.pointerLineTarget = undefined;
@@ -2379,6 +2385,7 @@ export class BoardScene extends Phaser.Scene {
     action: ConnectionAction,
     playFeedback = true,
     stepReward?: PendingStepRewardFeedback,
+    strokeConnectionLength = this.currentStrokeConnectionLength,
   ): void {
     if (!this.session || !this.view || !this.connection || action.type === 'ignored') return;
     if (action.type === 'wrong') {
@@ -2387,6 +2394,7 @@ export class BoardScene extends Phaser.Scene {
       const shouldLoseLife = !this.wrongCellIndexes.has(action.index);
       const scoringIndex = this.connection.activeIndex ?? action.index;
       const stepNumber = this.connection.displayNumber(scoringIndex);
+      const connectionLength = strokeConnectionLength;
       this.flashWrong(action.index);
       this.resetConnectionComboEdge();
       this.playSound('wrong');
@@ -2399,7 +2407,7 @@ export class BoardScene extends Phaser.Scene {
       this.session.onWrong(
         this.connectionFailureMessage(action.reason),
         shouldLoseLife,
-        { stepNumber, score },
+        { stepNumber, connectionLength, score },
       );
       return;
     }
@@ -2416,6 +2424,7 @@ export class BoardScene extends Phaser.Scene {
       this.refreshView();
       return;
     }
+    this.currentStrokeConnectionLength += 1;
     this.wrongCellIndexes.clear();
     this.refreshView();
     const rewardToPlay = this.pendingStepReward;

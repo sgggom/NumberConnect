@@ -292,6 +292,7 @@ interface PuzzleErrorExperience {
   order: number;
   stage: number;
   stepNumber: number;
+  connectionLength: number;
   difficultyScore?: number;
   choiceQuantity?: number;
   nextVisibleNumberGap?: number;
@@ -1009,6 +1010,7 @@ class NumberConnectApp {
       order: this.levelDebugExperienceErrors,
       stage: this.currentAdaptiveStage,
       stepNumber: step.stepNumber,
+      connectionLength: step.connectionLength,
     };
     this.levelDebugActiveStageExperience?.errorRecords.push(record);
     if (this.levelDebugActiveStageExperience) this.levelDebugActiveStageExperience.errors += 1;
@@ -1239,7 +1241,7 @@ class NumberConnectApp {
       const position = document.createElement('span');
       const values = document.createElement('strong');
       position.textContent = `错误 ${record.order} · 阶段 ${record.stage} · 第 ${record.stepNumber} 步`;
-      values.textContent = `难度分 ${record.difficultyScore ?? '计算中'} · ${record.choiceQuantity ?? '计算中'} 个选择 · 间距 ${record.nextVisibleNumberGap ?? '计算中'}`;
+      values.textContent = `难度分 ${record.difficultyScore ?? '计算中'} · ${record.choiceQuantity ?? '计算中'} 个选择 · 间距 ${record.nextVisibleNumberGap ?? '计算中'} · 本次连接 ${record.connectionLength} 格`;
       item.append(position, values);
       return item;
     });
@@ -3370,7 +3372,7 @@ class NumberConnectApp {
           const step = document.createElement('span');
           const values = document.createElement('strong');
           step.textContent = `错误 ${index + 1} · 第 ${error.stepNumber} 步`;
-          values.textContent = `难度分 ${error.difficultyScore ?? '计算中'} · ${error.choiceQuantity ?? '计算中'} 个选择 · 间距 ${error.nextVisibleNumberGap ?? '计算中'}`;
+          values.textContent = `难度分 ${error.difficultyScore ?? '计算中'} · ${error.choiceQuantity ?? '计算中'} 个选择 · 间距 ${error.nextVisibleNumberGap ?? '计算中'} · 本次连接 ${error.connectionLength} 格`;
           item.append(step, values);
           return item;
         }));
