@@ -165,6 +165,7 @@ export interface BoardSessionInput {
   touchPreviewRingDepth: 1 | 2;
   boardZoomEnabled: boolean;
   mode: GameMode;
+  onInteraction?: () => void;
   onProgress: (current: number, total: number) => void;
   onWrong: (message: string, shouldLoseLife: boolean, step: BoardWrongStepData) => void;
   onRelease?: () => void;

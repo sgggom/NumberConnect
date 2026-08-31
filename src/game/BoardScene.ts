@@ -2049,6 +2049,7 @@ export class BoardScene extends Phaser.Scene {
       if (cell) this.cellSelectionHandler({ ...cell });
       return;
     }
+    this.session?.onInteraction?.();
     this.isDrawing = true;
     this.drawingPointerId = pointer.id;
     this.wrongFeedbackActive = false;

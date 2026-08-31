@@ -294,6 +294,7 @@ interface PuzzleErrorExperience {
   stepNumber: number;
   difficultyScore?: number;
   choiceQuantity?: number;
+  nextVisibleNumberGap?: number;
 }
 
 interface ActivePuzzleStageExperience extends PuzzleStageExperience {
@@ -957,8 +958,7 @@ class NumberConnectApp {
   private beginLevelDebugStageExperience(): void {
     const stage = this.currentAdaptiveStage;
     const formationId = this.adaptiveConfiguredLevel()?.stages[stage - 1]?.formationId ?? '—';
-    const startedAt = performance.now();
-    this.levelDebugExperienceStartedAt = startedAt;
+    this.levelDebugExperienceStartedAt = undefined;
     this.levelDebugActiveStageExperience = {
       stage,
       formationId,
@@ -967,16 +967,26 @@ class NumberConnectApp {
       elapsedMs: 0,
       revives: 0,
       errorRecords: [],
-      startedAt,
     };
+  }
+
+  private startLevelDebugStageExperience(): void {
+    const active = this.levelDebugActiveStageExperience;
+    if (!active || active.startedAt !== undefined) return;
+    const startedAt = performance.now();
+    active.startedAt = startedAt;
+    this.levelDebugExperienceStartedAt = startedAt;
+    this.renderLevelDebugExperience();
   }
 
   private finishLevelDebugStageExperience(): void {
     const active = this.levelDebugActiveStageExperience;
-    if (active?.startedAt === undefined) return;
-    const now = performance.now();
-    active.elapsedMs += now - active.startedAt;
-    active.startedAt = undefined;
+    if (!active) return;
+    if (active.startedAt !== undefined) {
+      const now = performance.now();
+      active.elapsedMs += now - active.startedAt;
+      active.startedAt = undefined;
+    }
     const completed: PuzzleStageExperience = {
       stage: active.stage,
       formationId: active.formationId,
@@ -1006,6 +1016,7 @@ class NumberConnectApp {
     void step.score.then((score) => {
       record.difficultyScore = score?.badgeScore;
       record.choiceQuantity = score?.choiceQuantity;
+      record.nextVisibleNumberGap = score?.nextNumberDistance;
       this.renderLevelDebugErrorHistory();
       if (!this.resultExperience.hidden) {
         this.renderPuzzleResultExperience(this.adaptiveTotalStages(this.settings.puzzleMainLevelId));
@@ -1228,7 +1239,7 @@ class NumberConnectApp {
       const position = document.createElement('span');
       const values = document.createElement('strong');
       position.textContent = `错误 ${record.order} · 阶段 ${record.stage} · 第 ${record.stepNumber} 步`;
-      values.textContent = `难度分 ${record.difficultyScore ?? '计算中'} · ${record.choiceQuantity ?? '计算中'} 个选择`;
+      values.textContent = `难度分 ${record.difficultyScore ?? '计算中'} · ${record.choiceQuantity ?? '计算中'} 个选择 · 间距 ${record.nextVisibleNumberGap ?? '计算中'}`;
       item.append(position, values);
       return item;
     });
@@ -2492,6 +2503,9 @@ class NumberConnectApp {
       touchPreviewRingDepth: this.settings.touchPreviewSize === 'large' ? 2 : 1,
       boardZoomEnabled: this.isTouchPreviewZoomMode(),
       mode: this.mode,
+      onInteraction: () => {
+        if (usesPuzzleStage) this.startLevelDebugStageExperience();
+      },
       onProgress: (current, total) => {
         this.currentProgress = current;
         this.currentTotal = total;
@@ -3356,7 +3370,7 @@ class NumberConnectApp {
           const step = document.createElement('span');
           const values = document.createElement('strong');
           step.textContent = `错误 ${index + 1} · 第 ${error.stepNumber} 步`;
-          values.textContent = `难度分 ${error.difficultyScore ?? '计算中'} · ${error.choiceQuantity ?? '计算中'} 个选择`;
+          values.textContent = `难度分 ${error.difficultyScore ?? '计算中'} · ${error.choiceQuantity ?? '计算中'} 个选择 · 间距 ${error.nextVisibleNumberGap ?? '计算中'}`;
           item.append(step, values);
           return item;
         }));
