@@ -204,8 +204,6 @@
 .editor-level-actions .button[hidden] { display: none; }
 .editor-batch-playtest-row { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: stretch; gap: 6px; }
 .editor-batch-playtest-actions { min-width: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
-.editor-batch-hidden-difficulty-mode { grid-column: 2; min-width: 0; height: 30px; padding: 0 26px 0 8px; border: 1px solid rgba(88,208,170,.25); border-radius: 8px; color: var(--green); background: rgba(88,208,170,.07); font: inherit; font-size: .66rem; font-weight: 800; cursor: pointer; }
-.editor-batch-hidden-difficulty-mode:disabled { cursor: default; opacity: .5; }
 .editor-level-actions .editor-batch-playtest { border-color: rgba(88,208,170,.34); color: var(--green); background: rgba(88,208,170,.09); }
 .editor-level-actions .editor-batch-playtest.is-running { color: var(--gold); border-color: rgba(240,184,75,.45); background: rgba(240,184,75,.11); cursor: pointer; }
 .editor-batch-playtest-header { min-width: 82px; padding: 0 9px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid rgba(255,255,255,.09); border-radius: 8px; color: var(--muted); background: rgba(255,255,255,.045); font-size: .66rem; font-weight: 800; cursor: pointer; user-select: none; }

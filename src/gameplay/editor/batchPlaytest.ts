@@ -18,11 +18,13 @@ import {
 } from './simulateLevelPlay';
 import type { EditorCell, EditorShape } from './types';
 import { MAX_BATCH_PLAYTEST_CONCURRENCY } from './batchWorkerConcurrency';
+import {
+  createProgressiveHiddenLayout,
+} from './progressiveHiddenLayout';
 
 export { batchPlaytestConcurrency, MAX_BATCH_PLAYTEST_CONCURRENCY } from './batchWorkerConcurrency';
 
 export type BatchPlaytestMode = 'path' | 'hidden';
-export type BatchHiddenDifficultySelection = number | 'all';
 
 const COMMON_REQUIRED_HEADERS = [
   '配置ID',
@@ -40,9 +42,8 @@ const PATH_REQUIRED_HEADERS = [
 
 const HIDDEN_REQUIRED_HEADERS = [
   ...COMMON_REQUIRED_HEADERS,
-  '基础隐藏占比 %',
+  '分段长度区间',
   '最长连续显示',
-  '最长连续隐藏',
   '生成隐藏数',
   '每关跑关次数',
 ] as const;
@@ -61,7 +62,7 @@ export const BATCH_PATH_RESULT_HEADERS = [
 export const BATCH_HIDDEN_RESULT_HEADERS = [
   '关卡名', '配置ID', '配置表行号', '配置内隐藏序号', '关卡JSON', '路径JSON',
   '棋盘形状', '行数', '列数', '格子数',
-  '基础隐藏占比 %', '目标难度', '配置实际隐藏占比 %', '最长连续显示限制', '最长连续隐藏限制',
+  '分段长度区间', '目标难度', '配置目标隐藏数', '最长连续显示限制', '最长连续隐藏限制',
   '实际隐藏数', '实际隐藏占比 %', '实际最长连续显示', '实际最长连续隐藏',
   '实际路径交叉数量', '直角拐弯占比', '锐角拐弯占比', '钝角拐弯占比',
   '平均路径长度（拐弯的拐点算作端点，看整个棋盘中的线段平均长度）',
@@ -92,6 +93,8 @@ export interface BatchPlaytestConfig {
   targetCrossings: number;
   turnProbability: number;
   hiddenPercent: number;
+  segmentLengthMin: number;
+  segmentLengthMax: number;
   targetDifficulty: number;
   maxVisibleRun: number;
   maxHiddenRun: number;
@@ -224,6 +227,22 @@ const positiveIntegerCell = (
     throw new Error(`第 ${sourceRow} 行“${header}”必须是正整数。`);
   }
   return parsed;
+};
+
+const integerRangeCell = (
+  value: unknown,
+  sourceRow: number,
+  header: string,
+): { minimum: number; maximum: number } => {
+  const normalized = String(value ?? '').trim().replace(/[，]/g, ',');
+  const match = normalized.match(/^\[?\s*(\d+)\s*,\s*(\d+)\s*\]?$/);
+  if (!match) throw new Error(`第 ${sourceRow} 行“${header}”必须使用 [5,9] 格式。`);
+  const first = Number(match[1]);
+  const second = Number(match[2]);
+  if (!Number.isSafeInteger(first) || !Number.isSafeInteger(second) || first < 1 || second < first) {
+    throw new Error(`第 ${sourceRow} 行“${header}”必须是最小值不大于最大值的正整数区间。`);
+  }
+  return { minimum: first, maximum: second };
 };
 
 const parseShape = (value: unknown, sourceRow: number): EditorShape => {
@@ -400,6 +419,9 @@ export const parseBatchPlaytestConfigRows = (
     const presetPath = mode === 'hidden'
       ? pathFromPreset(configuredData, sourceRow, shape)
       : undefined;
+    const segmentLengths = mode === 'hidden'
+      ? integerRangeCell(row[indexOf('分段长度区间')], sourceRow, '分段长度区间')
+      : { minimum: 1, maximum: 1 };
     configs.push({
       mode,
       sourceRow,
@@ -414,16 +436,14 @@ export const parseBatchPlaytestConfigRows = (
       turnProbability: mode === 'path'
         ? integerCell(row[indexOf('路径拐弯概率 %')], sourceRow, '路径拐弯概率 %', 0, 100)
         : 0,
-      hiddenPercent: mode === 'hidden'
-        ? integerCell(row[indexOf('基础隐藏占比 %')], sourceRow, '基础隐藏占比 %', 0, 100)
-        : 0,
+      hiddenPercent: 0,
+      segmentLengthMin: segmentLengths.minimum,
+      segmentLengthMax: segmentLengths.maximum,
       targetDifficulty: mode === 'hidden' ? 6 : 1,
       maxVisibleRun: mode === 'hidden'
         ? integerCell(row[indexOf('最长连续显示')], sourceRow, '最长连续显示', 1, 99)
         : 99,
-      maxHiddenRun: mode === 'hidden'
-        ? integerCell(row[indexOf('最长连续隐藏')], sourceRow, '最长连续隐藏', 1, 99)
-        : 99,
+      maxHiddenRun: mode === 'hidden' ? 3 : 99,
       generationCount: mode === 'path'
         ? positiveIntegerCell(row[indexOf('生成路径数')], sourceRow, '生成路径数')
         : integerCell(row[indexOf('生成隐藏数')], sourceRow, '生成隐藏数', 1, 100),
@@ -466,27 +486,20 @@ export const readBatchPlaytestConfigFile = async (
 
 export const createBatchPlaytestTasks = (
   configs: ReadonlyArray<BatchPlaytestConfig>,
-  hiddenDifficultySelection: BatchHiddenDifficultySelection = 6,
 ): BatchPlaytestTask[] => {
   const tasks = configs.flatMap((config) => {
-    const selectedDifficulty = hiddenDifficultySelection === 'all'
-      ? 6
-      : Math.max(1, Math.min(10, Math.floor(hiddenDifficultySelection)));
     const difficulties = config.mode === 'hidden'
-      ? hiddenDifficultySelection === 'all'
-        ? Array.from({ length: 10 }, (_, index) => index + 1)
-        : [selectedDifficulty]
+      ? Array.from({ length: 10 }, (_, index) => index + 1)
       : [config.targetDifficulty];
-    return difficulties.flatMap((targetDifficulty) => Array.from(
-      { length: config.generationCount },
-      (_, index) => ({
+    return Array.from({ length: config.generationCount }, (_, index) => (
+      difficulties.map((targetDifficulty) => ({
         taskIndex: 0,
         generationNumber: index + 1,
         config: targetDifficulty === config.targetDifficulty
           ? config
           : { ...config, targetDifficulty },
-      }),
-    ));
+      }))
+    )).flat();
   }).map((task, taskIndex) => ({ ...task, taskIndex }));
 
   const hiddenTasks = tasks.filter((task) => task.config.mode === 'hidden');
@@ -503,6 +516,31 @@ export const createBatchPlaytestTasks = (
   return tasks;
 };
 
+export const createBatchPlaytestTaskChains = (
+  tasks: ReadonlyArray<BatchPlaytestTask>,
+): BatchPlaytestTask[][] => {
+  const chains: BatchPlaytestTask[][] = [];
+  const hiddenChains = new Map<string, BatchPlaytestTask[]>();
+  tasks.forEach((task) => {
+    if (task.config.mode === 'path') {
+      chains.push([task]);
+      return;
+    }
+    const key = `${task.config.sourceRow}:${task.generationNumber}`;
+    let chain = hiddenChains.get(key);
+    if (!chain) {
+      chain = [];
+      hiddenChains.set(key, chain);
+      chains.push(chain);
+    }
+    chain.push(task);
+  });
+  chains.forEach((chain) => chain.sort((left, right) => (
+    left.config.targetDifficulty - right.config.targetDifficulty
+  )));
+  return chains;
+};
+
 const mixedSeed = (task: BatchPlaytestTask, attempt: number): number => (
   task.config.seed
   ^ Math.imul(task.config.sourceRow + 1, 73856093)
@@ -510,6 +548,38 @@ const mixedSeed = (task: BatchPlaytestTask, attempt: number): number => (
   ^ Math.imul(task.config.targetDifficulty + 1, 49979687)
   ^ Math.imul(attempt + 1, 83492791)
 ) >>> 0;
+
+const progressiveChainSeed = (task: BatchPlaytestTask, attempt: number): number => (
+  task.config.seed
+  ^ Math.imul(task.config.sourceRow + 1, 73856093)
+  ^ Math.imul(task.generationNumber + 1, 19349663)
+  ^ Math.imul(attempt + 1, 83492791)
+) >>> 0;
+
+export const createProgressiveBatchHiddenResult = (
+  task: BatchPlaytestTask,
+  previousHiddenCells?: ReadonlyArray<EditorCell>,
+  attempt = 0,
+): EditorAlgorithmResult => {
+  if (task.config.mode !== 'hidden' || !task.config.presetPath) {
+    throw new Error('累进隐藏生成只支持带固定路径的隐藏任务。');
+  }
+  const path = task.config.presetPath.map((cell) => ({ ...cell }));
+  const hiddenCells = createProgressiveHiddenLayout({
+    path,
+    segmentLengthMin: task.config.segmentLengthMin,
+    segmentLengthMax: task.config.segmentLengthMax,
+    difficulty: task.config.targetDifficulty,
+    seed: progressiveChainSeed(task, attempt),
+    maxVisibleRun: task.config.maxVisibleRun,
+    previousHiddenCells,
+  });
+  return {
+    path,
+    hiddenCells,
+    targetHiddenCount: hiddenCells.length,
+  };
+};
 
 export const createBatchPlaytestGenerationRequest = (
   task: BatchPlaytestTask,
@@ -723,13 +793,12 @@ export const formatBatchPlaytestResultsTsv = (
     }
     const hiddenSimulation = simulation as BatchPlaytestSimulation;
     const difficulty = summarizeDifficultyScores(hiddenSimulation.steps.map((step) => step.difficultyScore));
-    const configuredHiddenPercent = Math.min(100, config.hiddenPercent + config.targetDifficulty);
     const pathJson = JSON.stringify(encodeCompactLevelCollection([{ ...level, hiddenCells: [] }])[0]);
     return [
       `${config.id}_${config.targetDifficulty}`, config.id, config.sourceRow, task.generationNumber,
       JSON.stringify(encodeCompactLevelCollection([level])[0]), pathJson, shapeLabel(config.shape),
       config.rows, config.columns, level.activeCells.length,
-      config.hiddenPercent, config.targetDifficulty, configuredHiddenPercent,
+      `[${config.segmentLengthMin},${config.segmentLengthMax}]`, config.targetDifficulty, metrics.hiddenCount,
       config.maxVisibleRun, config.maxHiddenRun, metrics.hiddenCount, rounded(metrics.hiddenRatio * 100),
       metrics.longestVisibleRun, metrics.longestHiddenRun,
       metrics.pathCrossings, rounded(metrics.rightAngleTurnRatio), rounded(metrics.acuteAngleTurnRatio),

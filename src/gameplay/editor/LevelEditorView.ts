@@ -1,4 +1,4 @@
-const LEVEL_EDITOR_VIEW_VERSION = '39';
+const LEVEL_EDITOR_VIEW_VERSION = '40';
 
 export const mountLevelEditorView = (host: HTMLElement): void => {
   const hasCurrentView = host.dataset.editorViewVersion === LEVEL_EDITOR_VIEW_VERSION
@@ -95,20 +95,7 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
             <div class="editor-batch-playtest-row">
               <div class="editor-batch-playtest-actions">
                 <button id="editor-batch-generate-path" class="button button--secondary button--small editor-batch-playtest" type="button" title="读取路径生成配置，批量生成并导出路径统计">批量生成路径</button>
-                <button id="editor-batch-generate-hidden" class="button button--secondary button--small editor-batch-playtest" type="button" title="读取隐藏生成配置，批量生成隐藏并导出难度与错误统计">批量生成隐藏</button>
-                <select id="editor-batch-hidden-difficulty-mode" class="editor-batch-hidden-difficulty-mode" aria-label="隐藏生成目标难度" title="选择单个难度时只生成该难度；全部难度会对 1–10 每个难度都按生成隐藏数执行">
-                  <option value="1">难度 1</option>
-                  <option value="2">难度 2</option>
-                  <option value="3">难度 3</option>
-                  <option value="4">难度 4</option>
-                  <option value="5">难度 5</option>
-                  <option value="6" selected>难度 6</option>
-                  <option value="7">难度 7</option>
-                  <option value="8">难度 8</option>
-                  <option value="9">难度 9</option>
-                  <option value="10">难度 10</option>
-                  <option value="all">全部难度 1–10</option>
-                </select>
+                <button id="editor-batch-generate-hidden" class="button button--secondary button--small editor-batch-playtest" type="button" title="读取隐藏生成配置，按难度 1–10 累进生成并导出跑关统计">批量生成隐藏 1–10</button>
               </div>
               <label class="editor-batch-playtest-header">
                 <input id="editor-batch-playtest-header" type="checkbox">

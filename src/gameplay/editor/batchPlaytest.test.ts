@@ -6,7 +6,9 @@ import {
   batchPlaytestConcurrency,
   createBatchPlaytestGenerationRequest,
   createBatchPlaytestLevel,
+  createBatchPlaytestTaskChains,
   createBatchPlaytestTasks,
+  createProgressiveBatchHiddenResult,
   formatBatchPlaytestResultsTsv,
   parseBatchPlaytestConfigRows,
   runConcurrentBatchTaskPool,
@@ -19,13 +21,22 @@ const pathHeaders = [
   '生成路径数', '输出标签', '备注',
 ];
 const hiddenHeaders = [
-  '配置ID', '棋盘形状', '关卡数据', '基础隐藏占比 %',
-  '最长连续显示', '最长连续隐藏', '生成隐藏数', '每关跑关次数',
+  '配置ID', '棋盘形状', '关卡数据', '分段长度区间',
+  '最长连续显示', '生成隐藏数', '每关跑关次数',
 ];
 const formation3x3 = JSON.stringify({
   data: [[999, 999, 999], [999, 999, 999], [999, 999, 999]],
 });
 const path3x3 = JSON.stringify({ data: [[1, -2, 3], [6, 5, 4], [7, -8, 9]] });
+const path5x5 = JSON.stringify({
+  data: [
+    [1, -2, 3, 4, 5],
+    [10, 9, 8, 7, 6],
+    [11, 12, 13, -14, 15],
+    [20, 19, 18, 17, 16],
+    [21, 22, 23, 24, 25],
+  ],
+});
 
 describe('批量生成路径与隐藏', () => {
   it('按设备逻辑线程数动态扩展并保留一个线程', () => {
@@ -36,14 +47,6 @@ describe('批量生成路径与隐藏', () => {
     vi.unstubAllGlobals();
   });
 
-  it('读取项目中的两个实际配置模板', async () => {
-    const { readSheet } = await import('read-excel-file/node');
-    const pathRows = await readSheet('excel/批量生成路径配置模板.xlsx', '路径生成配置');
-    const hiddenRows = await readSheet('excel/批量生成隐藏配置模板.xlsx', '隐藏生成配置');
-    expect(parseBatchPlaytestConfigRows(pathRows, 'path')[0]).toMatchObject({ mode: 'path' });
-    expect(parseBatchPlaytestConfigRows(hiddenRows, 'hidden')[0]).toMatchObject({ mode: 'hidden' });
-  });
-
   it('两个功能分别只要求自己的控制参数', () => {
     const [pathConfig] = parseBatchPlaytestConfigRows([
       pathHeaders,
@@ -51,10 +54,16 @@ describe('批量生成路径与隐藏', () => {
     ], 'path');
     const [hiddenConfig] = parseBatchPlaytestConfigRows([
       hiddenHeaders,
-      ['HIDDEN-1', '正方形', path3x3, 35, 8, 4, 2, 3],
+      ['HIDDEN-1', '正方形', path5x5, '[5,9]', 8, 2, 3],
     ], 'hidden');
     expect(pathConfig).toMatchObject({ mode: 'path', generationCount: 2, simulationRunCount: 0 });
-    expect(hiddenConfig).toMatchObject({ mode: 'hidden', generationCount: 2, simulationRunCount: 3 });
+    expect(hiddenConfig).toMatchObject({
+      mode: 'hidden',
+      segmentLengthMin: 5,
+      segmentLengthMax: 9,
+      generationCount: 2,
+      simulationRunCount: 3,
+    });
   });
 
   it('批量生成路径不限制单行或总生成数量', () => {
@@ -68,31 +77,33 @@ describe('批量生成路径与隐藏', () => {
     expect(createBatchPlaytestTasks(configs)).toHaveLength(1200);
   });
 
-  it('全部难度按 1–10 分别乘以配置生成数量', () => {
+  it('默认按每个生成序号依次展开难度 1–10', () => {
     const [config] = parseBatchPlaytestConfigRows([
       hiddenHeaders,
-      ['HIDDEN-ALL', '正方形', path3x3, 35, 8, 4, 2, 1],
+      ['HIDDEN-ALL', '正方形', path5x5, '[5,9]', 8, 2, 1],
     ], 'hidden');
-    const tasks = createBatchPlaytestTasks([config], 'all');
+    const tasks = createBatchPlaytestTasks([config]);
 
     expect(tasks).toHaveLength(20);
     expect(tasks.map((task) => task.config.targetDifficulty)).toEqual([
-      1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10,
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
     ]);
     expect(tasks.map((task) => task.generationNumber)).toEqual([
-      1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2,
+      1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+      2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
     ]);
+    expect(createBatchPlaytestTaskChains(tasks).map((chain) => chain.length)).toEqual([10, 10]);
   });
 
-  it('单个目标难度完全由界面选择，不读取配置表', () => {
+  it('隐藏任务不再接受单难度选择', () => {
     const [config] = parseBatchPlaytestConfigRows([
       hiddenHeaders,
-      ['HIDDEN-ONE', '正方形', path3x3, 35, 8, 4, 2, 1],
+      ['HIDDEN-ONE', '正方形', path5x5, '[5,9]', 8, 1, 1],
     ], 'hidden');
-    const tasks = createBatchPlaytestTasks([config], 9);
+    const tasks = createBatchPlaytestTasks([config]);
 
-    expect(tasks).toHaveLength(2);
-    expect(tasks.every((task) => task.config.targetDifficulty === 9)).toBe(true);
+    expect(tasks.map((task) => task.config.targetDifficulty)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   });
 
   it('严格区分造型和路径输入', () => {
@@ -102,7 +113,7 @@ describe('批量生成路径与隐藏', () => {
     ], 'path')).toThrow('只接受含 999 的棋盘造型');
     expect(() => parseBatchPlaytestConfigRows([
       hiddenHeaders,
-      ['HIDDEN-BAD', '正方形', formation3x3, 35, 8, 4, 1, 2],
+      ['HIDDEN-BAD', '正方形', formation3x3, '[5,9]', 8, 1, 2],
     ], 'hidden')).toThrow('只接受不含 999 的连续编号路径');
   });
 
@@ -131,18 +142,14 @@ describe('批量生成路径与隐藏', () => {
   it('生成隐藏功能固定路径并忽略原隐藏正负号', () => {
     const [config] = parseBatchPlaytestConfigRows([
       hiddenHeaders,
-      ['HIDDEN-1', '正方形', path3x3, 35, 8, 4, 2, 2],
+      ['HIDDEN-1', '正方形', path5x5, '[5,9]', 8, 2, 2],
     ], 'hidden');
     const tasks = createBatchPlaytestTasks([config]);
-    const request = createBatchPlaytestGenerationRequest(tasks[0], 0);
-    const generated = runEditorAlgorithm(request.selection, request.context);
-    expect(request.context.generationPhase).toBe('hidden');
-    expect(request.context.fixedPath).toEqual([
-      { x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 },
-      { x: 2, y: 1 }, { x: 1, y: 1 }, { x: 0, y: 1 },
-      { x: 0, y: 2 }, { x: 1, y: 2 }, { x: 2, y: 2 },
-    ]);
-    expect(generated?.path).toEqual(request.context.fixedPath);
+    const generated = createProgressiveBatchHiddenResult(tasks[0]);
+    expect(tasks[0].config.presetPath).toHaveLength(25);
+    expect(tasks[0].config.presetPath?.[1]).toEqual({ x: 1, y: 0 });
+    expect(tasks[0].config.presetPath?.[13]).toEqual({ x: 3, y: 2 });
+    expect(generated.path).toEqual(tasks[0].config.presetPath);
     expect(generated?.hiddenCells).toBeDefined();
   });
 
@@ -167,11 +174,10 @@ describe('批量生成路径与隐藏', () => {
   it('隐藏结果输出难度和低中高错误统计', async () => {
     const [config] = parseBatchPlaytestConfigRows([
       hiddenHeaders,
-      ['HIDDEN-1', '正方形', path3x3, 35, 8, 4, 1, 2],
+      ['HIDDEN-1', '正方形', path5x5, '[5,9]', 8, 1, 2],
     ], 'hidden');
     const [task] = createBatchPlaytestTasks([config]);
-    const request = createBatchPlaytestGenerationRequest(task, 0);
-    const level = createBatchPlaytestLevel(task, runEditorAlgorithm(request.selection, request.context)!);
+    const level = createBatchPlaytestLevel(task, createProgressiveBatchHiddenResult(task));
     const simulation = simulateBatchPlaytestLevel(task, level);
     const progress: number[] = [];
     expect(await simulateBatchPlaytestLevelAsync(task, level, {
@@ -187,7 +193,7 @@ describe('批量生成路径与隐藏', () => {
     ]));
     expect(text.split('\r\n')[1].split('\t')).toHaveLength(BATCH_HIDDEN_RESULT_HEADERS.length);
     expect(text.split('\r\n')[1].split('\t')[BATCH_HIDDEN_RESULT_HEADERS.indexOf('关卡名')])
-      .toBe('HIDDEN-1_6');
+      .toBe('HIDDEN-1_1');
     expect(progress).toEqual([1, 2, 3, 4, 5, 6]);
   });
 

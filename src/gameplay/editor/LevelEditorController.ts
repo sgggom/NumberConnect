@@ -56,12 +56,13 @@ import {
   batchPlaytestConcurrency,
   createBatchPlaytestGenerationRequest,
   createBatchPlaytestLevel,
+  createBatchPlaytestTaskChains,
   createBatchPlaytestTasks,
+  createProgressiveBatchHiddenResult,
   formatBatchPlaytestResultsTsv,
   readBatchPlaytestConfigFile,
   runConcurrentBatchTaskPool,
   type BatchPlaytestMode,
-  type BatchHiddenDifficultySelection,
   type BatchPlaytestResult,
 } from './batchPlaytest';
 import {
@@ -2195,13 +2196,8 @@ export class LevelEditorController {
     try {
       const configs = await readBatchPlaytestConfigFile(file, mode);
       if (run !== this.batchPlaytestRun) return;
-      const hiddenDifficultyValue = mode === 'hidden'
-        ? this.query<HTMLSelectElement>('#editor-batch-hidden-difficulty-mode').value
-        : '6';
-      const hiddenDifficultySelection: BatchHiddenDifficultySelection = hiddenDifficultyValue === 'all'
-        ? 'all'
-        : Number(hiddenDifficultyValue);
-      const tasks = createBatchPlaytestTasks(configs, hiddenDifficultySelection);
+      const tasks = createBatchPlaytestTasks(configs);
+      const taskChains = createBatchPlaytestTaskChains(tasks);
       const concurrency = batchPlaytestConcurrency();
       completedResults = new Array(tasks.length);
       this.batchPlaytestProgress.total = tasks.length;
@@ -2210,11 +2206,12 @@ export class LevelEditorController {
       this.renderBatchPlaytestDialog();
       this.setStatus(mode === 'path'
         ? `已读取 ${configs.length} 组路径配置，使用 ${Math.min(concurrency, tasks.length)} 个线程并行生成 ${tasks.length} 条路径。`
-        : `已读取 ${configs.length} 组隐藏配置，${hiddenDifficultySelection === 'all' ? '难度 1–10 全部生成，' : `生成难度 ${hiddenDifficultySelection}，`}使用 ${Math.min(concurrency, tasks.length)} 个线程并行生成 ${tasks.length} 组隐藏，并分别跑低中高三档推理。`);
+        : `已读取 ${configs.length} 组隐藏配置，每条路径按难度 1→10 累进生成并跑低中高三档推理，${Math.min(concurrency, taskChains.length)} 条路径链并行。`);
 
-      const results = await runConcurrentBatchTaskPool(
-        tasks,
-        async (task, taskIndex): Promise<BatchPlaytestResult> => {
+      const executeTask = async (
+        task: (typeof tasks)[number],
+        previousHiddenCells?: ReadonlyArray<EditorCell>,
+      ): Promise<BatchPlaytestResult> => {
           if (run !== this.batchPlaytestRun || abortController.signal.aborted) {
             const error = new Error('批量任务已取消。');
             error.name = 'AbortError';
@@ -2223,6 +2220,14 @@ export class LevelEditorController {
         let generated = null;
         let generationError = '';
         for (let attempt = 0; attempt < BATCH_PLAYTEST_MAX_ATTEMPTS && !generated; attempt += 1) {
+          if (mode === 'hidden') {
+            try {
+              generated = createProgressiveBatchHiddenResult(task, previousHiddenCells, attempt);
+            } catch (error) {
+              generationError = error instanceof Error ? error.message : '累进隐藏生成失败';
+            }
+            continue;
+          }
           const request = createBatchPlaytestGenerationRequest(task, attempt);
           const generationTask = startEditorPathGeneration(request, (progress) => {
             if (run !== this.batchPlaytestRun) return;
@@ -2269,14 +2274,14 @@ export class LevelEditorController {
             task,
             error: generationError || `连续尝试 ${BATCH_PLAYTEST_MAX_ATTEMPTS} 次仍无法生成完整关卡`,
           };
-          completedResults[taskIndex] = failedResult;
+          completedResults[task.taskIndex] = failedResult;
           return failedResult;
         }
         try {
           const level = createBatchPlaytestLevel(task, generated);
           if (mode === 'path') {
             const completedResult = { task, level };
-            completedResults[taskIndex] = completedResult;
+            completedResults[task.taskIndex] = completedResult;
             return completedResult;
           }
           const simulationTask = startBatchPlaytestSimulation(
@@ -2295,32 +2300,67 @@ export class LevelEditorController {
             this.batchSimulationTasks.delete(simulationTask);
           }
           const completedResult = { task, level, simulation };
-          completedResults[taskIndex] = completedResult;
+          completedResults[task.taskIndex] = completedResult;
           return completedResult;
         } catch (error) {
           const failedResult: BatchPlaytestResult = {
             task,
             error: error instanceof Error ? error.message : '跑关模拟失败',
           };
-          completedResults[taskIndex] = failedResult;
+          completedResults[task.taskIndex] = failedResult;
           return failedResult;
         }
+      };
+
+      const reportProgress = (): void => {
+        this.renderBatchPlaytestButton();
+        this.renderBatchPlaytestDialog();
+        const progress = this.batchPlaytestProgress;
+        this.setStatus(
+          `${mode === 'path' ? '批量生成路径' : '批量生成隐藏'}：完成 ${progress.completed}/${progress.total}，运行 ${progress.running}，失败 ${progress.failed}。`,
+        );
+      };
+      const resultsByChain = await runConcurrentBatchTaskPool(
+        taskChains,
+        async (chain): Promise<BatchPlaytestResult[]> => {
+          const chainResults: BatchPlaytestResult[] = [];
+          let previousHiddenCells: ReadonlyArray<EditorCell> | undefined;
+          let chainError = '';
+          for (const task of chain) {
+            if (run !== this.batchPlaytestRun || abortController.signal.aborted) {
+              const error = new Error('批量任务已取消。');
+              error.name = 'AbortError';
+              throw error;
+            }
+            this.batchPlaytestProgress.running += 1;
+            reportProgress();
+            let result: BatchPlaytestResult;
+            if (chainError) {
+              result = { task, error: `前一难度失败：${chainError}` };
+              completedResults[task.taskIndex] = result;
+            } else {
+              result = await executeTask(task, previousHiddenCells);
+              if (result.level) previousHiddenCells = result.level.hiddenCells;
+              else chainError = result.error ?? '隐藏生成失败';
+            }
+            chainResults.push(result);
+            this.batchPlaytestProgress.running -= 1;
+            this.batchPlaytestProgress.completed += 1;
+            if (!result.level || (mode === 'hidden' && !result.simulation)) {
+              this.batchPlaytestProgress.failed += 1;
+            }
+            reportProgress();
+          }
+          return chainResults;
         },
         {
-          concurrency,
+          concurrency: Math.min(concurrency, taskChains.length),
           signal: abortController.signal,
-          isFailure: ({ level, simulation }) => !level || (mode === 'hidden' && !simulation),
-          onProgress: (progress) => {
-            if (run !== this.batchPlaytestRun) return;
-            this.batchPlaytestProgress = progress;
-            this.renderBatchPlaytestButton();
-            this.renderBatchPlaytestDialog();
-            this.setStatus(
-              `${mode === 'path' ? '批量生成路径' : '批量生成隐藏'}：完成 ${progress.completed}/${progress.total}，运行 ${progress.running}，失败 ${progress.failed}。`,
-            );
-          },
         },
       );
+      const results = resultsByChain.flat().sort((left, right) => (
+        left.task.taskIndex - right.task.taskIndex
+      ));
 
       if (run !== this.batchPlaytestRun) return;
       const succeeded = results.filter(({ level, simulation }) => (
@@ -2426,7 +2466,6 @@ export class LevelEditorController {
   private renderBatchPlaytestButton(): void {
     const pathButton = this.query<HTMLButtonElement>('#editor-batch-generate-path');
     const hiddenButton = this.query<HTMLButtonElement>('#editor-batch-generate-hidden');
-    const hiddenDifficultyMode = this.query<HTMLSelectElement>('#editor-batch-hidden-difficulty-mode');
     const headerCheckbox = this.query<HTMLInputElement>('#editor-batch-playtest-header');
     const { completed, running, failed, total } = this.batchPlaytestProgress;
     const busy = this.isPathCalculating || this.isPathAnimating || this.isImageRecognizing;
@@ -2436,10 +2475,9 @@ export class LevelEditorController {
       button.setAttribute('aria-busy', String(this.isBatchPlaytestRunning && mode === this.batchPlaytestMode));
       button.textContent = this.isBatchPlaytestRunning && mode === this.batchPlaytestMode
         ? `${this.isBatchPlaytestCancelling ? '正在中止' : '中止'} · ${completed}/${total || '…'} · ${running} 运行${failed > 0 ? ` · ${failed} 失败` : ''}`
-        : mode === 'path' ? '批量生成路径' : '批量生成隐藏';
+        : mode === 'path' ? '批量生成路径' : '批量生成隐藏 1–10';
     }
     headerCheckbox.disabled = this.isBatchPlaytestRunning;
-    hiddenDifficultyMode.disabled = this.isBatchPlaytestRunning;
     this.host.querySelectorAll<HTMLButtonElement>('.editor-level-actions .button:not(.editor-batch-playtest)')
       .forEach((action) => {
         if (this.isBatchPlaytestRunning) action.disabled = true;

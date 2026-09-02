@@ -67,6 +67,8 @@ const task: BatchPlaytestTask = {
     targetCrossings: 0,
     turnProbability: 40,
     hiddenPercent: 30,
+    segmentLengthMin: 5,
+    segmentLengthMax: 9,
     targetDifficulty: 5,
     maxVisibleRun: 4,
     maxHiddenRun: 2,

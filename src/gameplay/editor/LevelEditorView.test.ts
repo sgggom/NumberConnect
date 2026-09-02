@@ -71,11 +71,8 @@ describe('level editor view layout', () => {
 
     expect(markup).toContain('id="editor-batch-generate-path"');
     expect(markup).toContain('id="editor-batch-generate-hidden"');
-    expect(markup).toContain('id="editor-batch-hidden-difficulty-mode"');
-    expect(markup).toContain('<option value="1">难度 1</option>');
-    expect(markup).toContain('<option value="6" selected>难度 6</option>');
-    expect(markup).toContain('<option value="10">难度 10</option>');
-    expect(markup).toContain('<option value="all">全部难度 1–10</option>');
+    expect(markup).toContain('>批量生成隐藏 1–10</button>');
+    expect(markup).not.toContain('id="editor-batch-hidden-difficulty-mode"');
     expect(markup).toContain('id="editor-batch-playtest-header" type="checkbox"');
     expect(markup).not.toContain('id="editor-batch-playtest-header" type="checkbox" checked');
     expect(markup).toContain('id="editor-batch-playtest-dialog"');
