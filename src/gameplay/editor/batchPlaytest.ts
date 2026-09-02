@@ -76,8 +76,6 @@ export const BATCH_HIDDEN_RESULT_HEADERS = [
 
 export const BATCH_PLAYTEST_RESULT_HEADERS = BATCH_HIDDEN_RESULT_HEADERS;
 
-export const MAX_BATCH_PLAYTEST_LEVELS = 500;
-export const MAX_BATCH_PLAYTEST_SIMULATIONS = 10_000;
 export const MAX_BATCH_HIDDEN_LEVELS = 200_000;
 export const MAX_BATCH_HIDDEN_SIMULATIONS = 5_000_000;
 export const BATCH_PLAYTEST_ATTEMPT_TIMEOUT_MS = 60_000;
@@ -212,6 +210,18 @@ const integerCell = (
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
     throw new Error(`第 ${sourceRow} 行“${header}”必须是 ${minimum}–${maximum} 的整数。`);
+  }
+  return parsed;
+};
+
+const positiveIntegerCell = (
+  value: unknown,
+  sourceRow: number,
+  header: string,
+): number => {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    throw new Error(`第 ${sourceRow} 行“${header}”必须是正整数。`);
   }
   return parsed;
 };
@@ -414,13 +424,9 @@ export const parseBatchPlaytestConfigRows = (
       maxHiddenRun: mode === 'hidden'
         ? integerCell(row[indexOf('最长连续隐藏')], sourceRow, '最长连续隐藏', 1, 99)
         : 99,
-      generationCount: integerCell(
-        row[indexOf(mode === 'path' ? '生成路径数' : '生成隐藏数')],
-        sourceRow,
-        mode === 'path' ? '生成路径数' : '生成隐藏数',
-        1,
-        100,
-      ),
+      generationCount: mode === 'path'
+        ? positiveIntegerCell(row[indexOf('生成路径数')], sourceRow, '生成路径数')
+        : integerCell(row[indexOf('生成隐藏数')], sourceRow, '生成隐藏数', 1, 100),
       simulationRunCount: mode === 'hidden'
         ? integerCell(row[indexOf('每关跑关次数')], sourceRow, '每关跑关次数', 1, 100)
         : 0,
@@ -440,15 +446,11 @@ export const parseBatchPlaytestConfigRows = (
     (sum, config) => sum + config.generationCount * config.simulationRunCount * 3,
     0,
   ) : 0;
-  const maximumLevels = mode === 'hidden' ? MAX_BATCH_HIDDEN_LEVELS : MAX_BATCH_PLAYTEST_LEVELS;
-  const maximumSimulations = mode === 'hidden'
-    ? MAX_BATCH_HIDDEN_SIMULATIONS
-    : MAX_BATCH_PLAYTEST_SIMULATIONS;
-  if (totalLevels > maximumLevels) {
-    throw new Error(`一次最多生成 ${maximumLevels} 关，当前配置为 ${totalLevels} 关。`);
+  if (mode === 'hidden' && totalLevels > MAX_BATCH_HIDDEN_LEVELS) {
+    throw new Error(`一次最多生成 ${MAX_BATCH_HIDDEN_LEVELS} 关，当前配置为 ${totalLevels} 关。`);
   }
-  if (totalSimulations > maximumSimulations) {
-    throw new Error(`一次最多执行 ${maximumSimulations} 次模拟，当前配置为 ${totalSimulations} 次。`);
+  if (totalSimulations > MAX_BATCH_HIDDEN_SIMULATIONS) {
+    throw new Error(`一次最多执行 ${MAX_BATCH_HIDDEN_SIMULATIONS} 次模拟，当前配置为 ${totalSimulations} 次。`);
   }
   return configs;
 };

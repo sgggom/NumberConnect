@@ -57,6 +57,17 @@ describe('批量生成路径与隐藏', () => {
     expect(hiddenConfig).toMatchObject({ mode: 'hidden', generationCount: 2, simulationRunCount: 3 });
   });
 
+  it('批量生成路径不限制单行或总生成数量', () => {
+    const configs = parseBatchPlaytestConfigRows([
+      pathHeaders,
+      ['PATH-MANY-1', '是', '正方形', formation3x3, 2, 40, 600, '路径', ''],
+      ['PATH-MANY-2', '是', '正方形', formation3x3, 2, 40, 600, '路径', ''],
+    ], 'path');
+
+    expect(configs.map(({ generationCount }) => generationCount)).toEqual([600, 600]);
+    expect(createBatchPlaytestTasks(configs)).toHaveLength(1200);
+  });
+
   it('全部难度按 1–10 分别乘以配置生成数量', () => {
     const [config] = parseBatchPlaytestConfigRows([
       hiddenHeaders,
