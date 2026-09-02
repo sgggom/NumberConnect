@@ -128,4 +128,21 @@ describe('batch simulation worker pool', () => {
     await expect(second.promise).resolves.toEqual(simulation);
     expect(FakeBatchSimulationWorker.instances[0].terminated).toBe(true);
   });
+
+  it('fills all available worker slots when ten difficulty simulations are queued together', async () => {
+    vi.stubGlobal('Worker', FakeBatchSimulationWorker);
+    vi.stubGlobal('navigator', { hardwareConcurrency: 6 });
+
+    const jobs = Array.from({ length: 10 }, () => (
+      startBatchPlaytestSimulation(task, level, () => undefined).promise
+    ));
+
+    expect(FakeBatchSimulationWorker.instances).toHaveLength(5);
+    await expect(Promise.all(jobs)).resolves.toHaveLength(10);
+    expect(FakeBatchSimulationWorker.instances).toHaveLength(5);
+    expect(FakeBatchSimulationWorker.instances.reduce(
+      (sum, worker) => sum + worker.requests.length,
+      0,
+    )).toBe(10);
+  });
 });

@@ -2206,17 +2206,17 @@ export class LevelEditorController {
       this.renderBatchPlaytestDialog();
       this.setStatus(mode === 'path'
         ? `已读取 ${configs.length} 组路径配置，使用 ${Math.min(concurrency, tasks.length)} 个线程并行生成 ${tasks.length} 条路径。`
-        : `已读取 ${configs.length} 组隐藏配置，每条路径按难度 1→10 累进生成并跑低中高三档推理，${Math.min(concurrency, taskChains.length)} 条路径链并行。`);
+        : `已读取 ${configs.length} 组隐藏配置，每条路径按难度 1→10 累进生成，生成后使用最多 ${Math.min(concurrency, tasks.length)} 个线程并行跑关。`);
 
-      const executeTask = async (
+      const generateTask = async (
         task: (typeof tasks)[number],
         previousHiddenCells?: ReadonlyArray<EditorCell>,
       ): Promise<BatchPlaytestResult> => {
-          if (run !== this.batchPlaytestRun || abortController.signal.aborted) {
-            const error = new Error('批量任务已取消。');
-            error.name = 'AbortError';
-            throw error;
-          }
+        if (run !== this.batchPlaytestRun || abortController.signal.aborted) {
+          const error = new Error('批量任务已取消。');
+          error.name = 'AbortError';
+          throw error;
+        }
         let generated = null;
         let generationError = '';
         for (let attempt = 0; attempt < BATCH_PLAYTEST_MAX_ATTEMPTS && !generated; attempt += 1) {
@@ -2279,11 +2279,25 @@ export class LevelEditorController {
         }
         try {
           const level = createBatchPlaytestLevel(task, generated);
-          if (mode === 'path') {
-            const completedResult = { task, level };
-            completedResults[task.taskIndex] = completedResult;
-            return completedResult;
-          }
+          const completedResult = { task, level };
+          completedResults[task.taskIndex] = completedResult;
+          return completedResult;
+        } catch (error) {
+          const failedResult: BatchPlaytestResult = {
+            task,
+            error: error instanceof Error ? error.message : '关卡生成失败',
+          };
+          completedResults[task.taskIndex] = failedResult;
+          return failedResult;
+        }
+      };
+
+      const simulateTask = async (
+        generatedResult: BatchPlaytestResult,
+      ): Promise<BatchPlaytestResult> => {
+        const { task, level } = generatedResult;
+        if (!level) return generatedResult;
+        try {
           const simulationTask = startBatchPlaytestSimulation(
             task,
             level,
@@ -2323,7 +2337,19 @@ export class LevelEditorController {
       const resultsByChain = await runConcurrentBatchTaskPool(
         taskChains,
         async (chain): Promise<BatchPlaytestResult[]> => {
-          const chainResults: BatchPlaytestResult[] = [];
+          if (mode === 'path') {
+            const task = chain[0];
+            this.batchPlaytestProgress.running += 1;
+            reportProgress();
+            const result = await generateTask(task);
+            this.batchPlaytestProgress.running -= 1;
+            this.batchPlaytestProgress.completed += 1;
+            if (!result.level) this.batchPlaytestProgress.failed += 1;
+            reportProgress();
+            return [result];
+          }
+
+          const generatedResults: BatchPlaytestResult[] = [];
           let previousHiddenCells: ReadonlyArray<EditorCell> | undefined;
           let chainError = '';
           for (const task of chain) {
@@ -2332,26 +2358,36 @@ export class LevelEditorController {
               error.name = 'AbortError';
               throw error;
             }
-            this.batchPlaytestProgress.running += 1;
-            reportProgress();
             let result: BatchPlaytestResult;
             if (chainError) {
               result = { task, error: `前一难度失败：${chainError}` };
               completedResults[task.taskIndex] = result;
             } else {
-              result = await executeTask(task, previousHiddenCells);
+              this.batchPlaytestDetail = `${task.config.id} 第 ${task.generationNumber} 组：正在累进生成难度 ${task.config.targetDifficulty}/10…`;
+              this.renderBatchPlaytestDialog();
+              result = await generateTask(task, previousHiddenCells);
               if (result.level) previousHiddenCells = result.level.hiddenCells;
               else chainError = result.error ?? '隐藏生成失败';
             }
-            chainResults.push(result);
+            generatedResults.push(result);
+          }
+
+          return Promise.all(generatedResults.map(async (generatedResult) => {
+            if (!generatedResult.level) {
+              this.batchPlaytestProgress.completed += 1;
+              this.batchPlaytestProgress.failed += 1;
+              reportProgress();
+              return generatedResult;
+            }
+            this.batchPlaytestProgress.running += 1;
+            reportProgress();
+            const result = await simulateTask(generatedResult);
             this.batchPlaytestProgress.running -= 1;
             this.batchPlaytestProgress.completed += 1;
-            if (!result.level || (mode === 'hidden' && !result.simulation)) {
-              this.batchPlaytestProgress.failed += 1;
-            }
+            if (!result.simulation) this.batchPlaytestProgress.failed += 1;
             reportProgress();
-          }
-          return chainResults;
+            return result;
+          }));
         },
         {
           concurrency: Math.min(concurrency, taskChains.length),
