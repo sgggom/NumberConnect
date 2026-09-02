@@ -107,11 +107,19 @@ import { loadMode5Workbook } from './gameplay/mode5/mode5Workbook';
 import {
   loadThreeModeLevelConfiguration,
   loadThreeModeLevelLibrary,
+  parseFormationId,
   resolveThreeModeStage,
   validateThreeModeConfigurationLibrary,
   type ThreeModeConfiguredLevel,
   type ThreeModeLevelLibrary,
 } from './gameplay/adaptive/threeModeLevelData';
+import {
+  startDynamicHiddenGeneration,
+  type DynamicHiddenGenerationTask,
+} from './gameplay/adaptive/dynamicHidden/dynamicHiddenWorker';
+import type {
+  DynamicTargetTierCounts,
+} from './gameplay/adaptive/dynamicHidden/dynamicHiddenProfiles';
 
 const UI_DESIGN_WIDTH = 750;
 const UI_DESIGN_HEIGHT = 1334;
@@ -277,6 +285,13 @@ const roundedRoutePath = (points: RoutePoint[], radius = 20): string => {
 
 type ResultContext = 'normal' | 'collection' | 'daily' | 'endless-stage' | 'life-depleted' | 'editor-playtest';
 type PlayContext = 'normal' | 'collection' | 'daily' | 'editor-playtest' | 'bead';
+type LevelDebugHiddenGenerationRequest = {
+  mode: 'difficulty';
+  targetDifficulty: number;
+} | {
+  mode: 'tier-counts';
+  targetTierCounts: DynamicTargetTierCounts;
+};
 
 interface PuzzleStageExperience {
   stage: number;
@@ -377,11 +392,19 @@ class NumberConnectApp {
   private readonly levelDebugErrorHistoryList = query<HTMLOListElement>('#level-debug-error-history-list');
   private readonly levelDebugLevelInput = query<HTMLInputElement>('#level-debug-level-input');
   private readonly levelDebugStageSelect = query<HTMLSelectElement>('#level-debug-stage-select');
+  private readonly levelDebugLoadButton = query<HTMLButtonElement>('#level-debug-load-button');
   private readonly levelDebugPreviousStage = query<HTMLButtonElement>('#level-debug-previous-stage');
   private readonly levelDebugNextStage = query<HTMLButtonElement>('#level-debug-next-stage');
   private readonly levelDebugReloadStage = query<HTMLButtonElement>('#level-debug-reload-stage');
   private readonly levelDebugQuickComplete = query<HTMLButtonElement>('#level-debug-quick-complete');
   private readonly levelDebugMessage = query<HTMLElement>('#level-debug-message');
+  private readonly levelDebugHiddenDifficulty = query<HTMLSelectElement>('#level-debug-hidden-difficulty');
+  private readonly levelDebugTier0Count = query<HTMLInputElement>('#level-debug-tier-0-count');
+  private readonly levelDebugTier1Count = query<HTMLInputElement>('#level-debug-tier-1-count');
+  private readonly levelDebugTier2Count = query<HTMLInputElement>('#level-debug-tier-2-count');
+  private readonly levelDebugGenerateDifficulty = query<HTMLButtonElement>('#level-debug-generate-difficulty');
+  private readonly levelDebugGenerateTierCounts = query<HTMLButtonElement>('#level-debug-generate-tier-counts');
+  private readonly levelDebugHiddenMessage = query<HTMLElement>('#level-debug-hidden-message');
   private readonly screenRouter = new ScreenRouter();
   private readonly primaryActionButton = query<HTMLButtonElement>('#primary-action-button');
   private readonly primaryActionLabel = query<HTMLElement>('#primary-action-label');
@@ -530,6 +553,9 @@ class NumberConnectApp {
   private levelDebugExperienceStartedAt?: number;
   private levelDebugStageExperiences: PuzzleStageExperience[] = [];
   private levelDebugActiveStageExperience?: ActivePuzzleStageExperience;
+  private pendingLevelDebugHiddenTask?: DynamicHiddenGenerationTask;
+  private levelDebugHiddenGenerationToken = 0;
+  private levelDebugHiddenGenerationIndex = 0;
   private endlessSeed = initialEndlessRunState.seed;
   private endlessSessionActive = initialEndlessRunState.active;
   private endlessLives = initialEndlessRunState.lives;
@@ -538,6 +564,8 @@ class NumberConnectApp {
   private primaryActionTransition?: Animation;
   private primaryActionTransitionToken = 0;
   private currentLevel?: LevelData;
+  private pendingDynamicHiddenTask?: DynamicHiddenGenerationTask;
+  private normalBoardRequestToken = 0;
   private currentProgress = 0;
   private currentTotal = 0;
   private settingsContext: 'lobby' | 'play' = 'lobby';
@@ -815,25 +843,40 @@ class NumberConnectApp {
       const levelId = Number(this.levelDebugLevelInput.value);
       this.populateLevelDebugStages(levelId, 1);
     });
-    query<HTMLButtonElement>('#level-debug-load-button').addEventListener('click', () => {
-      this.loadLevelDebugSelection(
+    this.levelDebugLoadButton.addEventListener('click', () => {
+      void this.loadLevelDebugSelection(
         Number(this.levelDebugLevelInput.value),
         Number(this.levelDebugStageSelect.value),
       );
     });
     this.levelDebugPreviousStage.addEventListener('click', () => {
-      this.loadLevelDebugSelection(this.settings.puzzleMainLevelId, this.currentAdaptiveStage - 1);
+      void this.loadLevelDebugSelection(this.settings.puzzleMainLevelId, this.currentAdaptiveStage - 1);
     });
     this.levelDebugNextStage.addEventListener('click', () => {
-      this.loadLevelDebugSelection(this.settings.puzzleMainLevelId, this.currentAdaptiveStage + 1);
+      void this.loadLevelDebugSelection(this.settings.puzzleMainLevelId, this.currentAdaptiveStage + 1);
     });
     this.levelDebugReloadStage.addEventListener('click', () => {
-      this.loadLevelDebugSelection(this.settings.puzzleMainLevelId, this.currentAdaptiveStage);
+      void this.loadLevelDebugSelection(this.settings.puzzleMainLevelId, this.currentAdaptiveStage);
     });
     this.levelDebugQuickComplete.addEventListener('click', () => {
       if (!this.canUseLevelDebugControls()) return;
       this.setLevelDebugMessage('正在快速完成当前棋盘。');
       this.boardScene.quickComplete();
+    });
+    this.levelDebugGenerateDifficulty.addEventListener('click', () => {
+      const targetDifficulty = Number(this.levelDebugHiddenDifficulty.value);
+      void this.generateLevelDebugHiddenLayout({ mode: 'difficulty', targetDifficulty });
+    });
+    this.levelDebugGenerateTierCounts.addEventListener('click', () => {
+      const inputValue = (input: HTMLInputElement): number => (
+        input.value.trim() === '' ? Number.NaN : Number(input.value)
+      );
+      const targetTierCounts = [
+        inputValue(this.levelDebugTier0Count),
+        inputValue(this.levelDebugTier1Count),
+        inputValue(this.levelDebugTier2Count),
+      ] as const;
+      void this.generateLevelDebugHiddenLayout({ mode: 'tier-counts', targetTierCounts });
     });
   }
 
@@ -868,7 +911,167 @@ class NumberConnectApp {
     this.levelDebugMessage.classList.toggle('is-error', error);
   }
 
-  private loadLevelDebugSelection(levelId: number, requestedStage: number): void {
+  private setLevelDebugHiddenMessage(message: string, error = false): void {
+    this.levelDebugHiddenMessage.textContent = message;
+    this.levelDebugHiddenMessage.classList.toggle('is-error', error);
+  }
+
+  private maximumLevelDebugHiddenCount(pathLength: number): number {
+    const availableCount = Math.max(0, Math.floor(pathLength) - 2);
+    const firstWindowCandidateCount = Math.max(0, Math.min(availableCount, 3));
+    return availableCount
+      - firstWindowCandidateCount
+      + Math.min(1, firstWindowCandidateCount);
+  }
+
+  private cancelPendingLevelDebugHiddenGeneration(): void {
+    this.levelDebugHiddenGenerationToken += 1;
+    this.pendingLevelDebugHiddenTask?.cancel();
+    this.pendingLevelDebugHiddenTask = undefined;
+  }
+
+  private async generateLevelDebugHiddenLayout(
+    request: LevelDebugHiddenGenerationRequest,
+  ): Promise<void> {
+    if (!this.canUseLevelDebugControls() || !this.currentLevel) {
+      this.setLevelDebugHiddenMessage('仅当前普通拼图关卡可使用难度调试。', true);
+      return;
+    }
+
+    if (
+      request.mode === 'difficulty'
+      && (
+        !Number.isInteger(request.targetDifficulty)
+        || request.targetDifficulty < 1
+        || request.targetDifficulty > 10
+      )
+    ) {
+      this.setLevelDebugHiddenMessage('难度必须是 1–10 的整数。', true);
+      return;
+    }
+    if (
+      request.mode === 'tier-counts'
+      && request.targetTierCounts.some((count) => !Number.isInteger(count) || count < 0)
+    ) {
+      this.setLevelDebugHiddenMessage('难度 0 / 1 / 2 的数量必须是非负整数。', true);
+      return;
+    }
+
+    const sourceLevel = this.currentLevel;
+    const targetHiddenCount = request.mode === 'tier-counts'
+      ? request.targetTierCounts.reduce((sum, count) => sum + count, 0)
+      : undefined;
+    const maximumHiddenCount = this.maximumLevelDebugHiddenCount(
+      sourceLevel.solutionPath.length,
+    );
+    if (targetHiddenCount !== undefined && targetHiddenCount > maximumHiddenCount) {
+      this.setLevelDebugHiddenMessage(
+        `当前路径在“前 4 个最多隐藏 1 个”约束下最多可隐藏 ${maximumHiddenCount} 个，棋盘未修改。`,
+        true,
+      );
+      return;
+    }
+
+    this.normalBoardRequestToken += 1;
+    this.pendingDynamicHiddenTask?.cancel();
+    this.pendingDynamicHiddenTask = undefined;
+    this.cancelPendingLevelDebugHiddenGeneration();
+    const requestToken = ++this.levelDebugHiddenGenerationToken;
+    const generationIndex = ++this.levelDebugHiddenGenerationIndex;
+    const targetDifficulty = request.mode === 'difficulty' ? request.targetDifficulty : 5;
+    const requestSalt = request.mode === 'difficulty'
+      ? Math.imul(request.targetDifficulty + 1, 2654435761)
+      : Math.imul(request.targetTierCounts[0] + 1, 73856093)
+        ^ Math.imul(request.targetTierCounts[1] + 1, 19349663)
+        ^ Math.imul(request.targetTierCounts[2] + 1, 83492791);
+    const seed = (
+      this.dynamicHiddenSeed(sourceLevel, targetDifficulty)
+      ^ Math.imul(generationIndex, 1597334677)
+      ^ requestSalt
+    ) | 0;
+
+    this.boardScene.setPaused(true);
+    this.setLevelDebugHiddenMessage(
+      request.mode === 'difficulty'
+        ? `正在按难度 ${request.targetDifficulty} 生成隐藏位置…`
+        : `正在搜索精确数量 ${request.targetTierCounts.join(' / ')}…`,
+    );
+    const task = startDynamicHiddenGeneration({
+      path: sourceLevel.solutionPath.map((cell) => ({ ...cell })),
+      boardShape: sourceLevel.boardShape,
+      targetDifficulty,
+      seed,
+      safetyMode: 'hard-boundaries',
+      targetTierCounts: request.mode === 'tier-counts'
+        ? [...request.targetTierCounts]
+        : undefined,
+    }, request.mode === 'tier-counts' ? 8000 : 3000);
+    this.pendingLevelDebugHiddenTask = task;
+    this.renderLevelDebugPanel();
+
+    try {
+      const result = await task.promise;
+      if (
+        requestToken !== this.levelDebugHiddenGenerationToken
+        || this.currentLevel !== sourceLevel
+      ) return;
+
+      const actualTierCounts = result.report.actualTierCounts.slice(0, 3);
+      const actualSummary = actualTierCounts.join(' / ');
+      if (!result.report.accepted) {
+        const message = request.mode === 'tier-counts'
+          ? result.report.withinTargetTolerance && result.report.actualTierCounts[3] === 0
+            ? `数量已命中（实际 ${actualSummary}），但布局未通过硬约束，棋盘未修改。`
+            : `未找到精确布局，棋盘未修改。目标 ${request.targetTierCounts.join(' / ')}，最接近 ${actualSummary}${result.report.actualTierCounts[3] > 0 ? `，另有 ${result.report.actualTierCounts[3]} 个 3 分` : ''}。`
+          : `难度 ${request.targetDifficulty} 的候选布局未通过安全验收，棋盘未修改。实际 0 / 1 / 2：${actualSummary}。`;
+        this.setLevelDebugHiddenMessage(message, true);
+        return;
+      }
+
+      const resolvedLevel: LevelData = {
+        ...sourceLevel,
+        hiddenCells: result.hiddenIndices.map((index) => ({
+          ...sourceLevel.solutionPath[index],
+        })),
+        algorithm: {
+          id: result.report.algorithmVersion,
+          parameters: {
+            debugMode: request.mode,
+            seed,
+            requestedDifficulty: request.mode === 'difficulty'
+              ? request.targetDifficulty
+              : undefined,
+            targetHiddenCount: result.report.targetHiddenCount,
+            targetTierCounts: [...result.report.targetTierCounts],
+            actualTierCounts: [...result.report.actualTierCounts],
+            evaluatedCandidateCount: result.report.evaluatedCandidateCount,
+            tierDistance: result.report.tierDistance,
+          },
+        },
+      };
+      this.setCurrentBoard(resolvedLevel);
+      this.setLevelDebugHiddenMessage(
+        request.mode === 'difficulty'
+          ? `已按难度 ${request.targetDifficulty} 生成 ${result.hiddenIndices.length} 个隐藏数字；实际 0 / 1 / 2：${actualSummary}。`
+          : `已精确生成 ${result.hiddenIndices.length} 个隐藏数字；实际 0 / 1 / 2：${actualSummary}。`,
+      );
+    } catch (error) {
+      if (requestToken !== this.levelDebugHiddenGenerationToken) return;
+      if (error instanceof Error && error.name === 'AbortError') return;
+      const message = error instanceof Error ? error.message : '未知错误';
+      this.setLevelDebugHiddenMessage(`隐藏位置生成失败，棋盘未修改：${message}`, true);
+    } finally {
+      if (this.pendingLevelDebugHiddenTask === task) {
+        this.pendingLevelDebugHiddenTask = undefined;
+      }
+      if (requestToken === this.levelDebugHiddenGenerationToken) {
+        if (this.currentScreen === 'play') this.boardScene.setPaused(false);
+        this.renderLevelDebugPanel();
+      }
+    }
+  }
+
+  private async loadLevelDebugSelection(levelId: number, requestedStage: number): Promise<void> {
     if (!this.canUseLevelDebugControls()) {
       this.setLevelDebugMessage('仅普通拼图关卡可使用调试跳转。', true);
       return;
@@ -901,13 +1104,14 @@ class NumberConnectApp {
     this.renderLives();
     this.boardScene.setPaused(false);
     this.resetLevelDebugExperience(levelId);
-    this.setCurrentBoard(this.createNormalLevel());
+    await this.setPreparedNormalBoard();
     this.renderDefaultLobbyLevelNumber();
     this.setLevelDebugMessage(`已加载 Level ${levelId}-${stage}。`);
   }
 
   private renderLevelDebugPanel(level = this.currentLevel): void {
     const enabled = this.canUseLevelDebugControls();
+    const hiddenGenerationBusy = this.pendingLevelDebugHiddenTask !== undefined;
     const levelId = this.settings.puzzleMainLevelId;
     const configuredLevel = this.threeModeCampaign.find((item) => item.id === levelId);
     const totalStages = configuredLevel?.stages.length ?? 0;
@@ -915,7 +1119,11 @@ class NumberConnectApp {
     const configuredFormation = configuredLevel?.stages[stage - 1]?.formationId;
     const difficultyMatch = configuredFormation?.match(/_(10|[1-9])$/);
 
-    this.levelDebugStatus.textContent = enabled ? '运行中' : '等待普通关卡';
+    this.levelDebugStatus.textContent = hiddenGenerationBusy
+      ? '生成隐藏中'
+      : enabled
+        ? '运行中'
+        : '等待普通关卡';
     this.levelDebugLevelBadge.textContent = configuredLevel ? `Level ${levelId}` : 'Level —';
     this.levelDebugStage.textContent = configuredLevel ? `${stage} / ${totalStages}` : '—';
     this.levelDebugFormation.textContent = level?.formationId === undefined
@@ -936,10 +1144,23 @@ class NumberConnectApp {
       this.levelDebugLevelInput.value = String(levelId);
     }
     this.populateLevelDebugStages(levelId, stage);
-    this.levelDebugPreviousStage.disabled = !enabled || stage <= 1;
-    this.levelDebugNextStage.disabled = !enabled || stage >= totalStages;
-    this.levelDebugReloadStage.disabled = !enabled;
-    this.levelDebugQuickComplete.disabled = !enabled;
+    this.levelDebugLoadButton.disabled = !enabled || hiddenGenerationBusy;
+    this.levelDebugPreviousStage.disabled = !enabled || hiddenGenerationBusy || stage <= 1;
+    this.levelDebugNextStage.disabled = !enabled || hiddenGenerationBusy || stage >= totalStages;
+    this.levelDebugReloadStage.disabled = !enabled || hiddenGenerationBusy;
+    this.levelDebugQuickComplete.disabled = !enabled || hiddenGenerationBusy;
+    const hiddenControlsDisabled = !enabled || !level || hiddenGenerationBusy;
+    this.levelDebugHiddenDifficulty.disabled = hiddenControlsDisabled;
+    this.levelDebugGenerateDifficulty.disabled = hiddenControlsDisabled;
+    this.levelDebugGenerateTierCounts.disabled = hiddenControlsDisabled;
+    const maximumHiddenCount = level
+      ? this.maximumLevelDebugHiddenCount(level.solutionPath.length)
+      : 0;
+    [this.levelDebugTier0Count, this.levelDebugTier1Count, this.levelDebugTier2Count]
+      .forEach((input) => {
+        input.disabled = hiddenControlsDisabled;
+        input.max = String(maximumHiddenCount);
+      });
     this.renderLevelDebugExperience();
   }
 
@@ -2319,7 +2540,7 @@ class NumberConnectApp {
     this.levelPickerDialog.showModal();
   }
 
-  private selectLevelFromPicker(levelId: number): void {
+  private async selectLevelFromPicker(levelId: number): Promise<void> {
     const configuredLevel = this.threeModeCampaign.find((level) => level.id === levelId);
     if (!configuredLevel) return;
     const pattern = this.playPuzzlePatternForLevel(levelId);
@@ -2334,7 +2555,7 @@ class NumberConnectApp {
     }
     saveSettings(this.settings);
     this.renderDefaultLobbyLevelNumber();
-    if (changed) this.setCurrentBoard(this.createNormalLevel());
+    if (changed) await this.setPreparedNormalBoard();
     this.levelPickerDialog.close();
   }
 
@@ -2359,7 +2580,7 @@ class NumberConnectApp {
     this.renderLives();
     await this.showPlayScreen();
     this.resetLevelDebugExperience(this.settings.puzzleMainLevelId);
-    this.setCurrentBoard(this.createNormalLevel());
+    await this.setPreparedNormalBoard();
   }
 
   private async startEndlessMode(): Promise<void> {
@@ -2443,6 +2664,102 @@ class NumberConnectApp {
       stage,
       runtimeLevelId: configuredLevel.id,
     }).level;
+  }
+
+  private dynamicDifficultyForLevel(level: LevelData): number | undefined {
+    if (typeof level.formationId !== 'string' || level.formationId.startsWith('guide_')) {
+      return undefined;
+    }
+    try {
+      return parseFormationId(level.formationId).difficulty;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private dynamicHiddenSeed(level: LevelData, difficulty: number): number {
+    let pathHash = 0x811c9dc5;
+    level.solutionPath.forEach((cell, index) => {
+      const cellValue = Math.imul(cell.x + 1, 73856093)
+        ^ Math.imul(cell.y + 1, 19349663)
+        ^ Math.imul(index + 1, 83492791);
+      pathHash = Math.imul(pathHash ^ cellValue, 16777619);
+    });
+    return (
+      pathHash
+      ^ Math.imul(this.settings.puzzleMainLevelId + 1, 1000003)
+      ^ Math.imul(this.currentAdaptiveStage + 1, 9176)
+      ^ Math.imul(difficulty + 1, 104729)
+      ^ 0x2f6e2b1d
+    ) | 0;
+  }
+
+  private async setPreparedNormalBoard(): Promise<void> {
+    this.cancelPendingLevelDebugHiddenGeneration();
+    const requestToken = ++this.normalBoardRequestToken;
+    this.pendingDynamicHiddenTask?.cancel();
+    this.pendingDynamicHiddenTask = undefined;
+    const level = this.createNormalLevel();
+    const difficulty = this.dynamicDifficultyForLevel(level);
+    if (!this.settings.dynamicDifficultyLayoutEnabled || difficulty === undefined) {
+      this.setCurrentBoard(level);
+      return;
+    }
+
+    this.boardScene.setPaused(true);
+    const seed = this.dynamicHiddenSeed(level, difficulty);
+    const task = startDynamicHiddenGeneration({
+      path: level.solutionPath.map((cell) => ({ ...cell })),
+      boardShape: level.boardShape,
+      targetDifficulty: difficulty,
+      seed,
+    });
+    this.pendingDynamicHiddenTask = task;
+
+    try {
+      const result = await task.promise;
+      if (requestToken !== this.normalBoardRequestToken) return;
+      if (!result.report.accepted) {
+        console.warn('动态隐藏布局未通过安全验收，已使用预制布局。', result.report);
+        this.setCurrentBoard(level);
+        return;
+      }
+      const resolvedLevel: LevelData = {
+        ...level,
+        hiddenCells: result.hiddenIndices.map((index) => ({ ...level.solutionPath[index] })),
+        algorithm: {
+          id: result.report.algorithmVersion,
+          parameters: {
+            seed,
+            requestedDifficulty: result.report.requestedDifficulty,
+            targetHiddenCount: result.report.targetHiddenCount,
+            targetTierCounts: [...result.report.targetTierCounts],
+            actualTierCounts: [...result.report.actualTierCounts],
+            ambiguousStepCount: result.report.ambiguousStepCount,
+            unsafeTier0Count: result.report.unsafeTier0Count,
+            tierDistance: result.report.tierDistance,
+            withinTargetTolerance: result.report.withinTargetTolerance,
+          },
+        },
+      };
+      this.setCurrentBoard(resolvedLevel);
+    } catch (error) {
+      if (requestToken !== this.normalBoardRequestToken) return;
+      if (!(error instanceof Error) || error.name !== 'AbortError') {
+        console.warn('动态隐藏布局生成失败，已使用预制布局。', error);
+      }
+      this.setCurrentBoard(level);
+    } finally {
+      if (this.pendingDynamicHiddenTask === task) this.pendingDynamicHiddenTask = undefined;
+      if (requestToken === this.normalBoardRequestToken) this.boardScene.setPaused(false);
+    }
+  }
+
+  private cancelPendingNormalBoard(): void {
+    this.normalBoardRequestToken += 1;
+    this.pendingDynamicHiddenTask?.cancel();
+    this.pendingDynamicHiddenTask = undefined;
+    this.cancelPendingLevelDebugHiddenGeneration();
   }
 
   private createBeadLevel(): LevelData {
@@ -3452,7 +3769,7 @@ class NumberConnectApp {
       this.renderLives();
       this.restartCurrent();
     } else if (this.resultContext === 'normal') {
-      this.restartPuzzleLevel();
+      void this.restartPuzzleLevel();
     } else {
       this.lives = 3;
       this.renderLives();
@@ -3469,7 +3786,7 @@ class NumberConnectApp {
     } else if (this.resultContext === 'collection') {
       this.nextCollectionLevel();
     } else if (this.resultContext === 'normal') {
-      this.nextLevel();
+      void this.nextLevel();
     }
   }
 
@@ -3872,7 +4189,7 @@ class NumberConnectApp {
         await this.boardScene.showCompletion({ revealArtwork: false });
         this.gainNormalLife();
         if (hasNextStage) {
-          this.nextPuzzleStage();
+          await this.nextPuzzleStage();
         } else {
           this.showPuzzleLevelResult();
         }
@@ -3881,7 +4198,7 @@ class NumberConnectApp {
       if (hasNextStage) this.boardScene.beginStageCompletionEdge();
       await this.showPlayPuzzleCompletion();
       if (hasNextStage) {
-        this.nextPuzzleStage();
+        await this.nextPuzzleStage();
         await this.boardScene.finishStageCompletionEdge();
         return;
       }
@@ -3991,22 +4308,33 @@ class NumberConnectApp {
     }
   }
 
-  private nextLevel(): void {
+  private async nextLevel(): Promise<void> {
+    if (this.resultActionBusy) return;
+    this.resultActionBusy = true;
+    this.setResultActionsDisabled(true);
     this.resultOverlay.hidden = true;
     this.lives = 3;
     this.renderLives();
     this.selectNextNormalLevel();
-    this.setCurrentBoard(this.createNormalLevel());
+    try {
+      await this.setPreparedNormalBoard();
+    } finally {
+      this.resultActionBusy = false;
+      this.setResultActionsDisabled(false);
+    }
   }
 
-  private nextPuzzleStage(): void {
+  private async nextPuzzleStage(): Promise<void> {
     this.resultOverlay.hidden = true;
     this.currentAdaptiveStage += 1;
     this.beginLevelDebugStageExperience();
-    this.setCurrentBoard(this.createNormalLevel());
+    await this.setPreparedNormalBoard();
   }
 
-  private restartPuzzleLevel(): void {
+  private async restartPuzzleLevel(): Promise<void> {
+    if (this.resultActionBusy) return;
+    this.resultActionBusy = true;
+    this.setResultActionsDisabled(true);
     this.resultOverlay.hidden = true;
     this.boardScene.setPaused(false);
     this.currentAdaptiveStage = 1;
@@ -4015,7 +4343,12 @@ class NumberConnectApp {
     this.lives = 3;
     this.renderLives();
     this.resetLevelDebugExperience(this.settings.puzzleMainLevelId);
-    this.setCurrentBoard(this.createNormalLevel());
+    try {
+      await this.setPreparedNormalBoard();
+    } finally {
+      this.resultActionBusy = false;
+      this.setResultActionsDisabled(false);
+    }
   }
 
   private nextCollectionLevel(): void {
@@ -4050,6 +4383,7 @@ class NumberConnectApp {
   }
 
   private backToLobby(): void {
+    this.cancelPendingNormalBoard();
     this.playContext = 'normal';
     this.resultOverlay.hidden = true;
     this.cancelPowerUpTargeting();
@@ -4058,6 +4392,7 @@ class NumberConnectApp {
   }
 
   private leavePlayScreen(): void {
+    this.cancelPendingNormalBoard();
     this.stopLevelDebugExperience();
     this.resultOverlay.hidden = true;
     this.cancelPowerUpTargeting();
@@ -4171,6 +4506,9 @@ class NumberConnectApp {
     this.setChargeProgressModeControl(this.settings.chargeProgressMode);
     query<HTMLInputElement>('#settings-next').checked = this.settings.showNextNumber;
     query<HTMLInputElement>('#settings-difficulty-score').checked = this.settings.showDifficultyScore;
+    query<HTMLInputElement>('#settings-dynamic-difficulty').checked = (
+      this.settings.dynamicDifficultyLayoutEnabled
+    );
     query<HTMLInputElement>('#settings-sound').checked = this.settings.soundEnabled;
     query<HTMLInputElement>('#settings-puzzle-flow').checked = this.settings.showPuzzleFlow;
     this.setUiThemeControl(this.settings.uiTheme);
@@ -4197,7 +4535,7 @@ class NumberConnectApp {
       option.classList.toggle('is-selected', selected);
       if (selected) option.setAttribute('aria-current', 'true');
       option.innerHTML = `<strong>${level.displayId}</strong><small>${level.label}</small>`;
-      option.addEventListener('click', () => this.selectLevelFromPicker(level.levelId));
+      option.addEventListener('click', () => void this.selectLevelFromPicker(level.levelId));
       return option;
     });
     if (options.length === 0) {
@@ -4235,6 +4573,9 @@ class NumberConnectApp {
     this.settings.chargeProgressMode = this.selectedChargeProgressMode();
     this.settings.showNextNumber = query<HTMLInputElement>('#settings-next').checked;
     this.settings.showDifficultyScore = query<HTMLInputElement>('#settings-difficulty-score').checked;
+    this.settings.dynamicDifficultyLayoutEnabled = query<HTMLInputElement>(
+      '#settings-dynamic-difficulty',
+    ).checked;
     this.settings.soundEnabled = query<HTMLInputElement>('#settings-sound').checked;
     const puzzleFlowChanged = this.settings.showPuzzleFlow
       !== query<HTMLInputElement>('#settings-puzzle-flow').checked;

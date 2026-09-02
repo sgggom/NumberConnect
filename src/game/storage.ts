@@ -130,6 +130,7 @@ export const loadSettings = (): GameSettings => {
       touchPreviewSize,
       showPuzzleFlow: stored.showPuzzleFlow !== false,
       showDifficultyScore: stored.showDifficultyScore === true,
+      dynamicDifficultyLayoutEnabled: stored.dynamicDifficultyLayoutEnabled === true,
       shape: BoardShape.Level,
       squareSize: DEFAULT_SETTINGS.squareSize,
       diamondSize: DEFAULT_SETTINGS.diamondSize,

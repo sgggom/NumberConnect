@@ -78,6 +78,22 @@ describe('game settings migration', () => {
     }
   });
 
+  it('keeps dynamic difficulty off by default and loads only an explicit true value', () => {
+    const getItem = vi.fn()
+      .mockReturnValueOnce(JSON.stringify({}))
+      .mockReturnValueOnce(JSON.stringify({ dynamicDifficultyLayoutEnabled: true }))
+      .mockReturnValueOnce(JSON.stringify({ dynamicDifficultyLayoutEnabled: 'true' }));
+    vi.stubGlobal('window', { localStorage: { getItem } });
+
+    try {
+      expect(loadSettings().dynamicDifficultyLayoutEnabled).toBe(false);
+      expect(loadSettings().dynamicDifficultyLayoutEnabled).toBe(true);
+      expect(loadSettings().dynamicDifficultyLayoutEnabled).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('keeps the puzzle flow enabled by default and persists an explicit disabled setting', () => {
     const getItem = vi.fn()
       .mockReturnValueOnce(JSON.stringify({}))

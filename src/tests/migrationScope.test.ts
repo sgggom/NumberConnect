@@ -14,6 +14,16 @@ describe('migrated product scope', () => {
     expect(indexMarkup).toContain('<dt>交叉次数</dt>');
   });
 
+  it('keeps the two hidden-difficulty debug generators as separate controls', () => {
+    expect(indexMarkup).toContain('id="level-debug-hidden-difficulty"');
+    expect(indexMarkup).toContain('id="level-debug-generate-difficulty"');
+    expect(indexMarkup).toContain('id="level-debug-tier-0-count"');
+    expect(indexMarkup).toContain('id="level-debug-tier-1-count"');
+    expect(indexMarkup).toContain('id="level-debug-tier-2-count"');
+    expect(indexMarkup).toContain('id="level-debug-generate-tier-counts"');
+    expect(indexMarkup).toContain('两个入口独立生效');
+  });
+
   it('provides whole-level and per-stage experience sections in the result panel', () => {
     expect(indexMarkup).toContain('id="result-experience"');
     expect(indexMarkup).toContain('aria-label="整关体验汇总"');

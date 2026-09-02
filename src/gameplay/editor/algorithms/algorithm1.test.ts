@@ -164,6 +164,23 @@ describe('editor algorithm 1 spatial hidden selection', () => {
     expect(hard.size).toBe(22);
   });
 
+  it('keeps the frozen layout for the dynamic-generator fork baseline', () => {
+    const path = Array.from({ length: 64 }, (_, index) => {
+      const y = Math.floor(index / 8);
+      const offset = index % 8;
+      return { x: y % 2 === 0 ? offset : 7 - offset, y };
+    });
+
+    expect([...selectAlgorithm1HiddenLayout(path, 'square', 41, 6, 108, {
+      addTargetDifficultyPercent: false,
+      maxVisibleRun: 7,
+      maxHiddenRun: 3,
+    })]).toEqual([
+      12, 55, 62, 57, 20, 50, 41, 13, 28, 36, 4, 56, 14,
+      49, 39, 61, 47, 25, 33, 3, 42, 21, 29, 44, 52, 5,
+    ]);
+  });
+
   it('applies the configured longest visible and hidden run limits', () => {
     const path = Array.from({ length: 64 }, (_, index) => {
       const y = Math.floor(index / 8);
