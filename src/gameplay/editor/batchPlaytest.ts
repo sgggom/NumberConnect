@@ -82,6 +82,7 @@ export const MAX_BATCH_HIDDEN_LEVELS = 200_000;
 export const MAX_BATCH_HIDDEN_SIMULATIONS = 5_000_000;
 export const BATCH_PLAYTEST_ATTEMPT_TIMEOUT_MS = 60_000;
 export const BATCH_HIDDEN_CHAIN_TIMEOUT_MS = 60_000;
+export const BATCH_HIDDEN_CHAIN_MAX_ATTEMPTS = 16;
 export const BATCH_PLAYTEST_MAX_ATTEMPTS = 4;
 
 export interface BatchPlaytestConfig {

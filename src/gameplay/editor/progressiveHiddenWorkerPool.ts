@@ -1,7 +1,7 @@
 import type { EditorAlgorithmResult } from './algorithms/types';
 import {
   BATCH_HIDDEN_CHAIN_TIMEOUT_MS,
-  BATCH_PLAYTEST_MAX_ATTEMPTS,
+  BATCH_HIDDEN_CHAIN_MAX_ATTEMPTS,
   batchPlaytestConcurrency,
   createProgressiveBatchHiddenResult,
   type BatchPlaytestTask,
@@ -228,28 +228,33 @@ const startOnCurrentThread = (
       const results: EditorAlgorithmResult[] = [];
       let previousHiddenCells: ReadonlyArray<EditorCell> | undefined;
       try {
-        for (const task of tasks) {
-          if (canceled) throw canceledError();
-          let generated: EditorAlgorithmResult | undefined;
-          let generationError = '';
-          for (let attempt = 0; attempt < BATCH_PLAYTEST_MAX_ATTEMPTS && !generated; attempt += 1) {
-            try {
-              generated = createProgressiveBatchHiddenResult(
+        let generationError = '';
+        let succeeded = false;
+        for (let attempt = 0; attempt < BATCH_HIDDEN_CHAIN_MAX_ATTEMPTS && !succeeded; attempt += 1) {
+          results.length = 0;
+          previousHiddenCells = undefined;
+          try {
+            for (const task of tasks) {
+              if (canceled) throw canceledError();
+              const generated = createProgressiveBatchHiddenResult(
                 task,
                 previousHiddenCells,
                 attempt,
                 deadlineAt,
               );
-            } catch (error) {
-              generationError = error instanceof Error ? error.message : '累进隐藏生成失败';
-              if (error instanceof Error && error.name === 'ProgressiveHiddenTimeoutError') throw error;
+              results.push(generated);
+              previousHiddenCells = generated.hiddenCells;
+              onProgress(results.length, tasks.length, task.config.targetDifficulty);
             }
+            succeeded = true;
+          } catch (error) {
+            generationError = error instanceof Error ? error.message : '累进隐藏生成失败';
+            if (error instanceof Error && (
+              error.name === 'ProgressiveHiddenTimeoutError' || error.name === 'AbortError'
+            )) throw error;
           }
-          if (!generated) throw new Error(generationError || '累进隐藏生成失败。');
-          results.push(generated);
-          previousHiddenCells = generated.hiddenCells;
-          onProgress(results.length, tasks.length, task.config.targetDifficulty);
         }
+        if (!succeeded) throw new Error(generationError || '累进隐藏生成失败。');
         resolve(results);
       } catch (error) {
         reject(error instanceof Error ? error : new Error('累进隐藏生成失败。'));

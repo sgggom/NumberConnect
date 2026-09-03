@@ -3,6 +3,7 @@ import type { EditorCell } from './types';
 
 const DOUBLE_RUN_LIMITS = [0, 1, 1, 1, 2, 2, 2, 2, 2, 3] as const;
 const TRIPLE_RUN_LIMITS = [0, 0, 0, 0, 0, 0, 0, 1, 1, 2] as const;
+const EXTRA_HIDDEN_PERCENTAGES = [0, 3, 6, 9, 12, 15, 18, 21, 24, 27] as const;
 
 export interface ProgressiveHiddenLayoutOptions {
   path: ReadonlyArray<EditorCell>;
@@ -38,9 +39,13 @@ const ensureBeforeDeadline = (deadlineAt?: number): void => {
   }
 };
 
-export const progressiveHiddenExtraCount = (difficulty: number): number => (
-  normalizedDifficulty(difficulty) - 1
-);
+export const progressiveHiddenExtraCount = (
+  pathLength: number,
+  difficulty: number,
+): number => {
+  const percentage = EXTRA_HIDDEN_PERCENTAGES[normalizedDifficulty(difficulty) - 1];
+  return Math.ceil(Math.max(0, Math.floor(pathLength)) * percentage / 100);
+};
 
 export const progressiveHiddenRunLimits = (
   difficulty: number,
@@ -148,27 +153,22 @@ const selectSegmentBaseHidden = (
   deadlineAt?: number,
 ): Set<number> | undefined => {
   const hidden = new Set<number>();
-  const visit = (segmentIndex: number): boolean => {
+  let previousHiddenIndex: number | undefined;
+  for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex += 1) {
     ensureBeforeDeadline(deadlineAt);
-    if (segmentIndex >= segments.length) return longestVisibleRun(pathLength, hidden) <= maxVisibleRun;
     const segment = segments[segmentIndex];
     const candidates = Array.from({ length: segment.length }, (_, offset) => segment.start + offset)
       .filter((index) => index > 0 && index < pathLength - 1)
-      .filter((index) => !hidden.has(index - 1) && !hidden.has(index + 1))
-      .map((index) => ({
-        index,
-        centerDistance: Math.abs(index - (segment.start + segment.end - 1) / 2),
-        order: random(),
-      }))
-      .sort((left, right) => left.centerDistance - right.centerDistance || left.order - right.order);
-    for (const { index } of candidates) {
-      hidden.add(index);
-      if (visit(segmentIndex + 1)) return true;
-      hidden.delete(index);
-    }
-    return false;
-  };
-  return visit(0) ? hidden : undefined;
+      .filter((index) => previousHiddenIndex === undefined
+        ? index <= maxVisibleRun
+        : index - previousHiddenIndex - 1 <= maxVisibleRun && index - previousHiddenIndex > 1)
+      .filter((index) => segmentIndex < segments.length - 1 || pathLength - index - 1 <= maxVisibleRun);
+    if (candidates.length === 0) return undefined;
+    const selected = candidates[Math.floor(random() * candidates.length)];
+    hidden.add(selected);
+    previousHiddenIndex = selected;
+  }
+  return longestVisibleRun(pathLength, hidden) <= maxVisibleRun ? hidden : undefined;
 };
 
 const validDifficultyCandidates = (
@@ -192,40 +192,6 @@ const validDifficultyCandidates = (
   };
 };
 
-const difficultyCandidates = (
-  pathLength: number,
-  source: ReadonlySet<number>,
-  difficulty: number,
-): number[] => {
-  const { continuous, isolated } = validDifficultyCandidates(pathLength, source, difficulty);
-  return [...continuous, ...isolated];
-};
-
-const canCompleteDifficultyChain = (
-  pathLength: number,
-  source: ReadonlySet<number>,
-  nextDifficulty: number,
-  memo = new Map<string, boolean>(),
-  deadlineAt?: number,
-): boolean => {
-  ensureBeforeDeadline(deadlineAt);
-  if (nextDifficulty > 10) return true;
-  const stateKey = `${nextDifficulty}:${[...source].sort((left, right) => left - right).join(',')}`;
-  const cached = memo.get(stateKey);
-  if (cached !== undefined) return cached;
-  const canComplete = difficultyCandidates(pathLength, source, nextDifficulty).some((candidate) => (
-    canCompleteDifficultyChain(
-      pathLength,
-      new Set(source).add(candidate),
-      nextDifficulty + 1,
-      memo,
-      deadlineAt,
-    )
-  ));
-  memo.set(stateKey, canComplete);
-  return canComplete;
-};
-
 const randomized = (values: ReadonlyArray<number>, random: () => number): number[] => values
   .map((candidate) => ({ candidate, order: random() }))
   .sort((left, right) => left.order - right.order)
@@ -235,7 +201,6 @@ const addDifficultyHidden = (
   pathLength: number,
   source: ReadonlySet<number>,
   difficulty: number,
-  maxVisibleRun: number,
   random: () => number,
   deadlineAt?: number,
 ): Set<number> => {
@@ -244,18 +209,23 @@ const addDifficultyHidden = (
   const { continuous, isolated } = validDifficultyCandidates(pathLength, hidden, difficulty);
   const ordered = [...randomized(continuous, random), ...randomized(isolated, random)];
   if (ordered.length === 0) throw new Error(`难度 ${difficulty} 无法在连续隐藏限制内增加额外隐藏数字。`);
-  const selected = ordered.find((candidate) => (
-    longestVisibleRun(pathLength, new Set(hidden).add(candidate)) <= maxVisibleRun
-    && canCompleteDifficultyChain(
-      pathLength,
-      new Set(hidden).add(candidate),
-      difficulty + 1,
-      new Map<string, boolean>(),
-      deadlineAt,
-    )
-  ));
-  if (selected === undefined) throw new Error(`难度 ${difficulty} 的候选位置无法继续扩展到难度 10。`);
+  const selected = ordered[0];
   hidden.add(selected);
+  return hidden;
+};
+
+const addDifficultyHiddenToTarget = (
+  pathLength: number,
+  source: ReadonlySet<number>,
+  difficulty: number,
+  targetCount: number,
+  random: () => number,
+  deadlineAt?: number,
+): Set<number> => {
+  let hidden = new Set(source);
+  while (hidden.size < targetCount) {
+    hidden = addDifficultyHidden(pathLength, hidden, difficulty, random, deadlineAt);
+  }
   return hidden;
 };
 
@@ -291,38 +261,39 @@ export const createProgressiveHiddenLayout = ({
         createRandom(seed ^ 0x6f29d417 ^ Math.imul(attempt + 1, 2654435761)),
         deadlineAt,
       );
-      if (candidate && canCompleteDifficultyChain(
-        path.length,
-        candidate,
-        2,
-        new Map<string, boolean>(),
-        deadlineAt,
-      )) base = candidate;
+      if (candidate) base = candidate;
     }
     if (!base) {
       throw new Error(
-        `无法按分段长度区间 [${segmentLengthMin},${segmentLengthMax}] 生成可扩展到难度 10 的基础隐藏布局。`,
+        `无法按分段长度区间 [${segmentLengthMin},${segmentLengthMax}] 为每段放置一个基础隐藏。`,
       );
     }
     hidden = base;
   }
-  const expectedPreviousCount = baseCount + Math.max(0, level - 2);
+  const expectedPreviousCount = baseCount + progressiveHiddenExtraCount(path.length, level - 1);
   if (previous && hidden.size !== expectedPreviousCount) {
     throw new Error(`难度 ${level} 需要继承 ${expectedPreviousCount} 个隐藏数字，实际为 ${hidden.size} 个。`);
   }
   if (!previous) {
     for (let currentDifficulty = 2; currentDifficulty <= level; currentDifficulty += 1) {
-      hidden = addDifficultyHidden(
+      hidden = addDifficultyHiddenToTarget(
         path.length,
         hidden,
         currentDifficulty,
-        maxVisibleRun,
+        baseCount + progressiveHiddenExtraCount(path.length, currentDifficulty),
         createRandom(seed ^ Math.imul(currentDifficulty + 1, 104729)),
         deadlineAt,
       );
     }
   } else if (level > 1) {
-    hidden = addDifficultyHidden(path.length, hidden, level, maxVisibleRun, random, deadlineAt);
+    hidden = addDifficultyHiddenToTarget(
+      path.length,
+      hidden,
+      level,
+      baseCount + progressiveHiddenExtraCount(path.length, level),
+      random,
+      deadlineAt,
+    );
   }
   return [...hidden].sort((left, right) => left - right).map((index) => ({ ...path[index] }));
 };
