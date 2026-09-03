@@ -73,6 +73,7 @@ export const BATCH_HIDDEN_RESULT_HEADERS = [
   '每关跑关次数', '推理能力', '平均总步数', '低推理平均错误数', '中推理平均错误数',
   '高推理平均错误数', '平均可连接数量', '直接连接占比 %',
   '平均距离下个显示数字', '平均每步难度分', '前期平均难度分', '中期平均难度分', '后期平均难度分',
+  '失败原因',
 ] as const;
 
 export const BATCH_PLAYTEST_RESULT_HEADERS = BATCH_HIDDEN_RESULT_HEADERS;
@@ -80,6 +81,7 @@ export const BATCH_PLAYTEST_RESULT_HEADERS = BATCH_HIDDEN_RESULT_HEADERS;
 export const MAX_BATCH_HIDDEN_LEVELS = 200_000;
 export const MAX_BATCH_HIDDEN_SIMULATIONS = 5_000_000;
 export const BATCH_PLAYTEST_ATTEMPT_TIMEOUT_MS = 60_000;
+export const BATCH_HIDDEN_CHAIN_TIMEOUT_MS = 60_000;
 export const BATCH_PLAYTEST_MAX_ATTEMPTS = 4;
 
 export interface BatchPlaytestConfig {
@@ -541,6 +543,14 @@ export const createBatchPlaytestTaskChains = (
   return chains;
 };
 
+export const discardBatchHiddenTaskChain = (
+  tasks: ReadonlyArray<BatchPlaytestTask>,
+  reason: string,
+): BatchPlaytestResult[] => tasks.map((task) => ({
+  task,
+  error: `整条难度链已弃用：${reason}`,
+}));
+
 const mixedSeed = (task: BatchPlaytestTask, attempt: number): number => (
   task.config.seed
   ^ Math.imul(task.config.sourceRow + 1, 73856093)
@@ -560,6 +570,7 @@ export const createProgressiveBatchHiddenResult = (
   task: BatchPlaytestTask,
   previousHiddenCells?: ReadonlyArray<EditorCell>,
   attempt = 0,
+  deadlineAt?: number,
 ): EditorAlgorithmResult => {
   if (task.config.mode !== 'hidden' || !task.config.presetPath) {
     throw new Error('累进隐藏生成只支持带固定路径的隐藏任务。');
@@ -572,6 +583,7 @@ export const createProgressiveBatchHiddenResult = (
     difficulty: task.config.targetDifficulty,
     seed: progressiveChainSeed(task, attempt),
     maxVisibleRun: task.config.maxVisibleRun,
+    deadlineAt,
     previousHiddenCells,
   });
   return {
@@ -765,6 +777,7 @@ export const formatBatchPlaytestResultsTsv = (
           String(task.generationNumber), '', '', shapeLabel(config.shape),
           String(config.rows), String(config.columns), '',
         );
+        failureRow[BATCH_HIDDEN_RESULT_HEADERS.indexOf('失败原因')] = result.error ?? '未知失败';
       }
       return failureRow;
     }
@@ -819,6 +832,7 @@ export const formatBatchPlaytestResultsTsv = (
       rounded(average(hiddenSimulation.steps.map((step) => step.distanceToNextVisibleNumber))),
       rounded(difficulty.averageStepDifficultyScore), rounded(difficulty.earlyAverageDifficultyScore),
       rounded(difficulty.middleAverageDifficultyScore), rounded(difficulty.lateAverageDifficultyScore),
+      '',
     ];
   });
   return [...(includeHeader ? [headers] : []), ...rows]

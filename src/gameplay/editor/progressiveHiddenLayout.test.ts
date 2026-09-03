@@ -95,4 +95,19 @@ describe('progressive hidden difficulty layout', () => {
     };
     expect(createProgressiveHiddenLayout(options)).toEqual(createProgressiveHiddenLayout(options));
   });
+
+  it('stops recursive generation when the chain deadline is reached', () => {
+    expect(() => createProgressiveHiddenLayout({
+      path,
+      segmentLengthMin: 5,
+      segmentLengthMax: 9,
+      difficulty: 1,
+      seed: 111,
+      maxVisibleRun: 5,
+      deadlineAt: 0,
+    })).toThrowError(expect.objectContaining({
+      name: 'ProgressiveHiddenTimeoutError',
+      message: '隐藏难度链生成超时。',
+    }));
+  });
 });

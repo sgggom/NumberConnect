@@ -9,6 +9,7 @@ import {
   createBatchPlaytestTaskChains,
   createBatchPlaytestTasks,
   createProgressiveBatchHiddenResult,
+  discardBatchHiddenTaskChain,
   formatBatchPlaytestResultsTsv,
   parseBatchPlaytestConfigRows,
   runConcurrentBatchTaskPool,
@@ -106,6 +107,19 @@ describe('批量生成路径与隐藏', () => {
     expect(tasks.map((task) => task.config.targetDifficulty)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   });
 
+  it('任意难度失败时弃用整条十档难度链', () => {
+    const [config] = parseBatchPlaytestConfigRows([
+      hiddenHeaders,
+      ['HIDDEN-DISCARD', '正方形', path5x5, '[5,9]', 8, 1, 1],
+    ], 'hidden');
+    const tasks = createBatchPlaytestTasks([config]);
+    const discarded = discardBatchHiddenTaskChain(tasks, '隐藏难度链生成超时。');
+
+    expect(discarded).toHaveLength(10);
+    expect(discarded.every((result) => !result.level && !result.simulation)).toBe(true);
+    expect(discarded.every((result) => result.error?.includes('整条难度链已弃用'))).toBe(true);
+  });
+
   it('严格区分造型和路径输入', () => {
     expect(() => parseBatchPlaytestConfigRows([
       pathHeaders,
@@ -195,6 +209,21 @@ describe('批量生成路径与隐藏', () => {
     expect(text.split('\r\n')[1].split('\t')[BATCH_HIDDEN_RESULT_HEADERS.indexOf('关卡名')])
       .toBe('HIDDEN-1_1');
     expect(progress).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+
+  it('隐藏失败结果导出具体原因', () => {
+    const [config] = parseBatchPlaytestConfigRows([
+      hiddenHeaders,
+      ['HIDDEN-FAILED', '正方形', path5x5, '[5,9]', 8, 1, 1],
+    ], 'hidden');
+    const [task] = createBatchPlaytestTasks([config]);
+    const text = formatBatchPlaytestResultsTsv([
+      { task, error: '整条难度链已弃用：隐藏难度链生成超时。' },
+    ], 'hidden', true);
+    const rows = text.split('\r\n').map((row) => row.split('\t'));
+
+    expect(rows[1][BATCH_HIDDEN_RESULT_HEADERS.indexOf('失败原因')])
+      .toBe('整条难度链已弃用：隐藏难度链生成超时。');
   });
 
   it('最多并行执行指定数量的任务并保持结果顺序', async () => {

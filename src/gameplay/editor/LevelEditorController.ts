@@ -52,6 +52,7 @@ import type { EditorCell, EditorShape, ManualEditMode } from './types';
 import { reorderLevelCollection } from './reorderLevelCollection';
 import {
   BATCH_PLAYTEST_ATTEMPT_TIMEOUT_MS,
+  BATCH_HIDDEN_CHAIN_TIMEOUT_MS,
   BATCH_PLAYTEST_MAX_ATTEMPTS,
   batchPlaytestConcurrency,
   createBatchPlaytestGenerationRequest,
@@ -59,6 +60,7 @@ import {
   createBatchPlaytestTaskChains,
   createBatchPlaytestTasks,
   createProgressiveBatchHiddenResult,
+  discardBatchHiddenTaskChain,
   formatBatchPlaytestResultsTsv,
   readBatchPlaytestConfigFile,
   runConcurrentBatchTaskPool,
@@ -2211,6 +2213,7 @@ export class LevelEditorController {
       const generateTask = async (
         task: (typeof tasks)[number],
         previousHiddenCells?: ReadonlyArray<EditorCell>,
+        deadlineAt?: number,
       ): Promise<BatchPlaytestResult> => {
         if (run !== this.batchPlaytestRun || abortController.signal.aborted) {
           const error = new Error('批量任务已取消。');
@@ -2222,9 +2225,15 @@ export class LevelEditorController {
         for (let attempt = 0; attempt < BATCH_PLAYTEST_MAX_ATTEMPTS && !generated; attempt += 1) {
           if (mode === 'hidden') {
             try {
-              generated = createProgressiveBatchHiddenResult(task, previousHiddenCells, attempt);
+              generated = createProgressiveBatchHiddenResult(
+                task,
+                previousHiddenCells,
+                attempt,
+                deadlineAt,
+              );
             } catch (error) {
               generationError = error instanceof Error ? error.message : '累进隐藏生成失败';
+              if (error instanceof Error && error.name === 'ProgressiveHiddenTimeoutError') break;
             }
             continue;
           }
@@ -2350,6 +2359,7 @@ export class LevelEditorController {
           }
 
           const generatedResults: BatchPlaytestResult[] = [];
+          const chainDeadlineAt = Date.now() + BATCH_HIDDEN_CHAIN_TIMEOUT_MS;
           let previousHiddenCells: ReadonlyArray<EditorCell> | undefined;
           let chainError = '';
           for (const task of chain) {
@@ -2365,17 +2375,27 @@ export class LevelEditorController {
             } else {
               this.batchPlaytestDetail = `${task.config.id} 第 ${task.generationNumber} 组：正在累进生成难度 ${task.config.targetDifficulty}/10…`;
               this.renderBatchPlaytestDialog();
-              result = await generateTask(task, previousHiddenCells);
+              result = await generateTask(task, previousHiddenCells, chainDeadlineAt);
               if (result.level) previousHiddenCells = result.level.hiddenCells;
               else chainError = result.error ?? '隐藏生成失败';
             }
             generatedResults.push(result);
           }
 
-          return Promise.all(generatedResults.map(async (generatedResult) => {
+          if (chainError) {
+            const discardedResults = discardBatchHiddenTaskChain(chain, chainError);
+            discardedResults.forEach((result) => {
+              completedResults[result.task.taskIndex] = result;
+            });
+            this.batchPlaytestProgress.completed += discardedResults.length;
+            this.batchPlaytestProgress.failed += discardedResults.length;
+            reportProgress();
+            return discardedResults;
+          }
+
+          const simulatedResults = await Promise.all(generatedResults.map(async (generatedResult) => {
             if (!generatedResult.level) {
               this.batchPlaytestProgress.completed += 1;
-              this.batchPlaytestProgress.failed += 1;
               reportProgress();
               return generatedResult;
             }
@@ -2384,10 +2404,22 @@ export class LevelEditorController {
             const result = await simulateTask(generatedResult);
             this.batchPlaytestProgress.running -= 1;
             this.batchPlaytestProgress.completed += 1;
-            if (!result.simulation) this.batchPlaytestProgress.failed += 1;
             reportProgress();
             return result;
           }));
+          const failedSimulation = simulatedResults.find((result) => !result.simulation);
+          if (!failedSimulation) return simulatedResults;
+
+          const discardedResults = discardBatchHiddenTaskChain(
+            chain,
+            failedSimulation.error ?? '跑关模拟失败',
+          );
+          discardedResults.forEach((result) => {
+            completedResults[result.task.taskIndex] = result;
+          });
+          this.batchPlaytestProgress.failed += discardedResults.length;
+          reportProgress();
+          return discardedResults;
         },
         {
           concurrency: Math.min(concurrency, taskChains.length),
