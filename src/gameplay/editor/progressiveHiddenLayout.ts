@@ -1,5 +1,5 @@
 import { createRandom } from '../../game/random';
-import type { EditorCell } from './types';
+import type { EditorCell, EditorShape } from './types';
 
 const DOUBLE_RUN_LIMITS = [0, 1, 1, 1, 2, 2, 2, 2, 2, 3] as const;
 const TRIPLE_RUN_LIMITS = [0, 0, 0, 0, 0, 0, 0, 1, 1, 2] as const;
@@ -12,6 +12,7 @@ export interface ProgressiveHiddenLayoutOptions {
   difficulty: number;
   seed: number;
   maxVisibleRun: number;
+  shape?: EditorShape;
   deadlineAt?: number;
   previousHiddenCells?: ReadonlyArray<EditorCell>;
 }
@@ -117,6 +118,29 @@ export const createProgressiveHiddenSegments = (
 
 const keyOf = (cell: EditorCell): string => `${cell.x},${cell.y}`;
 
+const spatialNeighborCells = (cell: EditorCell, shape: EditorShape): EditorCell[] => {
+  if (shape === 'hex') {
+    const offsets = cell.x % 2 === 0
+      ? [[0, -1], [0, 1], [-1, -1], [-1, 0], [1, -1], [1, 0]]
+      : [[0, -1], [0, 1], [-1, 0], [-1, 1], [1, 0], [1, 1]];
+    return offsets.map(([x, y]) => ({ x: cell.x + x, y: cell.y + y }));
+  }
+  return [-1, 0, 1].flatMap((x) => [-1, 0, 1].flatMap((y) => (
+    x === 0 && y === 0 ? [] : [{ x: cell.x + x, y: cell.y + y }]
+  )));
+};
+
+const buildSpatialNeighborIndexes = (
+  path: ReadonlyArray<EditorCell>,
+  shape: EditorShape,
+): number[][] => {
+  const indexByKey = new Map(path.map((cell, index) => [keyOf(cell), index]));
+  return path.map((cell) => spatialNeighborCells(cell, shape).flatMap((neighbor) => {
+    const index = indexByKey.get(keyOf(neighbor));
+    return index === undefined ? [] : [index];
+  }));
+};
+
 const runLengths = (pathLength: number, hidden: ReadonlySet<number>): number[] => {
   const lengths: number[] = [];
   let current = 0;
@@ -175,10 +199,12 @@ const validDifficultyCandidates = (
   pathLength: number,
   source: ReadonlySet<number>,
   difficulty: number,
+  extraHiddenStartIndex: number,
 ): { continuous: number[]; isolated: number[] } => {
   const limits = progressiveHiddenRunLimits(difficulty);
   const hidden = new Set(source);
   const valid = Array.from({ length: Math.max(0, pathLength - 2) }, (_, offset) => offset + 1)
+    .filter((index) => index >= extraHiddenStartIndex)
     .filter((index) => !hidden.has(index))
     .filter((candidate) => {
       const lengths = runLengths(pathLength, new Set(hidden).add(candidate));
@@ -192,22 +218,77 @@ const validDifficultyCandidates = (
   };
 };
 
-const randomized = (values: ReadonlyArray<number>, random: () => number): number[] => values
-  .map((candidate) => ({ candidate, order: random() }))
-  .sort((left, right) => left.order - right.order)
+const compareDispersion = (
+  left: number,
+  right: number,
+  hidden: ReadonlySet<number>,
+): number => {
+  const leftDistances = [...hidden].map((index) => Math.abs(left - index)).sort((a, b) => a - b);
+  const rightDistances = [...hidden].map((index) => Math.abs(right - index)).sort((a, b) => a - b);
+  for (let index = 0; index < leftDistances.length; index += 1) {
+    if (leftDistances[index] !== rightDistances[index]) {
+      return rightDistances[index] - leftDistances[index];
+    }
+  }
+  return 0;
+};
+
+const spatialAmbiguityScore = (
+  candidate: number,
+  hidden: ReadonlySet<number>,
+  neighbors: ReadonlyArray<ReadonlyArray<number>>,
+): readonly [maximumHiddenChoices: number, multipleChoiceNeighbors: number, totalHiddenChoices: number] => {
+  const affectedVisibleLoads = neighbors[candidate]
+    .filter((index) => !hidden.has(index))
+    .map((index) => 1 + neighbors[index].filter((neighbor) => hidden.has(neighbor)).length);
+  return [
+    Math.max(0, ...affectedVisibleLoads),
+    affectedVisibleLoads.filter((load) => load > 1).length,
+    affectedVisibleLoads.reduce((sum, load) => sum + load, 0),
+  ];
+};
+
+const randomizedByDispersion = (
+  values: ReadonlyArray<number>,
+  hidden: ReadonlySet<number>,
+  spatialNeighbors: ReadonlyArray<ReadonlyArray<number>>,
+  random: () => number,
+): number[] => values
+  .map((candidate) => ({
+    candidate,
+    spatialScore: spatialAmbiguityScore(candidate, hidden, spatialNeighbors),
+    order: random(),
+  }))
+  .sort((left, right) => {
+    for (let index = 0; index < left.spatialScore.length; index += 1) {
+      const difference = left.spatialScore[index] - right.spatialScore[index];
+      if (difference !== 0) return difference;
+    }
+    return compareDispersion(left.candidate, right.candidate, hidden) || left.order - right.order;
+  })
   .map(({ candidate }) => candidate);
 
 const addDifficultyHidden = (
   pathLength: number,
   source: ReadonlySet<number>,
   difficulty: number,
+  extraHiddenStartIndex: number,
+  spatialNeighbors: ReadonlyArray<ReadonlyArray<number>>,
   random: () => number,
   deadlineAt?: number,
 ): Set<number> => {
   ensureBeforeDeadline(deadlineAt);
   const hidden = new Set(source);
-  const { continuous, isolated } = validDifficultyCandidates(pathLength, hidden, difficulty);
-  const ordered = [...randomized(continuous, random), ...randomized(isolated, random)];
+  const { continuous, isolated } = validDifficultyCandidates(
+    pathLength,
+    hidden,
+    difficulty,
+    extraHiddenStartIndex,
+  );
+  const ordered = [
+    ...randomizedByDispersion(continuous, hidden, spatialNeighbors, random),
+    ...randomizedByDispersion(isolated, hidden, spatialNeighbors, random),
+  ];
   if (ordered.length === 0) throw new Error(`难度 ${difficulty} 无法在连续隐藏限制内增加额外隐藏数字。`);
   const selected = ordered[0];
   hidden.add(selected);
@@ -219,12 +300,22 @@ const addDifficultyHiddenToTarget = (
   source: ReadonlySet<number>,
   difficulty: number,
   targetCount: number,
+  extraHiddenStartIndex: number,
+  spatialNeighbors: ReadonlyArray<ReadonlyArray<number>>,
   random: () => number,
   deadlineAt?: number,
 ): Set<number> => {
   let hidden = new Set(source);
   while (hidden.size < targetCount) {
-    hidden = addDifficultyHidden(pathLength, hidden, difficulty, random, deadlineAt);
+    hidden = addDifficultyHidden(
+      pathLength,
+      hidden,
+      difficulty,
+      extraHiddenStartIndex,
+      spatialNeighbors,
+      random,
+      deadlineAt,
+    );
   }
   return hidden;
 };
@@ -236,6 +327,7 @@ export const createProgressiveHiddenLayout = ({
   difficulty,
   seed,
   maxVisibleRun,
+  shape = 'square',
   deadlineAt,
   previousHiddenCells,
 }: ProgressiveHiddenLayoutOptions): EditorCell[] => {
@@ -243,6 +335,8 @@ export const createProgressiveHiddenLayout = ({
   const level = normalizedDifficulty(difficulty);
   const segments = createProgressiveHiddenSegments(path.length, segmentLengthMin, segmentLengthMax, seed);
   const baseCount = segments.length;
+  const extraHiddenStartIndex = segments[0]?.end ?? path.length;
+  const spatialNeighbors = buildSpatialNeighborIndexes(path, shape);
   const indexByKey = new Map(path.map((cell, index) => [keyOf(cell), index]));
   const previous = previousHiddenCells?.map((cell) => indexByKey.get(keyOf(cell)));
   if (previous?.some((index) => index === undefined)) {
@@ -281,6 +375,8 @@ export const createProgressiveHiddenLayout = ({
         hidden,
         currentDifficulty,
         baseCount + progressiveHiddenExtraCount(path.length, currentDifficulty),
+        extraHiddenStartIndex,
+        spatialNeighbors,
         createRandom(seed ^ Math.imul(currentDifficulty + 1, 104729)),
         deadlineAt,
       );
@@ -291,6 +387,8 @@ export const createProgressiveHiddenLayout = ({
       hidden,
       level,
       baseCount + progressiveHiddenExtraCount(path.length, level),
+      extraHiddenStartIndex,
+      spatialNeighbors,
       random,
       deadlineAt,
     );

@@ -17,6 +17,7 @@ const keyOf = (cell: { x: number; y: number }): string => `${cell.x},${cell.y}`;
 
 describe('progressive hidden difficulty layout', () => {
   it('starts with one hidden number per segment and adds the rounded-up difficulty percentage', () => {
+    const seed = 98765;
     let previous: ReturnType<typeof createProgressiveHiddenLayout> | undefined;
     const layouts: Array<ReturnType<typeof createProgressiveHiddenLayout>> = [];
 
@@ -26,11 +27,11 @@ describe('progressive hidden difficulty layout', () => {
         segmentLengthMin: 5,
         segmentLengthMax: 9,
         difficulty,
-        seed: 12345,
+        seed,
         maxVisibleRun: 5,
         previousHiddenCells: previous,
       });
-      const segments = createProgressiveHiddenSegments(path.length, 5, 9, 12345);
+      const segments = createProgressiveHiddenSegments(path.length, 5, 9, seed);
       expect(hidden).toHaveLength(
         segments.length + progressiveHiddenExtraCount(path.length, difficulty),
       );
@@ -42,11 +43,15 @@ describe('progressive hidden difficulty layout', () => {
       previous = hidden;
     }
 
-    const segments = createProgressiveHiddenSegments(path.length, 5, 9, 12345);
+    const segments = createProgressiveHiddenSegments(path.length, 5, 9, seed);
     const pathIndexes = new Map(path.map((cell, index) => [keyOf(cell), index]));
     expect(segments.every((segment) => layouts[0].filter((cell) => {
       const index = pathIndexes.get(keyOf(cell)) ?? -1;
       return index >= segment.start && index < segment.end;
+    }).length === 1)).toBe(true);
+    expect(layouts.slice(1).every((layout) => layout.filter((cell) => {
+      const index = pathIndexes.get(keyOf(cell)) ?? -1;
+      return index >= segments[0].start && index < segments[0].end;
     }).length === 1)).toBe(true);
     expect(layouts[9]).toHaveLength(segments.length + 7);
   });
@@ -110,6 +115,26 @@ describe('progressive hidden difficulty layout', () => {
       expect(counts.tripleRuns).toBeLessThanOrEqual(limits.tripleRuns);
       previous = hidden;
     }
+  });
+
+  it('prefers the candidate that gives fewer visible numbers multiple adjacent hidden choices', () => {
+    const foldedPath = [
+      { x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }, { x: 4, y: 0 },
+      { x: 4, y: 1 }, { x: 3, y: 1 }, { x: 2, y: 1 }, { x: 1, y: 1 }, { x: 0, y: 1 },
+    ];
+    const hidden = createProgressiveHiddenLayout({
+      path: foldedPath,
+      segmentLengthMin: 5,
+      segmentLengthMax: 5,
+      difficulty: 2,
+      seed: 123,
+      maxVisibleRun: 9,
+      shape: 'square',
+      previousHiddenCells: [foldedPath[1], foldedPath[7]],
+    });
+    const hiddenKeys = new Set(hidden.map(keyOf));
+    expect(hiddenKeys.has(keyOf(foldedPath[6]))).toBe(true);
+    expect(hiddenKeys.has(keyOf(foldedPath[8]))).toBe(false);
   });
 
   it('is deterministic for the same seed and inherited layout', () => {

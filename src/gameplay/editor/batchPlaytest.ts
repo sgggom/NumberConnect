@@ -584,6 +584,7 @@ export const createProgressiveBatchHiddenResult = (
     difficulty: task.config.targetDifficulty,
     seed: progressiveChainSeed(task, attempt),
     maxVisibleRun: task.config.maxVisibleRun,
+    shape: task.config.shape,
     deadlineAt,
     previousHiddenCells,
   });
