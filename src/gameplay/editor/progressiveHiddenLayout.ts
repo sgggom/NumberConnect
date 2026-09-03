@@ -3,7 +3,7 @@ import type { EditorCell, EditorShape } from './types';
 
 const DOUBLE_RUN_LIMITS = [0, 1, 1, 1, 2, 2, 2, 2, 2, 3] as const;
 const TRIPLE_RUN_LIMITS = [0, 0, 0, 0, 0, 0, 0, 1, 1, 2] as const;
-const EXTRA_HIDDEN_PERCENTAGES = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18] as const;
+const EXTRA_HIDDEN_PERCENTAGES = [0, 1, 3, 6, 10, 15, 19, 22, 24, 25] as const;
 
 export interface ProgressiveHiddenLayoutOptions {
   path: ReadonlyArray<EditorCell>;
