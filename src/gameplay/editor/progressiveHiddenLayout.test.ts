@@ -53,17 +53,17 @@ describe('progressive hidden difficulty layout', () => {
       const index = pathIndexes.get(keyOf(cell)) ?? -1;
       return index >= segments[0].start && index < segments[0].end;
     }).length === 1)).toBe(true);
-    expect(layouts[9]).toHaveLength(segments.length + 7);
+    expect(layouts[9]).toHaveLength(segments.length + 5);
   });
 
   it('scales extra hidden counts with board size and rounds fractions up', () => {
     expect(progressiveHiddenExtraCount(25, 1)).toBe(0);
     expect(progressiveHiddenExtraCount(25, 2)).toBe(1);
-    expect(progressiveHiddenExtraCount(25, 3)).toBe(2);
-    expect(progressiveHiddenExtraCount(25, 10)).toBe(7);
-    expect(progressiveHiddenExtraCount(49, 10)).toBe(14);
-    expect(progressiveHiddenExtraCount(70, 10)).toBe(19);
-    expect(progressiveHiddenExtraCount(88, 10)).toBe(24);
+    expect(progressiveHiddenExtraCount(25, 3)).toBe(1);
+    expect(progressiveHiddenExtraCount(25, 10)).toBe(5);
+    expect(progressiveHiddenExtraCount(49, 10)).toBe(9);
+    expect(progressiveHiddenExtraCount(70, 10)).toBe(13);
+    expect(progressiveHiddenExtraCount(88, 10)).toBe(16);
   });
 
   it.each([49, 70, 88])(
