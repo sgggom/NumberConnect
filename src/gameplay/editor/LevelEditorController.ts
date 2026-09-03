@@ -59,7 +59,6 @@ import {
   createBatchPlaytestLevel,
   createBatchPlaytestTaskChains,
   createBatchPlaytestTasks,
-  createProgressiveBatchHiddenResult,
   discardBatchHiddenTaskChain,
   formatBatchPlaytestResultsTsv,
   readBatchPlaytestConfigFile,
@@ -71,6 +70,10 @@ import {
   startBatchPlaytestSimulation,
   type BatchSimulationTask,
 } from './batchSimulationWorkerPool';
+import {
+  startProgressiveHiddenChainGeneration,
+  type ProgressiveHiddenGenerationTask,
+} from './progressiveHiddenWorkerPool';
 
 interface LevelEditorControllerOptions {
   getLevels: () => LevelData[];
@@ -124,6 +127,7 @@ export class LevelEditorController {
   private pathCalculationProgress = 0;
   private pathCalculationMode: 'path' | 'hidden' = 'path';
   private readonly batchPlaytestTasks = new Set<EditorPathGenerationTask>();
+  private readonly batchHiddenGenerationTasks = new Set<ProgressiveHiddenGenerationTask>();
   private readonly batchSimulationTasks = new Set<BatchSimulationTask>();
   private batchPlaytestAbortController?: AbortController;
   private batchPlaytestProgress = { completed: 0, running: 0, failed: 0, total: 0 };
@@ -2212,8 +2216,6 @@ export class LevelEditorController {
 
       const generateTask = async (
         task: (typeof tasks)[number],
-        previousHiddenCells?: ReadonlyArray<EditorCell>,
-        deadlineAt?: number,
       ): Promise<BatchPlaytestResult> => {
         if (run !== this.batchPlaytestRun || abortController.signal.aborted) {
           const error = new Error('批量任务已取消。');
@@ -2223,20 +2225,6 @@ export class LevelEditorController {
         let generated = null;
         let generationError = '';
         for (let attempt = 0; attempt < BATCH_PLAYTEST_MAX_ATTEMPTS && !generated; attempt += 1) {
-          if (mode === 'hidden') {
-            try {
-              generated = createProgressiveBatchHiddenResult(
-                task,
-                previousHiddenCells,
-                attempt,
-                deadlineAt,
-              );
-            } catch (error) {
-              generationError = error instanceof Error ? error.message : '累进隐藏生成失败';
-              if (error instanceof Error && error.name === 'ProgressiveHiddenTimeoutError') break;
-            }
-            continue;
-          }
           const request = createBatchPlaytestGenerationRequest(task, attempt);
           const generationTask = startEditorPathGeneration(request, (progress) => {
             if (run !== this.batchPlaytestRun) return;
@@ -2358,32 +2346,66 @@ export class LevelEditorController {
             return [result];
           }
 
-          const generatedResults: BatchPlaytestResult[] = [];
-          const chainDeadlineAt = Date.now() + BATCH_HIDDEN_CHAIN_TIMEOUT_MS;
-          let previousHiddenCells: ReadonlyArray<EditorCell> | undefined;
-          let chainError = '';
-          for (const task of chain) {
-            if (run !== this.batchPlaytestRun || abortController.signal.aborted) {
-              const error = new Error('批量任务已取消。');
-              error.name = 'AbortError';
-              throw error;
-            }
-            let result: BatchPlaytestResult;
-            if (chainError) {
-              result = { task, error: `前一难度失败：${chainError}` };
-              completedResults[task.taskIndex] = result;
-            } else {
-              this.batchPlaytestDetail = `${task.config.id} 第 ${task.generationNumber} 组：正在累进生成难度 ${task.config.targetDifficulty}/10…`;
+          if (run !== this.batchPlaytestRun || abortController.signal.aborted) {
+            const error = new Error('批量任务已取消。');
+            error.name = 'AbortError';
+            throw error;
+          }
+          this.batchPlaytestProgress.running += 1;
+          reportProgress();
+          const generationTask = startProgressiveHiddenChainGeneration(
+            chain,
+            (completed, total, difficulty) => {
+              if (run !== this.batchPlaytestRun) return;
+              this.batchPlaytestDetail = `${chain[0].config.id} 第 ${chain[0].generationNumber} 组：生成难度 ${difficulty}/10（${completed}/${total}）…`;
               this.renderBatchPlaytestDialog();
-              result = await generateTask(task, previousHiddenCells, chainDeadlineAt);
-              if (result.level) previousHiddenCells = result.level.hiddenCells;
-              else chainError = result.error ?? '隐藏生成失败';
-            }
-            generatedResults.push(result);
+            },
+            BATCH_HIDDEN_CHAIN_TIMEOUT_MS,
+          );
+          this.batchHiddenGenerationTasks.add(generationTask);
+          let generatedLayouts;
+          try {
+            generatedLayouts = await generationTask.promise;
+          } catch (error) {
+            if (error instanceof Error && error.name === 'AbortError') throw error;
+            const discardedResults = discardBatchHiddenTaskChain(
+              chain,
+              error instanceof Error ? error.message : '累进隐藏生成失败。',
+            );
+            discardedResults.forEach((result) => {
+              completedResults[result.task.taskIndex] = result;
+            });
+            this.batchPlaytestProgress.completed += discardedResults.length;
+            this.batchPlaytestProgress.failed += discardedResults.length;
+            reportProgress();
+            return discardedResults;
+          } finally {
+            this.batchHiddenGenerationTasks.delete(generationTask);
+            this.batchPlaytestProgress.running -= 1;
+            reportProgress();
           }
 
-          if (chainError) {
-            const discardedResults = discardBatchHiddenTaskChain(chain, chainError);
+          const generatedResults = chain.map((task, index): BatchPlaytestResult => {
+            try {
+              const level = createBatchPlaytestLevel(task, generatedLayouts[index]);
+              const result = { task, level };
+              completedResults[task.taskIndex] = result;
+              return result;
+            } catch (error) {
+              const result = {
+                task,
+                error: error instanceof Error ? error.message : '关卡生成失败',
+              };
+              completedResults[task.taskIndex] = result;
+              return result;
+            }
+          });
+          const failedGeneration = generatedResults.find((result) => !result.level);
+          if (failedGeneration) {
+            const discardedResults = discardBatchHiddenTaskChain(
+              chain,
+              failedGeneration.error ?? '关卡生成失败',
+            );
             discardedResults.forEach((result) => {
               completedResults[result.task.taskIndex] = result;
             });
@@ -2394,11 +2416,6 @@ export class LevelEditorController {
           }
 
           const simulatedResults = await Promise.all(generatedResults.map(async (generatedResult) => {
-            if (!generatedResult.level) {
-              this.batchPlaytestProgress.completed += 1;
-              reportProgress();
-              return generatedResult;
-            }
             this.batchPlaytestProgress.running += 1;
             reportProgress();
             const result = await simulateTask(generatedResult);
@@ -2463,6 +2480,7 @@ export class LevelEditorController {
     } finally {
       if (run === this.batchPlaytestRun) {
         this.batchPlaytestTasks.clear();
+        this.batchHiddenGenerationTasks.clear();
         this.batchSimulationTasks.clear();
         this.batchPlaytestAbortController = undefined;
         this.isBatchPlaytestRunning = false;
@@ -2480,6 +2498,8 @@ export class LevelEditorController {
     this.batchPlaytestAbortController = undefined;
     this.batchPlaytestTasks.forEach((task) => task.cancel());
     this.batchPlaytestTasks.clear();
+    this.batchHiddenGenerationTasks.forEach((task) => task.cancel());
+    this.batchHiddenGenerationTasks.clear();
     this.batchSimulationTasks.forEach((task) => task.cancel());
     this.batchSimulationTasks.clear();
     this.isBatchPlaytestRunning = false;
@@ -2493,6 +2513,7 @@ export class LevelEditorController {
     this.batchPlaytestDetail = '正在中止运行中的任务，完成后将自动保存已跑完结果…';
     this.batchPlaytestAbortController?.abort();
     this.batchPlaytestTasks.forEach((task) => task.cancel());
+    this.batchHiddenGenerationTasks.forEach((task) => task.cancel());
     this.batchSimulationTasks.forEach((task) => task.cancel());
     this.renderBatchPlaytestButton();
     this.renderBatchPlaytestDialog();
