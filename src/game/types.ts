@@ -66,7 +66,7 @@ export interface GameSettings {
   targetCrossings: number;
   showNextNumber: boolean;
   showDifficultyScore: boolean;
-  dynamicDifficultyLayoutEnabled: boolean;
+  adaptiveDifficultyEnabled: boolean;
   soundEnabled: boolean;
   chargeProgressMode: ChargeProgressMode;
   showPuzzleFlow: boolean;
@@ -198,7 +198,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   targetCrossings: 5,
   showNextNumber: true,
   showDifficultyScore: false,
-  dynamicDifficultyLayoutEnabled: false,
+  adaptiveDifficultyEnabled: true,
   soundEnabled: true,
   chargeProgressMode: 'coins',
   showPuzzleFlow: true,

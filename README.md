@@ -21,6 +21,8 @@ npm run dev
 
 Vite 默认会输出本地访问地址。
 
+普通拼图已启用新版阶段动态难度：依据首次独立完成表现与受挫状态选择关卡库的 1–10 档布局；重试和复活保持当前棋盘，不重复计能力分。调试面板可查看选档依据，设置中可关闭自动选档。策划阅读 [动态难度策划说明](docs/dynamic-difficulty-planning.md)；开发参考 [阶段动态难度](docs/stage-difficulty.md)。
+
 ## 验证与构建
 
 ```bash
@@ -45,7 +47,7 @@ npm run build
 ```text
 id  "levelName"
 1   [guide_41_1,guide_33_1]
-11  [level_55_210_4,level_55_95_3,level_57_189_4,level_710_569_6]
+11  [level_57_5_3,level_66_23_5,level_78_44_4,level_88_76_4]
 ```
 
 解析与按难度取变体的入口位于 `src/gameplay/adaptive/threeModeLevelData.ts`。未传目标难度时使用配置

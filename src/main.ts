@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import './styles.css';
+import './gameplay/adaptive/difficultyFlow.css';
 import type { GameEventMap } from './app/GameEvents';
 import { startLobbyAmbientNetwork } from './app/LobbyAmbientNetwork';
 import { ScreenRouter, type ScreenName } from './app/ScreenRouter';
@@ -20,7 +21,6 @@ import { selectHiddenCells } from './game/hidden';
 import { formatLives } from './game/lives';
 import { hasUnlimitedLives } from './game/lifeRules';
 import { levelBallColorCss } from './game/levelTheme';
-import { countCrossings } from './game/pathfinding';
 import {
   chooseWatercolorReveal,
   paintBucketRevealCells,
@@ -107,19 +107,17 @@ import { loadMode5Workbook } from './gameplay/mode5/mode5Workbook';
 import {
   loadThreeModeLevelConfiguration,
   loadThreeModeLevelLibrary,
-  parseFormationId,
   resolveThreeModeStage,
   validateThreeModeConfigurationLibrary,
   type ThreeModeConfiguredLevel,
   type ThreeModeLevelLibrary,
 } from './gameplay/adaptive/threeModeLevelData';
 import {
-  startDynamicHiddenGeneration,
-  type DynamicHiddenGenerationTask,
-} from './gameplay/adaptive/dynamicHidden/dynamicHiddenWorker';
-import type {
-  DynamicTargetTierCounts,
-} from './gameplay/adaptive/dynamicHidden/dynamicHiddenProfiles';
+  loadStageDifficulty, saveStageDifficulty, lockStageDifficulty, recordStageOutcome, restartStageAttempt,
+  type StageAttempt, type StageOutcome,
+} from './gameplay/adaptive/stageDifficulty';
+import { DifficultyFlowView } from './gameplay/adaptive/DifficultyFlowView';
+import type { FlowResult } from './gameplay/adaptive/difficultyFlow';
 
 const UI_DESIGN_WIDTH = 750;
 const UI_DESIGN_HEIGHT = 1334;
@@ -285,14 +283,6 @@ const roundedRoutePath = (points: RoutePoint[], radius = 20): string => {
 
 type ResultContext = 'normal' | 'collection' | 'daily' | 'endless-stage' | 'life-depleted' | 'editor-playtest';
 type PlayContext = 'normal' | 'collection' | 'daily' | 'editor-playtest' | 'bead';
-type LevelDebugHiddenGenerationRequest = {
-  mode: 'difficulty';
-  targetDifficulty: number;
-} | {
-  mode: 'tier-counts';
-  targetTierCounts: DynamicTargetTierCounts;
-};
-
 interface PuzzleStageExperience {
   stage: number;
   formationId: string;
@@ -374,36 +364,9 @@ interface TouchPreviewVisibilityAnimation {
 
 class NumberConnectApp {
   private readonly appShell = query<HTMLElement>('#app');
-  private readonly levelDebugStatus = query<HTMLElement>('#level-debug-status');
-  private readonly levelDebugLevelBadge = query<HTMLElement>('#level-debug-level-badge');
-  private readonly levelDebugStage = query<HTMLElement>('#level-debug-stage');
-  private readonly levelDebugFormation = query<HTMLElement>('#level-debug-formation');
-  private readonly levelDebugDifficulty = query<HTMLElement>('#level-debug-difficulty');
-  private readonly levelDebugBoardSize = query<HTMLElement>('#level-debug-board-size');
-  private readonly levelDebugCellCount = query<HTMLElement>('#level-debug-cell-count');
-  private readonly levelDebugCrossingCount = query<HTMLElement>('#level-debug-crossing-count');
-  private readonly levelDebugPuzzleFlow = query<HTMLElement>('#level-debug-puzzle-flow');
-  private readonly levelDebugErrorCount = query<HTMLElement>('#level-debug-error-count');
-  private readonly levelDebugReleaseCount = query<HTMLElement>('#level-debug-release-count');
-  private readonly levelDebugElapsedTime = query<HTMLElement>('#level-debug-elapsed-time');
-  private readonly levelDebugReviveCount = query<HTMLElement>('#level-debug-revive-count');
-  private readonly levelDebugExperienceRadar = query<SVGSVGElement>('#level-debug-experience-radar');
-  private readonly levelDebugExperienceLegend = query<HTMLElement>('#level-debug-experience-legend');
   private readonly levelDebugErrorHistoryList = query<HTMLOListElement>('#level-debug-error-history-list');
-  private readonly levelDebugLevelInput = query<HTMLInputElement>('#level-debug-level-input');
-  private readonly levelDebugStageSelect = query<HTMLSelectElement>('#level-debug-stage-select');
-  private readonly levelDebugLoadButton = query<HTMLButtonElement>('#level-debug-load-button');
-  private readonly levelDebugPreviousStage = query<HTMLButtonElement>('#level-debug-previous-stage');
-  private readonly levelDebugNextStage = query<HTMLButtonElement>('#level-debug-next-stage');
-  private readonly levelDebugReloadStage = query<HTMLButtonElement>('#level-debug-reload-stage');
-  private readonly levelDebugQuickComplete = query<HTMLButtonElement>('#level-debug-quick-complete');
-  private readonly levelDebugMessage = query<HTMLElement>('#level-debug-message');
   private readonly levelDebugHiddenDifficulty = query<HTMLSelectElement>('#level-debug-hidden-difficulty');
-  private readonly levelDebugTier0Count = query<HTMLInputElement>('#level-debug-tier-0-count');
-  private readonly levelDebugTier1Count = query<HTMLInputElement>('#level-debug-tier-1-count');
-  private readonly levelDebugTier2Count = query<HTMLInputElement>('#level-debug-tier-2-count');
   private readonly levelDebugGenerateDifficulty = query<HTMLButtonElement>('#level-debug-generate-difficulty');
-  private readonly levelDebugGenerateTierCounts = query<HTMLButtonElement>('#level-debug-generate-tier-counts');
   private readonly levelDebugHiddenMessage = query<HTMLElement>('#level-debug-hidden-message');
   private readonly screenRouter = new ScreenRouter();
   private readonly primaryActionButton = query<HTMLButtonElement>('#primary-action-button');
@@ -545,6 +508,11 @@ class NumberConnectApp {
   private editorPlaytestErrorCount = 0;
   private editorPlaytestReturnScreen: 'editor' | 'arranger' = 'editor';
   private currentAdaptiveStage = 1;
+  private stageDifficulty = loadStageDifficulty(window.localStorage);
+  private activeDifficultyStage?: StageAttempt;
+  private readonly difficultyFlowView = new DifficultyFlowView(query('#difficulty-flow'));
+  private difficultyFlowPhase: 'playing' | 'result' = 'playing';
+  private lastFlowResult?: FlowResult;
   private levelDebugExperienceLevelId?: number;
   private levelDebugExperienceErrors = 0;
   private levelDebugExperienceReleases = 0;
@@ -553,9 +521,6 @@ class NumberConnectApp {
   private levelDebugExperienceStartedAt?: number;
   private levelDebugStageExperiences: PuzzleStageExperience[] = [];
   private levelDebugActiveStageExperience?: ActivePuzzleStageExperience;
-  private pendingLevelDebugHiddenTask?: DynamicHiddenGenerationTask;
-  private levelDebugHiddenGenerationToken = 0;
-  private levelDebugHiddenGenerationIndex = 0;
   private endlessSeed = initialEndlessRunState.seed;
   private endlessSessionActive = initialEndlessRunState.active;
   private endlessLives = initialEndlessRunState.lives;
@@ -564,8 +529,6 @@ class NumberConnectApp {
   private primaryActionTransition?: Animation;
   private primaryActionTransitionToken = 0;
   private currentLevel?: LevelData;
-  private pendingDynamicHiddenTask?: DynamicHiddenGenerationTask;
-  private normalBoardRequestToken = 0;
   private currentProgress = 0;
   private currentTotal = 0;
   private settingsContext: 'lobby' | 'play' = 'lobby';
@@ -838,47 +801,11 @@ class NumberConnectApp {
   }
 
   private bindLevelDebugPanel(): void {
-    this.levelDebugLevelInput.max = String(this.threeModeCampaign.length);
-    this.levelDebugLevelInput.addEventListener('input', () => {
-      const levelId = Number(this.levelDebugLevelInput.value);
-      this.populateLevelDebugStages(levelId, 1);
-    });
-    this.levelDebugLoadButton.addEventListener('click', () => {
-      void this.loadLevelDebugSelection(
-        Number(this.levelDebugLevelInput.value),
-        Number(this.levelDebugStageSelect.value),
-      );
-    });
-    this.levelDebugPreviousStage.addEventListener('click', () => {
-      void this.loadLevelDebugSelection(this.settings.puzzleMainLevelId, this.currentAdaptiveStage - 1);
-    });
-    this.levelDebugNextStage.addEventListener('click', () => {
-      void this.loadLevelDebugSelection(this.settings.puzzleMainLevelId, this.currentAdaptiveStage + 1);
-    });
-    this.levelDebugReloadStage.addEventListener('click', () => {
-      void this.loadLevelDebugSelection(this.settings.puzzleMainLevelId, this.currentAdaptiveStage);
-    });
-    this.levelDebugQuickComplete.addEventListener('click', () => {
-      if (!this.canUseLevelDebugControls()) return;
-      this.setLevelDebugMessage('正在快速完成当前棋盘。');
-      this.boardScene.quickComplete();
-    });
     this.levelDebugGenerateDifficulty.addEventListener('click', () => {
-      const targetDifficulty = Number(this.levelDebugHiddenDifficulty.value);
-      void this.generateLevelDebugHiddenLayout({ mode: 'difficulty', targetDifficulty });
-    });
-    this.levelDebugGenerateTierCounts.addEventListener('click', () => {
-      const inputValue = (input: HTMLInputElement): number => (
-        input.value.trim() === '' ? Number.NaN : Number(input.value)
-      );
-      const targetTierCounts = [
-        inputValue(this.levelDebugTier0Count),
-        inputValue(this.levelDebugTier1Count),
-        inputValue(this.levelDebugTier2Count),
-      ] as const;
-      void this.generateLevelDebugHiddenLayout({ mode: 'tier-counts', targetTierCounts });
+      this.loadLevelDebugDifficulty(Number(this.levelDebugHiddenDifficulty.value));
     });
   }
+
 
   private canUseLevelDebugControls(): boolean {
     return this.currentScreen === 'play'
@@ -887,280 +814,34 @@ class NumberConnectApp {
       ;
   }
 
-  private populateLevelDebugStages(levelId: number, selectedStage: number): void {
-    const configuredLevel = this.threeModeCampaign.find((level) => level.id === levelId);
-    if (!configuredLevel) {
-      this.levelDebugStageSelect.replaceChildren();
-      this.levelDebugStageSelect.disabled = true;
-      return;
-    }
-    const stage = Math.max(1, Math.min(configuredLevel.stages.length, selectedStage));
-    const options = configuredLevel.stages.map(({ index, formationId }) => {
-      const option = document.createElement('option');
-      option.value = String(index);
-      option.textContent = `阶段 ${index} · ${formationId}`;
-      option.selected = index === stage;
-      return option;
-    });
-    this.levelDebugStageSelect.replaceChildren(...options);
-    this.levelDebugStageSelect.disabled = false;
-  }
-
-  private setLevelDebugMessage(message: string, error = false): void {
-    this.levelDebugMessage.textContent = message;
-    this.levelDebugMessage.classList.toggle('is-error', error);
-  }
-
   private setLevelDebugHiddenMessage(message: string, error = false): void {
     this.levelDebugHiddenMessage.textContent = message;
     this.levelDebugHiddenMessage.classList.toggle('is-error', error);
   }
 
-  private maximumLevelDebugHiddenCount(pathLength: number): number {
-    const availableCount = Math.max(0, Math.floor(pathLength) - 2);
-    const firstWindowCandidateCount = Math.max(0, Math.min(availableCount, 3));
-    return availableCount
-      - firstWindowCandidateCount
-      + Math.min(1, firstWindowCandidateCount);
-  }
-
-  private cancelPendingLevelDebugHiddenGeneration(): void {
-    this.levelDebugHiddenGenerationToken += 1;
-    this.pendingLevelDebugHiddenTask?.cancel();
-    this.pendingLevelDebugHiddenTask = undefined;
-  }
-
-  private async generateLevelDebugHiddenLayout(
-    request: LevelDebugHiddenGenerationRequest,
-  ): Promise<void> {
-    if (!this.canUseLevelDebugControls() || !this.currentLevel) {
-      this.setLevelDebugHiddenMessage('仅当前普通拼图关卡可使用难度调试。', true);
+  private loadLevelDebugDifficulty(difficulty: number): void {
+    if (!this.canUseLevelDebugControls() || !Number.isInteger(difficulty) || difficulty < 1 || difficulty > 10) return;
+    const configured = this.adaptiveConfiguredLevel();
+    if (!configured || !this.threeModeLibrary) return;
+    if (configured.stages[this.currentAdaptiveStage - 1]?.formationId.startsWith('guide_')) {
+      this.setLevelDebugHiddenMessage('引导关使用固定棋盘。');
       return;
     }
-
-    if (
-      request.mode === 'difficulty'
-      && (
-        !Number.isInteger(request.targetDifficulty)
-        || request.targetDifficulty < 1
-        || request.targetDifficulty > 10
-      )
-    ) {
-      this.setLevelDebugHiddenMessage('难度必须是 1–10 的整数。', true);
-      return;
-    }
-    if (
-      request.mode === 'tier-counts'
-      && request.targetTierCounts.some((count) => !Number.isInteger(count) || count < 0)
-    ) {
-      this.setLevelDebugHiddenMessage('难度 0 / 1 / 2 的数量必须是非负整数。', true);
-      return;
-    }
-
-    const sourceLevel = this.currentLevel;
-    const targetHiddenCount = request.mode === 'tier-counts'
-      ? request.targetTierCounts.reduce((sum, count) => sum + count, 0)
-      : undefined;
-    const maximumHiddenCount = this.maximumLevelDebugHiddenCount(
-      sourceLevel.solutionPath.length,
-    );
-    if (targetHiddenCount !== undefined && targetHiddenCount > maximumHiddenCount) {
-      this.setLevelDebugHiddenMessage(
-        `当前路径在“前 4 个最多隐藏 1 个”约束下最多可隐藏 ${maximumHiddenCount} 个，棋盘未修改。`,
-        true,
-      );
-      return;
-    }
-
-    this.normalBoardRequestToken += 1;
-    this.pendingDynamicHiddenTask?.cancel();
-    this.pendingDynamicHiddenTask = undefined;
-    this.cancelPendingLevelDebugHiddenGeneration();
-    const requestToken = ++this.levelDebugHiddenGenerationToken;
-    const generationIndex = ++this.levelDebugHiddenGenerationIndex;
-    const targetDifficulty = request.mode === 'difficulty' ? request.targetDifficulty : 5;
-    const requestSalt = request.mode === 'difficulty'
-      ? Math.imul(request.targetDifficulty + 1, 2654435761)
-      : Math.imul(request.targetTierCounts[0] + 1, 73856093)
-        ^ Math.imul(request.targetTierCounts[1] + 1, 19349663)
-        ^ Math.imul(request.targetTierCounts[2] + 1, 83492791);
-    const seed = (
-      this.dynamicHiddenSeed(sourceLevel, targetDifficulty)
-      ^ Math.imul(generationIndex, 1597334677)
-      ^ requestSalt
-    ) | 0;
-
-    this.boardScene.setPaused(true);
-    this.setLevelDebugHiddenMessage(
-      request.mode === 'difficulty'
-        ? `正在按难度 ${request.targetDifficulty} 生成隐藏位置…`
-        : `正在搜索精确数量 ${request.targetTierCounts.join(' / ')}…`,
-    );
-    const task = startDynamicHiddenGeneration({
-      path: sourceLevel.solutionPath.map((cell) => ({ ...cell })),
-      boardShape: sourceLevel.boardShape,
-      targetDifficulty,
-      seed,
-      safetyMode: 'hard-boundaries',
-      targetTierCounts: request.mode === 'tier-counts'
-        ? [...request.targetTierCounts]
-        : undefined,
-    }, request.mode === 'tier-counts' ? 8000 : 3000);
-    this.pendingLevelDebugHiddenTask = task;
-    this.renderLevelDebugPanel();
-
-    try {
-      const result = await task.promise;
-      if (
-        requestToken !== this.levelDebugHiddenGenerationToken
-        || this.currentLevel !== sourceLevel
-      ) return;
-
-      const actualTierCounts = result.report.actualTierCounts.slice(0, 3);
-      const actualSummary = actualTierCounts.join(' / ');
-      if (!result.report.accepted) {
-        const message = request.mode === 'tier-counts'
-          ? result.report.withinTargetTolerance && result.report.actualTierCounts[3] === 0
-            ? `数量已命中（实际 ${actualSummary}），但布局未通过硬约束，棋盘未修改。`
-            : `未找到精确布局，棋盘未修改。目标 ${request.targetTierCounts.join(' / ')}，最接近 ${actualSummary}${result.report.actualTierCounts[3] > 0 ? `，另有 ${result.report.actualTierCounts[3]} 个 3 分` : ''}。`
-          : `难度 ${request.targetDifficulty} 的候选布局未通过安全验收，棋盘未修改。实际 0 / 1 / 2：${actualSummary}。`;
-        this.setLevelDebugHiddenMessage(message, true);
-        return;
-      }
-
-      const resolvedLevel: LevelData = {
-        ...sourceLevel,
-        hiddenCells: result.hiddenIndices.map((index) => ({
-          ...sourceLevel.solutionPath[index],
-        })),
-        algorithm: {
-          id: result.report.algorithmVersion,
-          parameters: {
-            debugMode: request.mode,
-            seed,
-            requestedDifficulty: request.mode === 'difficulty'
-              ? request.targetDifficulty
-              : undefined,
-            targetHiddenCount: result.report.targetHiddenCount,
-            targetTierCounts: [...result.report.targetTierCounts],
-            actualTierCounts: [...result.report.actualTierCounts],
-            evaluatedCandidateCount: result.report.evaluatedCandidateCount,
-            tierDistance: result.report.tierDistance,
-          },
-        },
-      };
-      this.setCurrentBoard(resolvedLevel);
-      this.setLevelDebugHiddenMessage(
-        request.mode === 'difficulty'
-          ? `已按难度 ${request.targetDifficulty} 生成 ${result.hiddenIndices.length} 个隐藏数字；实际 0 / 1 / 2：${actualSummary}。`
-          : `已精确生成 ${result.hiddenIndices.length} 个隐藏数字；实际 0 / 1 / 2：${actualSummary}。`,
-      );
-    } catch (error) {
-      if (requestToken !== this.levelDebugHiddenGenerationToken) return;
-      if (error instanceof Error && error.name === 'AbortError') return;
-      const message = error instanceof Error ? error.message : '未知错误';
-      this.setLevelDebugHiddenMessage(`隐藏位置生成失败，棋盘未修改：${message}`, true);
-    } finally {
-      if (this.pendingLevelDebugHiddenTask === task) {
-        this.pendingLevelDebugHiddenTask = undefined;
-      }
-      if (requestToken === this.levelDebugHiddenGenerationToken) {
-        if (this.currentScreen === 'play') this.boardScene.setPaused(false);
-        this.renderLevelDebugPanel();
-      }
-    }
-  }
-
-  private async loadLevelDebugSelection(levelId: number, requestedStage: number): Promise<void> {
-    if (!this.canUseLevelDebugControls()) {
-      this.setLevelDebugMessage('仅普通拼图关卡可使用调试跳转。', true);
-      return;
-    }
-    const configuredLevel = this.threeModeCampaign.find((level) => level.id === levelId);
-    if (!configuredLevel) {
-      this.setLevelDebugMessage(`找不到关卡 ${Number.isFinite(levelId) ? levelId : '—'}。`, true);
-      return;
-    }
-    const stage = Math.max(1, Math.min(
-      configuredLevel.stages.length,
-      Number.isFinite(requestedStage) ? Math.floor(requestedStage) : 1,
-    ));
-    const pattern = this.playPuzzlePatternForLevel(levelId);
-    this.settings.puzzleMainLevelId = levelId;
-    this.currentAdaptiveStage = stage;
-    this.playPuzzlePattern = pattern;
-    this.playPuzzleProgress = {
-      patternId: pattern.id,
-      revealed: Math.min(puzzlePieceCount(pattern), stage - 1),
-    };
-    saveSettings(this.settings);
-    savePlayPuzzleProgress(this.playPuzzleProgress);
-    this.stopPlayPuzzleCornerPresses();
-    this.stopPlayPuzzlePieceFloats();
-    this.playPuzzleFinale.hidden = true;
-    this.playPuzzleFinaleBusy = false;
-    this.resultOverlay.hidden = true;
-    this.lives = 3;
-    this.renderLives();
-    this.boardScene.setPaused(false);
-    this.resetLevelDebugExperience(levelId);
-    await this.setPreparedNormalBoard();
-    this.renderDefaultLobbyLevelNumber();
-    this.setLevelDebugMessage(`已加载 Level ${levelId}-${stage}。`);
+    const level = resolveThreeModeStage(this.threeModeLibrary, configured, {
+      stage: this.currentAdaptiveStage, targetDifficulty: difficulty,
+    }).level;
+    this.markDifficultyEvent('excluded');
+    this.setCurrentBoard(level);
+    this.setLevelDebugHiddenMessage('已加载关卡库第 ' + difficulty + ' 档；手动调试阶段不计入能力评分。');
   }
 
   private renderLevelDebugPanel(level = this.currentLevel): void {
     const enabled = this.canUseLevelDebugControls();
-    const hiddenGenerationBusy = this.pendingLevelDebugHiddenTask !== undefined;
-    const levelId = this.settings.puzzleMainLevelId;
-    const configuredLevel = this.threeModeCampaign.find((item) => item.id === levelId);
-    const totalStages = configuredLevel?.stages.length ?? 0;
-    const stage = Math.max(1, Math.min(totalStages || 1, this.currentAdaptiveStage));
-    const configuredFormation = configuredLevel?.stages[stage - 1]?.formationId;
-    const difficultyMatch = configuredFormation?.match(/_(10|[1-9])$/);
-
-    this.levelDebugStatus.textContent = hiddenGenerationBusy
-      ? '生成隐藏中'
-      : enabled
-        ? '运行中'
-        : '等待普通关卡';
-    this.levelDebugLevelBadge.textContent = configuredLevel ? `Level ${levelId}` : 'Level —';
-    this.levelDebugStage.textContent = configuredLevel ? `${stage} / ${totalStages}` : '—';
-    this.levelDebugFormation.textContent = level?.formationId === undefined
-      ? configuredFormation ?? '—'
-      : String(level.formationId);
-    this.levelDebugFormation.title = this.levelDebugFormation.textContent;
-    this.levelDebugDifficulty.textContent = configuredFormation?.startsWith('guide_')
-      ? '引导关'
-      : difficultyMatch?.[1] ?? '—';
-    this.levelDebugBoardSize.textContent = level ? `${level.columns} × ${level.rows}` : '—';
-    this.levelDebugCellCount.textContent = level ? String(level.solutionPath.length) : '—';
-    this.levelDebugCrossingCount.textContent = level
-      ? String(countCrossings(level.solutionPath, level.boardShape))
-      : '—';
-    this.levelDebugPuzzleFlow.textContent = this.settings.showPuzzleFlow ? '开启' : '关闭';
-
-    if (document.activeElement !== this.levelDebugLevelInput) {
-      this.levelDebugLevelInput.value = String(levelId);
-    }
-    this.populateLevelDebugStages(levelId, stage);
-    this.levelDebugLoadButton.disabled = !enabled || hiddenGenerationBusy;
-    this.levelDebugPreviousStage.disabled = !enabled || hiddenGenerationBusy || stage <= 1;
-    this.levelDebugNextStage.disabled = !enabled || hiddenGenerationBusy || stage >= totalStages;
-    this.levelDebugReloadStage.disabled = !enabled || hiddenGenerationBusy;
-    this.levelDebugQuickComplete.disabled = !enabled || hiddenGenerationBusy;
+    const hiddenGenerationBusy = false;
     const hiddenControlsDisabled = !enabled || !level || hiddenGenerationBusy;
     this.levelDebugHiddenDifficulty.disabled = hiddenControlsDisabled;
     this.levelDebugGenerateDifficulty.disabled = hiddenControlsDisabled;
-    this.levelDebugGenerateTierCounts.disabled = hiddenControlsDisabled;
-    const maximumHiddenCount = level
-      ? this.maximumLevelDebugHiddenCount(level.solutionPath.length)
-      : 0;
-    [this.levelDebugTier0Count, this.levelDebugTier1Count, this.levelDebugTier2Count]
-      .forEach((input) => {
-        input.disabled = hiddenControlsDisabled;
-        input.max = String(maximumHiddenCount);
-      });
+    this.renderDifficultyState();
     this.renderLevelDebugExperience();
   }
 
@@ -1281,167 +962,7 @@ class NumberConnectApp {
   }
 
   private renderLevelDebugExperience(): void {
-    this.levelDebugErrorCount.textContent = String(this.levelDebugExperienceErrors);
-    this.levelDebugReleaseCount.textContent = String(this.levelDebugExperienceReleases);
-    this.levelDebugElapsedTime.textContent = this.formatExperienceTime(this.levelDebugElapsedMs());
-    this.levelDebugReviveCount.textContent = String(this.levelDebugExperienceRevives);
-    this.renderLevelDebugExperienceRadar();
     this.renderLevelDebugErrorHistory();
-  }
-
-  private renderLevelDebugExperienceRadar(): void {
-    const active = this.levelDebugActiveStageExperience;
-    const activeElapsedMs = active
-      ? active.elapsedMs + (
-          active.startedAt === undefined ? 0 : performance.now() - active.startedAt
-        )
-      : 0;
-    const stageRecords: PuzzleStageExperience[] = [
-      ...this.levelDebugStageExperiences.filter(({ stage }) => stage !== active?.stage),
-      ...(active ? [{
-        stage: active.stage,
-        formationId: active.formationId,
-        errors: active.errors,
-        releases: active.releases,
-        elapsedMs: activeElapsedMs,
-        revives: active.revives,
-        errorRecords: active.errorRecords,
-      }] : []),
-    ].sort((left, right) => left.stage - right.stage);
-    const cumulativeStages = stageRecords.reduce<PuzzleStageExperience[]>((result, stage) => {
-      const previous = result.at(-1);
-      result.push({
-        stage: stage.stage,
-        formationId: stage.formationId,
-        errors: (previous?.errors ?? 0) + stage.errors,
-        releases: (previous?.releases ?? 0) + stage.releases,
-        elapsedMs: (previous?.elapsedMs ?? 0) + stage.elapsedMs,
-        revives: (previous?.revives ?? 0) + stage.revives,
-        errorRecords: [
-          ...(previous?.errorRecords ?? []),
-          ...stage.errorRecords,
-        ],
-      });
-      return result;
-    }, []);
-    const metrics = [
-      { label: '错误', value: (stage: PuzzleStageExperience) => stage.errors },
-      { label: '松手', value: (stage: PuzzleStageExperience) => stage.releases },
-      { label: '计时(min)', value: (stage: PuzzleStageExperience) => stage.elapsedMs / 60_000 },
-      { label: '复活', value: (stage: PuzzleStageExperience) => stage.revives },
-    ];
-    const gridUnitCount = Math.max(
-      5,
-      Math.ceil(Math.max(
-        0,
-        ...cumulativeStages.flatMap((stage) => metrics.map((metric) => metric.value(stage))),
-      )),
-    );
-    const centerX = 120;
-    const centerY = 104;
-    const radius = 72;
-    const labelRadius = 91;
-    const angleAt = (index: number): number => -Math.PI / 2 + index * Math.PI * 2 / metrics.length;
-    const pointAt = (index: number, distance: number): [number, number] => {
-      const angle = angleAt(index);
-      return [
-        centerX + Math.cos(angle) * distance,
-        centerY + Math.sin(angle) * distance,
-      ];
-    };
-    const pointsAt = (distances: number[]): string => distances
-      .map((distance, index) => pointAt(index, distance).map((value) => value.toFixed(2)).join(','))
-      .join(' ');
-    const pathAt = (distances: number[]): string => distances
-      .map((distance, index) => {
-        const point = pointAt(index, distance).map((value) => value.toFixed(2)).join(',');
-        return `${index === 0 ? 'M' : 'L'}${point}`;
-      })
-      .join(' ') + ' Z';
-    const svgElement = (name: string): SVGElement => (
-      document.createElementNS('http://www.w3.org/2000/svg', name)
-    );
-
-    const grid = Array.from({ length: gridUnitCount }, (_, index) => (index + 1) / gridUnitCount)
-      .map((level) => {
-        const polygon = svgElement('polygon');
-        polygon.setAttribute('class', 'level-debug-radar-grid');
-        polygon.setAttribute('points', pointsAt(metrics.map(() => radius * level)));
-        return polygon;
-      });
-    const axes = metrics.map((_, index) => {
-      const [x, y] = pointAt(index, radius);
-      const line = svgElement('line');
-      line.setAttribute('class', 'level-debug-radar-axis');
-      line.setAttribute('x1', String(centerX));
-      line.setAttribute('y1', String(centerY));
-      line.setAttribute('x2', String(x));
-      line.setAttribute('y2', String(y));
-      return line;
-    });
-    const plots = cumulativeStages.flatMap((stage, stageIndex) => {
-      const hue = (stage.stage * 73 + 145) % 360;
-      const color = `hsl(${hue} 68% 48%)`;
-      const distances = metrics.map((metric) => (
-        radius * metric.value(stage) / gridUnitCount
-      ));
-      const previousStage = cumulativeStages[stageIndex - 1];
-      const previousDistances = previousStage
-        ? metrics.map((metric) => radius * metric.value(previousStage) / gridUnitCount)
-        : undefined;
-      const layer = svgElement('path');
-      layer.setAttribute('class', 'level-debug-radar-layer');
-      layer.setAttribute(
-        'd',
-        `${pathAt(distances)}${previousDistances ? ` ${pathAt(previousDistances)}` : ''}`,
-      );
-      layer.setAttribute('fill', color);
-      const polygon = svgElement('polygon');
-      polygon.setAttribute('class', 'level-debug-radar-plot');
-      polygon.setAttribute('points', pointsAt(distances));
-      polygon.setAttribute('fill', 'none');
-      polygon.setAttribute('stroke', color);
-      const points = distances.map((distance, index) => {
-        const [x, y] = pointAt(index, distance);
-        const circle = svgElement('circle');
-        circle.setAttribute('class', 'level-debug-radar-point');
-        circle.setAttribute('cx', String(x));
-        circle.setAttribute('cy', String(y));
-        circle.setAttribute('r', '3');
-        circle.setAttribute('fill', color);
-        return circle;
-      });
-      return [layer, polygon, ...points];
-    });
-    const labels = metrics.map((metric, index) => {
-      const [x, y] = pointAt(index, labelRadius);
-      const label = svgElement('text');
-      label.setAttribute('class', 'level-debug-radar-label');
-      label.setAttribute('x', String(x));
-      label.setAttribute('y', String(y));
-      label.textContent = metric.label;
-      return label;
-    });
-    this.levelDebugExperienceRadar.replaceChildren(...grid, ...axes, ...plots, ...labels);
-    this.levelDebugExperienceRadar.setAttribute(
-      'aria-label',
-      `各阶段独立体验数据堆叠雷达图，每格代表 1，共 ${gridUnitCount} 格、${stageRecords.length} 个阶段`,
-    );
-
-    const legend = stageRecords.map((stage) => {
-      const hue = (stage.stage * 73 + 145) % 360;
-      const item = document.createElement('div');
-      const swatch = document.createElement('i');
-      const title = document.createElement('strong');
-      const values = document.createElement('small');
-      item.style.setProperty('--stage-color', `hsl(${hue} 68% 48%)`);
-      title.textContent = `阶段 ${stage.stage}`;
-      values.textContent = `错 ${stage.errors} · 松 ${stage.releases} · ${(stage.elapsedMs / 60_000).toFixed(2)}min · 复 ${stage.revives}`;
-      values.title = `${stage.formationId} · ${values.textContent}`;
-      item.append(swatch, title, values);
-      return item;
-    });
-    this.levelDebugExperienceLegend.replaceChildren(...legend);
   }
 
   private renderLevelDebugErrorHistory(): void {
@@ -2374,6 +1895,7 @@ class NumberConnectApp {
       if (this.settingsContext !== 'play') return;
       this.settingsDialog.close();
       this.boardScene.setPaused(false);
+      this.markDifficultyEvent('excluded');
       this.boardScene.quickComplete();
     });
     this.settingsRestartButton.addEventListener('click', () => this.restartFromSettings());
@@ -2561,6 +2083,7 @@ class NumberConnectApp {
 
   private setSolutionReveal(revealed: boolean): void {
     if (revealed && this.activePowerUp === 'paint-bucket') this.cancelPowerUpTargeting();
+    if (revealed) this.markDifficultyEvent('excluded');
     this.solutionRevealed = revealed;
     this.solutionToggle.checked = revealed;
     this.boardScene.setSolutionReveal(revealed);
@@ -2660,106 +2183,93 @@ class NumberConnectApp {
     if (!configuredLevel || !this.threeModeLibrary) throw new Error('没有可用的拼图关卡配置。');
     const stage = Math.max(1, Math.min(this.currentAdaptiveStage, configuredLevel.stages.length));
     this.currentAdaptiveStage = stage;
+    const formationId = configuredLevel.stages[stage - 1].formationId;
+    this.activeDifficultyStage = this.settings.adaptiveDifficultyEnabled && !formationId.startsWith('guide_')
+      ? lockStageDifficulty(this.stageDifficulty, configuredLevel.id, stage, formationId)
+      : undefined;
+    if (this.activeDifficultyStage) this.restartDifficultyAttempt(this.activeDifficultyStage);
+    this.persistDifficulty();
     return resolveThreeModeStage(this.threeModeLibrary, configuredLevel, {
       stage,
+      targetDifficulty: this.activeDifficultyStage?.selection.difficulty,
       runtimeLevelId: configuredLevel.id,
     }).level;
   }
 
-  private dynamicDifficultyForLevel(level: LevelData): number | undefined {
-    if (typeof level.formationId !== 'string' || level.formationId.startsWith('guide_')) {
-      return undefined;
-    }
-    try {
-      return parseFormationId(level.formationId).difficulty;
-    } catch {
-      return undefined;
-    }
-  }
-
-  private dynamicHiddenSeed(level: LevelData, difficulty: number): number {
-    let pathHash = 0x811c9dc5;
-    level.solutionPath.forEach((cell, index) => {
-      const cellValue = Math.imul(cell.x + 1, 73856093)
-        ^ Math.imul(cell.y + 1, 19349663)
-        ^ Math.imul(index + 1, 83492791);
-      pathHash = Math.imul(pathHash ^ cellValue, 16777619);
-    });
-    return (
-      pathHash
-      ^ Math.imul(this.settings.puzzleMainLevelId + 1, 1000003)
-      ^ Math.imul(this.currentAdaptiveStage + 1, 9176)
-      ^ Math.imul(difficulty + 1, 104729)
-      ^ 0x2f6e2b1d
-    ) | 0;
-  }
-
   private async setPreparedNormalBoard(): Promise<void> {
-    this.cancelPendingLevelDebugHiddenGeneration();
-    const requestToken = ++this.normalBoardRequestToken;
-    this.pendingDynamicHiddenTask?.cancel();
-    this.pendingDynamicHiddenTask = undefined;
-    const level = this.createNormalLevel();
-    const difficulty = this.dynamicDifficultyForLevel(level);
-    if (!this.settings.dynamicDifficultyLayoutEnabled || difficulty === undefined) {
-      this.setCurrentBoard(level);
-      return;
-    }
-
-    this.boardScene.setPaused(true);
-    const seed = this.dynamicHiddenSeed(level, difficulty);
-    const task = startDynamicHiddenGeneration({
-      path: level.solutionPath.map((cell) => ({ ...cell })),
-      boardShape: level.boardShape,
-      targetDifficulty: difficulty,
-      seed,
-    });
-    this.pendingDynamicHiddenTask = task;
-
-    try {
-      const result = await task.promise;
-      if (requestToken !== this.normalBoardRequestToken) return;
-      if (!result.report.accepted) {
-        console.warn('动态隐藏布局未通过安全验收，已使用预制布局。', result.report);
-        this.setCurrentBoard(level);
-        return;
-      }
-      const resolvedLevel: LevelData = {
-        ...level,
-        hiddenCells: result.hiddenIndices.map((index) => ({ ...level.solutionPath[index] })),
-        algorithm: {
-          id: result.report.algorithmVersion,
-          parameters: {
-            seed,
-            requestedDifficulty: result.report.requestedDifficulty,
-            targetHiddenCount: result.report.targetHiddenCount,
-            targetTierCounts: [...result.report.targetTierCounts],
-            actualTierCounts: [...result.report.actualTierCounts],
-            ambiguousStepCount: result.report.ambiguousStepCount,
-            unsafeTier0Count: result.report.unsafeTier0Count,
-            tierDistance: result.report.tierDistance,
-            withinTargetTolerance: result.report.withinTargetTolerance,
-          },
-        },
-      };
-      this.setCurrentBoard(resolvedLevel);
-    } catch (error) {
-      if (requestToken !== this.normalBoardRequestToken) return;
-      if (!(error instanceof Error) || error.name !== 'AbortError') {
-        console.warn('动态隐藏布局生成失败，已使用预制布局。', error);
-      }
-      this.setCurrentBoard(level);
-    } finally {
-      if (this.pendingDynamicHiddenTask === task) this.pendingDynamicHiddenTask = undefined;
-      if (requestToken === this.normalBoardRequestToken) this.boardScene.setPaused(false);
-    }
+    this.setCurrentBoard(this.createNormalLevel());
+    this.setLevelDebugHiddenMessage('可手动加载当前阵型的 1–10 档；手动测试不计入能力评分。');
+    this.boardScene.setPaused(false);
   }
 
   private cancelPendingNormalBoard(): void {
-    this.normalBoardRequestToken += 1;
-    this.pendingDynamicHiddenTask?.cancel();
-    this.pendingDynamicHiddenTask = undefined;
-    this.cancelPendingLevelDebugHiddenGeneration();
+    // Board selection is synchronous; persist the locked stage when leaving play.
+    this.persistDifficulty();
+  }
+
+  private persistDifficulty(): void {
+    saveStageDifficulty(this.stageDifficulty, window.localStorage);
+  }
+
+  private currentDifficultyAttempt(): StageAttempt | undefined {
+    const entry = this.activeDifficultyStage;
+    return this.playContext === 'normal' && this.mode === 'normal'
+      && entry?.levelId === this.settings.puzzleMainLevelId && entry.stage === this.currentAdaptiveStage
+      ? entry : undefined;
+  }
+
+  private markDifficultyEvent(event: 'started' | 'errors' | 'assisted' | 'excluded'): void {
+    const entry = this.currentDifficultyAttempt();
+    if (!entry || entry.completed) return;
+    if (event !== 'errors' && entry[event]) return;
+    if (event === 'errors') entry.errors += 1;
+    else entry[event] = true;
+    this.persistDifficulty();
+    this.renderDifficultyState();
+  }
+
+  private finishDifficultyStage(outcome?: StageOutcome): void {
+    if (this.playContext !== 'normal' || this.mode !== 'normal') return;
+    const entry = this.currentDifficultyAttempt();
+    const actualOutcome = outcome ?? (entry?.assisted ? 'assisted' : entry && entry.errors > 0 ? 'normal' : 'clean');
+    const stressBefore = this.stageDifficulty.stress;
+    const skillBefore = this.stageDifficulty.skill;
+    const record = entry ? recordStageOutcome(this.stageDifficulty, entry, actualOutcome) : undefined;
+    if (!record && this.difficultyFlowPhase === 'result') return;
+    this.lastFlowResult = {
+      levelId: this.settings.puzzleMainLevelId, stage: this.currentAdaptiveStage,
+      outcome: actualOutcome, record, stressBefore, skillBefore,
+      reason: entry?.excluded ? '手动调试：能力与受挫不计分'
+        : entry ? '已完成阶段回放：能力与受挫保持不变'
+          : String(this.currentLevel?.formationId).startsWith('guide_') ? '引导关：能力与受挫保持不变'
+            : '动态难度关闭：能力与受挫保持不变',
+    };
+    this.difficultyFlowPhase = 'result';
+    this.persistDifficulty();
+    this.renderDifficultyState('result');
+  }
+
+  private restartDifficultyAttempt(entry: StageAttempt): void {
+    const before = this.stageDifficulty.history.at(-1);
+    const stressBefore = this.stageDifficulty.stress;
+    const skillBefore = this.stageDifficulty.skill;
+    restartStageAttempt(this.stageDifficulty, entry);
+    const record = this.stageDifficulty.history.at(-1);
+    if (record && record !== before) {
+      this.lastFlowResult = { levelId: entry.levelId, stage: entry.stage, outcome: 'fail',
+        record, stressBefore, skillBefore };
+    }
+  }
+
+  private renderDifficultyState(event?: 'selection' | 'result' | 'retry'): void {
+    this.difficultyFlowView.render({
+      active: this.canUseLevelDebugControls(), phase: this.difficultyFlowPhase,
+      levelId: this.settings.puzzleMainLevelId, stage: this.currentAdaptiveStage,
+      totalStages: this.adaptiveTotalStages(), formationId: String(this.currentLevel?.formationId ?? ''),
+      entry: this.currentDifficultyAttempt(), skill: this.stageDifficulty.skill,
+      stress: this.stageDifficulty.stress, progress: this.currentProgress, total: this.currentTotal,
+      lastResult: this.lastFlowResult, persisted: this.stageDifficulty,
+    }, event);
   }
 
   private createBeadLevel(): LevelData {
@@ -2823,11 +2333,13 @@ class NumberConnectApp {
       boardZoomEnabled: this.isTouchPreviewZoomMode(),
       mode: this.mode,
       onInteraction: () => {
+        if (usesPuzzleStage) this.markDifficultyEvent('started');
         if (usesPuzzleStage) this.startLevelDebugStageExperience();
       },
       onProgress: (current, total) => {
         this.currentProgress = current;
         this.currentTotal = total;
+        if (usesPuzzleStage) this.renderDifficultyState();
         this.renderDailyPlayProgress();
         this.renderPowerUps();
         if (this.playContext !== 'editor-playtest') {
@@ -2835,6 +2347,7 @@ class NumberConnectApp {
         }
       },
       onWrong: (message, shouldLoseLife, step) => {
+        if (usesPuzzleStage) this.markDifficultyEvent('errors');
         if (shouldLoseLife) this.handleWrong();
         if (usesPuzzleStage) this.recordLevelDebugError(step);
         if (this.playContext !== 'editor-playtest') {
@@ -2860,6 +2373,8 @@ class NumberConnectApp {
   }
 
   private setCurrentBoard(level: LevelData, profile?: EndlessStageSettings): void {
+    if (this.playContext !== 'normal' || this.mode !== 'normal') this.activeDifficultyStage = undefined;
+    this.difficultyFlowPhase = 'playing';
     this.currentLevel = level;
     if (
       this.canUseLevelDebugControls()
@@ -2873,6 +2388,7 @@ class NumberConnectApp {
     this.preparePuzzleShowcase();
     this.boardScene.setBoard(this.makeSession(level, profile));
     this.renderLevelDebugPanel(level);
+    this.renderDifficultyState('selection');
     this.renderPowerUps();
     if (this.playContext !== 'editor-playtest') {
       const usesPuzzleStage = this.playContext === 'normal'
@@ -3066,6 +2582,7 @@ class NumberConnectApp {
   private undoLastConnectionStep(): void {
     if (this.activePowerUp === 'paint-bucket') this.cancelPowerUpTargeting();
     if (!this.boardScene.canUndoStep()) {
+      this.markDifficultyEvent('excluded');
       if (this.boardScene.quickComplete()) {
         this.setPowerUpMessage('已直接完成当前阶段。', 'success');
       } else {
@@ -3090,6 +2607,7 @@ class NumberConnectApp {
     const applyEffectOnce = (): T => {
       if (!effectApplied) {
         effectApplied = true;
+        this.markDifficultyEvent('assisted');
         effectResult = applyEffect();
       }
       return effectResult!;
@@ -3577,6 +3095,7 @@ class NumberConnectApp {
   }
 
   private handleLifeDepleted(): void {
+    this.finishDifficultyStage('fail');
     this.cancelPowerUpTargeting();
     this.renderPowerUps();
     this.boardScene.setPaused(true);
@@ -4181,6 +3700,7 @@ class NumberConnectApp {
       this.completeCollectionLevel();
       this.showCollectionResult();
     } else {
+      this.finishDifficultyStage();
       this.finishLevelDebugStageExperience();
       const hasNextStage = this.currentAdaptiveStage < this.adaptiveTotalStages(
         this.settings.puzzleMainLevelId,
@@ -4279,6 +3799,12 @@ class NumberConnectApp {
   }
 
   private continueAfterFailureVideo(): void {
+    this.markDifficultyEvent('assisted');
+    const entry = this.currentDifficultyAttempt();
+    if (entry) entry.failureRecorded = false;
+    this.difficultyFlowPhase = 'playing';
+    this.persistDifficulty();
+    this.renderDifficultyState('retry');
     const previousLives = this.lives;
     this.lives = 3;
     this.renderLives({ gainedFrom: previousLives });
@@ -4295,6 +3821,11 @@ class NumberConnectApp {
   }
 
   private restartCurrent(): void {
+    const entry = this.currentDifficultyAttempt();
+    if (entry && !entry.completed) {
+      this.restartDifficultyAttempt(entry);
+      this.persistDifficulty();
+    }
     this.resultOverlay.hidden = true;
     this.boardScene.setPaused(false);
     if (this.canUseLevelDebugControls()) {
@@ -4507,7 +4038,7 @@ class NumberConnectApp {
     query<HTMLInputElement>('#settings-next').checked = this.settings.showNextNumber;
     query<HTMLInputElement>('#settings-difficulty-score').checked = this.settings.showDifficultyScore;
     query<HTMLInputElement>('#settings-dynamic-difficulty').checked = (
-      this.settings.dynamicDifficultyLayoutEnabled
+      this.settings.adaptiveDifficultyEnabled
     );
     query<HTMLInputElement>('#settings-sound').checked = this.settings.soundEnabled;
     query<HTMLInputElement>('#settings-puzzle-flow').checked = this.settings.showPuzzleFlow;
@@ -4573,7 +4104,7 @@ class NumberConnectApp {
     this.settings.chargeProgressMode = this.selectedChargeProgressMode();
     this.settings.showNextNumber = query<HTMLInputElement>('#settings-next').checked;
     this.settings.showDifficultyScore = query<HTMLInputElement>('#settings-difficulty-score').checked;
-    this.settings.dynamicDifficultyLayoutEnabled = query<HTMLInputElement>(
+    this.settings.adaptiveDifficultyEnabled = query<HTMLInputElement>(
       '#settings-dynamic-difficulty',
     ).checked;
     this.settings.soundEnabled = query<HTMLInputElement>('#settings-sound').checked;

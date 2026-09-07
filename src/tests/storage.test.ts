@@ -78,17 +78,17 @@ describe('game settings migration', () => {
     }
   });
 
-  it('keeps dynamic difficulty off by default and loads only an explicit true value', () => {
+  it('enables the new stage model by default and ignores the retired generator setting', () => {
     const getItem = vi.fn()
       .mockReturnValueOnce(JSON.stringify({}))
-      .mockReturnValueOnce(JSON.stringify({ dynamicDifficultyLayoutEnabled: true }))
-      .mockReturnValueOnce(JSON.stringify({ dynamicDifficultyLayoutEnabled: 'true' }));
+      .mockReturnValueOnce(JSON.stringify({ dynamicDifficultyLayoutEnabled: false }))
+      .mockReturnValueOnce(JSON.stringify({ adaptiveDifficultyEnabled: false }));
     vi.stubGlobal('window', { localStorage: { getItem } });
 
     try {
-      expect(loadSettings().dynamicDifficultyLayoutEnabled).toBe(false);
-      expect(loadSettings().dynamicDifficultyLayoutEnabled).toBe(true);
-      expect(loadSettings().dynamicDifficultyLayoutEnabled).toBe(false);
+      expect(loadSettings().adaptiveDifficultyEnabled).toBe(true);
+      expect(loadSettings().adaptiveDifficultyEnabled).toBe(true);
+      expect(loadSettings().adaptiveDifficultyEnabled).toBe(false);
     } finally {
       vi.unstubAllGlobals();
     }

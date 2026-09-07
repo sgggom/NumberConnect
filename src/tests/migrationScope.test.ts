@@ -9,19 +9,18 @@ describe('migrated product scope', () => {
     expect(indexMarkup).not.toContain('id="settings-input-mode"');
   });
 
-  it('shows the actual path crossing count in the level debug panel', () => {
-    expect(indexMarkup).toContain('id="level-debug-crossing-count"');
-    expect(indexMarkup).toContain('<dt>交叉次数</dt>');
+  it('removes level information and jump controls to make room for the state machine', () => {
+    expect(indexMarkup).not.toContain('id="level-debug-crossing-count"');
+    expect(indexMarkup).not.toContain('id="level-debug-level-input"');
   });
 
-  it('keeps the two hidden-difficulty debug generators as separate controls', () => {
+  it('exposes the new stage model and authored ranks without the retired generators', () => {
     expect(indexMarkup).toContain('id="level-debug-hidden-difficulty"');
     expect(indexMarkup).toContain('id="level-debug-generate-difficulty"');
-    expect(indexMarkup).toContain('id="level-debug-tier-0-count"');
-    expect(indexMarkup).toContain('id="level-debug-tier-1-count"');
-    expect(indexMarkup).toContain('id="level-debug-tier-2-count"');
-    expect(indexMarkup).toContain('id="level-debug-generate-tier-counts"');
-    expect(indexMarkup).toContain('两个入口独立生效');
+    expect(indexMarkup).toContain('id="difficulty-flow"');
+    expect(indexMarkup).toContain('动态难度实时状态机');
+    expect(indexMarkup).not.toContain('id="level-debug-generate-tier-counts"');
+    expect(indexMarkup).not.toContain('实时生成隐藏位置');
   });
 
   it('provides whole-level and per-stage experience sections in the result panel', () => {
@@ -31,8 +30,8 @@ describe('migrated product scope', () => {
     expect(indexMarkup).toContain('各阶段明细');
     expect(indexMarkup).toContain('id="level-debug-error-history-list"');
     expect(indexMarkup).toContain('每次错误');
-    expect(indexMarkup).toContain('id="level-debug-experience-radar"');
-    expect(indexMarkup).toContain('id="level-debug-experience-legend"');
+    expect(indexMarkup).not.toContain('id="level-debug-experience-radar"');
+    expect(indexMarkup).not.toContain('id="level-debug-experience-title"');
   });
 
   it('keeps daily challenge, bead gameplay, and gallery as standalone lobby destinations', () => {
