@@ -8,7 +8,7 @@ export const isRhythmPosition = (value: unknown): value is RhythmPosition => {
     && Number.isInteger(item.position) && item.position >= 1 && item.position <= 5;
 };
 export const RHYTHM_OFFSETS = [
-  [-1, -1, -1, -1], [0, 0, 0, 0], [0, 1, 1, 0], [0, 0, 0, 0], [-1, -1, -1, -1],
+  [-1, -1, -1, -1], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 1, 1, 0],
 ] as const;
 export const rhythmOffset = (position: number, stage: number): number =>
   RHYTHM_OFFSETS[position - 1][Math.max(0, Math.min(3, stage - 1))];

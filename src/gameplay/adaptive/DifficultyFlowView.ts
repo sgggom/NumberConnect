@@ -38,7 +38,7 @@ export class DifficultyFlowView {
     rhythmTitle.textContent = !input.active ? '五局节奏 · 等待进入关卡'
       : entry?.excluded ? '五局节奏 · 手动调试，本阶段不参与'
       : entry?.assessment ? '五局节奏 · 考察关不占局数，各阶段初始第 5 档'
-      : entry?.rhythm ? `五局节奏 · 第 ${entry.rhythm.position} / 5 局 · ${['轻松进入', '常规', '挑战高峰', '常规回落', '轻松收尾'][entry.rhythm.position - 1]}`
+      : entry?.rhythm ? `五局节奏 · 第 ${entry.rhythm.position} / 5 局 · ${['轻松进入', '常规', '常规', '常规', '挑战高峰'][entry.rhythm.position - 1]}`
       : input.formationId.startsWith('guide_') ? '五局节奏 · 引导关不占局数'
       : entry ? '五局节奏 · 旧存档保留原选档，从下一新关开始' : '五局节奏 · 动态难度关闭';
     rhythm.append(rhythmTitle);
@@ -49,7 +49,7 @@ export class DifficultyFlowView {
         tag.textContent = `阶段 ${i + 1}：${offset > 0 ? '+' : ''}${offset} 档`; stages.append(tag);
       });
       rhythm.append(stages);
-      const note = document.createElement('small'); note.textContent = `${entry.rhythm.day} 分配 · 按整关计数，重开／复活不推进；跨日续玩保留本关节奏，次日新关从第 1 局起`;
+      const note = document.createElement('small'); note.textContent = `${entry.rhythm.day} 分配 · 显示计划偏移，已锁定棋盘保留原档位；重开／复活不推进；跨日续玩保留本关节奏，次日新关从第 1 局起`;
       rhythm.append(note);
     }
     const center = this.root.querySelector<HTMLElement>('[data-persisted]')!;

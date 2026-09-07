@@ -6,6 +6,9 @@ import { createStageDifficultyState, lockStageDifficulty, recordStageOutcome, re
 const today = new Date(2026, 8, 7, 10);
 const tomorrow = new Date(2026, 8, 8, 10);
 describe('five game experience rhythm', () => {
+  it('keeps games two through four neutral and places the middle-stage challenge in game five', () => {
+    expect(RHYTHM_OFFSETS).toEqual([[-1,-1,-1,-1],[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,1,1,0]]);
+  });
   it('allocates once per whole level, loops after five and excludes guides, assessment and old saves', () => {
     const state = createStageDifficultyState();
     expect(assignLevelRhythm(state, 1, today)).toBeUndefined();
@@ -30,7 +33,7 @@ describe('five game experience rhythm', () => {
 
   it('scores actual difficulty, keeps the baseline on replay, and protects rank bounds', () => {
     const state = createStageDifficultyState();
-    const entry = lockStageDifficulty(state, 14, 3, 'family', undefined, false, { day: '2026-09-07', position: 3 });
+    const entry = lockStageDifficulty(state, 14, 3, 'family', undefined, false, { day: '2026-09-07', position: 5 });
     const rank = entry.selection.difficulty;
     const p = predictStagePass(4, defaultStageRatings(3)[rank - 1]);
     const record = recordStageOutcome(state, entry, 'fail')!;
@@ -41,7 +44,7 @@ describe('five game experience rhythm', () => {
     recordStageOutcome(state, entry, 'clean');
     expect(state.skill).toBe(skill); expect(state.evidence).toBe(evidence);
     expect(state.lastDifficulties[2]).toBe(entry.baselineDifficulty);
-    for (const [ability, position, expected] of [[0, 1, 1], [12, 3, 10]]) {
+    for (const [ability, position, expected] of [[0, 1, 1], [12, 5, 10]]) {
       const fresh = createStageDifficultyState(); fresh.skill = ability;
       expect(lockStageDifficulty(fresh, 40, 3, 'family', undefined, false, { day: '2026-09-07', position }).selection.difficulty).toBe(expected);
     }
