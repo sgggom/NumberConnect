@@ -1,6 +1,7 @@
 /** Port of 动态难度模拟器/model.js (2026-09-07, first independent completion).
  * Ranks select authored library variants; ratings are experimental, not measured win rates.
  */
+import { rhythmOffset, isRhythmPosition, type RhythmPosition, type RhythmLedger } from './fiveGameRhythm';
 export const STAGE_DDA_VERSION = 'first-independent-v1';
 export const STAGE_DDA_STORAGE_KEY = 'number-connect.stage-dda.v1';
 export const DDA_CONFIG = {
@@ -38,6 +39,8 @@ export interface StageAttempt {
   attempt: number;
   replayDifficulty?: number;
   assessment?: boolean;
+  rhythm?: RhythmPosition;
+  baselineDifficulty?: number;
 }
 export interface DifficultyRecord {
   key: string;
@@ -55,6 +58,7 @@ export interface DifficultyRecord {
   attempt: number;
 }
 export interface StageDifficultyState {
+  rhythm?: RhythmLedger;
   version: typeof STAGE_DDA_VERSION;
   skill: number;
   evidence: number;
@@ -101,7 +105,7 @@ export const selectStageDifficulty = (
 };
 export const lockStageDifficulty = (
   state: StageDifficultyState, levelId: number, stage: number, formationId: string,
-  ratings?: number[], assessment = false,
+  ratings?: number[], assessment = false, rhythm?: RhythmPosition,
 ): StageAttempt => {
   const key = `${levelId}:${stage}:${formationId}`;
   if (state.stages[key]) return state.stages[key];
@@ -115,6 +119,13 @@ export const lockStageDifficulty = (
     entry.selection = { ...entry.selection, difficulty: 5, desired: 5, rating,
       p: predictStagePass(state.skill, rating), limited: false, bound: false };
     entry.assessment = true;
+  }
+  if (rhythm && !assessment) {
+    entry.rhythm = { ...rhythm };
+    entry.baselineDifficulty = entry.selection.difficulty;
+    const difficulty = clamp(entry.baselineDifficulty + rhythmOffset(rhythm.position, stage), 1, 10);
+    const rating = (ratings ?? defaultStageRatings(stage))[difficulty - 1];
+    entry.selection = { ...entry.selection, difficulty, rating, p: predictStagePass(state.skill, rating) };
   }
   state.stages[key] = entry;
   return entry;
@@ -148,7 +159,7 @@ export const recordStageOutcome = (
   };
   if (passed) {
     entry.completed = true;
-    state.lastDifficulties[profileIndex(entry.stage)] = entry.selection.difficulty;
+    state.lastDifficulties[profileIndex(entry.stage)] = entry.baselineDifficulty ?? entry.selection.difficulty;
   } else {
     entry.failureRecorded = true;
     entry.attempt += 1;
@@ -191,11 +202,17 @@ export const loadStageDifficulty = (storage: StoragePort): StageDifficultyState 
       || s.lastDifficulties.some(v => v !== null && (!Number.isInteger(v) || !finiteBetween(v, 1, 10)))
       || !s.stages || typeof s.stages !== 'object' || Array.isArray(s.stages)
       || !Array.isArray(s.history)) return createStageDifficultyState();
+    if (s.rhythm && (!isRhythmPosition({ day: s.rhythm.day, position: 1 })
+      || !Number.isSafeInteger(s.rhythm.next) || s.rhythm.next < 0
+      || !s.rhythm.levels || typeof s.rhythm.levels !== 'object' || Array.isArray(s.rhythm.levels)
+      || Object.values(s.rhythm.levels).some(value => !isRhythmPosition(value)))) return createStageDifficultyState();
     for (const [key, e] of Object.entries(s.stages)) {
       if (!e || key !== e.key || key !== `${e.levelId}:${e.stage}:${e.formationId}`
         || !Number.isInteger(e.levelId) || e.levelId < 1 || !Number.isInteger(e.stage) || e.stage < 1
         || typeof e.formationId !== 'string' || !e.selection
         || !Number.isInteger(e.selection.difficulty) || !finiteBetween(e.selection.difficulty, 1, 10)
+        || (e.rhythm !== undefined && (!isRhythmPosition(e.rhythm)
+          || !Number.isInteger(e.baselineDifficulty) || !finiteBetween(e.baselineDifficulty, 1, 10)))
         || (e.replayDifficulty !== undefined && (!Number.isInteger(e.replayDifficulty)
           || !finiteBetween(e.replayDifficulty, 1, e.selection.difficulty)))
         || !finiteBetween(e.selection.rating, 0, 12) || !finiteBetween(e.selection.p, 0, 1)

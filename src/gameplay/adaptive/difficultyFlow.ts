@@ -1,5 +1,6 @@
 import { DDA_CONFIG, type DifficultyRecord, type StageAttempt, type StageOutcome, type StageDifficultyState } from './stageDifficulty';
 import type { PlayerPlayStats } from '../../game/playerPlayStats';
+import { rhythmOffset } from './fiveGameRhythm';
 
 export interface FlowResult {
   levelId: number;
@@ -77,6 +78,11 @@ export const buildDifficultyFlow = (input: FlowInput): DifficultyFlow => {
       details[1] = '首个正式关：考察真实水平，本关各阶段固定从第 5 档开始';
       details[2] = `考察档位 5 · 初始预计 ${pct(entry.selection.p)} · 难度值 ${entry.selection.rating.toFixed(2)}`;
       details[3] = '考察关不受自动选档与升降幅度限制；下一关恢复自动选档';
+    }
+    if (entry?.rhythm) {
+      const offset = rhythmOffset(entry.rhythm.position, input.stage);
+      details[3] = `动态基线 ${entry.baselineDifficulty} 档 ${offset >= 0 ? '+' : '−'} ${Math.abs(offset)} → 初始 ${entry.selection.difficulty} 档；当前 ${currentRank} 档（限制 1–10）`;
+      details[2] = `动态理想第 ${entry.selection.desired} 档；节奏调整后初始预计 ${pct(entry.selection.p)} · 难度值 ${entry.selection.rating.toFixed(2)}`;
     }
     if (entry?.excluded) {
       details[1] = '已进入手动调试，自动目标不用于当前棋盘';

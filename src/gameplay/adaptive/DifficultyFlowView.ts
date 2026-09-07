@@ -1,4 +1,5 @@
 import { buildDifficultyFlow, type FlowInput } from './difficultyFlow';
+import { RHYTHM_OFFSETS } from './fiveGameRhythm';
 
 export class DifficultyFlowView {
   private readonly stage: HTMLElement;
@@ -16,6 +17,8 @@ export class DifficultyFlowView {
       <div class="difficulty-flow-branches"><span data-branch="advance">完成 → ① 读取状态 · 开启下一轮</span><span data-branch="retry">重开 −1 档（最低 1）／复活原棋盘 → ⑤</span></div>
       <div class="difficulty-live" data-live></div><section class="difficulty-history"><h3>变化记录 <small>持久化 · 最近 5 条结算 · 新 → 旧</small></h3><ol data-history></ol></section><p id="difficulty-flow-summary" class="difficulty-flow-summary" aria-live="polite"></p>
       <p class="difficulty-flow-footnote">顺时针 ① → ⑧ → ① · 绿色为当前状态，虚线为跳过 · 通过率为实验估计</p>`;
+    const rhythm = document.createElement('div'); rhythm.className = 'difficulty-rhythm'; rhythm.dataset.rhythm = '';
+    root.querySelector('.difficulty-orbit')!.before(rhythm);
     this.stage = root.querySelector('#difficulty-flow-stage')!;
     this.status = root.querySelector('#difficulty-flow-status')!;
     this.summary = root.querySelector('#difficulty-flow-summary')!;
@@ -29,6 +32,26 @@ export class DifficultyFlowView {
     const flow = buildDifficultyFlow(input);
     const state = input.persisted;
     const entry = input.entry;
+    const rhythm = this.root.querySelector<HTMLElement>('[data-rhythm]')!;
+    rhythm.replaceChildren();
+    const rhythmTitle = document.createElement('strong');
+    rhythmTitle.textContent = !input.active ? '五局节奏 · 等待进入关卡'
+      : entry?.excluded ? '五局节奏 · 手动调试，本阶段不参与'
+      : entry?.assessment ? '五局节奏 · 考察关不占局数，各阶段初始第 5 档'
+      : entry?.rhythm ? `五局节奏 · 第 ${entry.rhythm.position} / 5 局 · ${['轻松进入', '常规', '挑战高峰', '常规回落', '轻松收尾'][entry.rhythm.position - 1]}`
+      : input.formationId.startsWith('guide_') ? '五局节奏 · 引导关不占局数'
+      : entry ? '五局节奏 · 旧存档保留原选档，从下一新关开始' : '五局节奏 · 动态难度关闭';
+    rhythm.append(rhythmTitle);
+    if (entry?.rhythm && !entry.excluded) {
+      const stages = document.createElement('div'); stages.className = 'difficulty-rhythm-stages';
+      RHYTHM_OFFSETS[entry.rhythm.position - 1].forEach((offset, i) => {
+        const tag = document.createElement('span'); tag.dataset.active = String(i === Math.min(input.stage - 1, 3));
+        tag.textContent = `阶段 ${i + 1}：${offset > 0 ? '+' : ''}${offset} 档`; stages.append(tag);
+      });
+      rhythm.append(stages);
+      const note = document.createElement('small'); note.textContent = `${entry.rhythm.day} 分配 · 按整关计数，重开／复活不推进；跨日续玩保留本关节奏，次日新关从第 1 局起`;
+      rhythm.append(note);
+    }
     const center = this.root.querySelector<HTMLElement>('[data-persisted]')!;
     center.replaceChildren();
     const heading = document.createElement('h3'); heading.textContent = '持久化数据'; center.append(heading);
@@ -37,7 +60,7 @@ export class DifficultyFlowView {
       ['玩家能力', input.skill.toFixed(3)], ['受挫', `${input.stress} / 3`],
       ['累计证据权重', state?.evidence.toFixed(2) ?? '—'],
       ['各阶段上次完成档位', state?.lastDifficulties.map(v => v ?? '—').join(' / ') ?? '—'],
-      ['原始 → 当前档位', entry ? `${entry.selection.difficulty} → ${entry.replayDifficulty ?? entry.selection.difficulty}${entry.excluded ? '（调试覆盖）' : entry.replayDifficulty !== undefined ? '（临时）' : ''}` : '不参与动态选档'],
+      ['基线 → 初始 → 当前', entry ? `${entry.baselineDifficulty ?? entry.selection.difficulty} → ${entry.selection.difficulty} → ${entry.replayDifficulty ?? entry.selection.difficulty}${entry.excluded ? '（调试覆盖）' : entry.replayDifficulty !== undefined ? '（临时）' : ''}` : '不参与动态选档'],
       ['本阶段能力评价', entry ? entry.measured ? '已评价 · 不重复计分' : '未评价' : '不计分'],
       ['尝试状态', entry ? `错误 ${entry.errors} · 辅助${entry.assisted ? '已用' : '未用'}` : '—'],
     ];

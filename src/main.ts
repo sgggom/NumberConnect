@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { assignLevelRhythm } from './gameplay/adaptive/fiveGameRhythm';
 import { loadPlayerPlayStats, recordPlayerPlayStat } from './game/playerPlayStats';
 import { normalizeGuideLevelCount, skipUnusedGuideLevels } from './game/guideLevels';
 import './styles.css';
@@ -2200,7 +2201,8 @@ class NumberConnectApp {
     this.currentAdaptiveStage = stage;
     const formationId = configuredLevel.stages[stage - 1].formationId;
     this.activeDifficultyStage = this.settings.adaptiveDifficultyEnabled && !formationId.startsWith('guide_')
-      ? lockStageDifficulty(this.stageDifficulty, configuredLevel.id, stage, formationId, undefined, configuredLevel.id === 11)
+      ? lockStageDifficulty(this.stageDifficulty, configuredLevel.id, stage, formationId, undefined, configuredLevel.id === 11,
+        assignLevelRhythm(this.stageDifficulty, configuredLevel.id))
       : undefined;
     if (this.activeDifficultyStage) this.restartDifficultyAttempt(this.activeDifficultyStage);
     this.persistDifficulty();
