@@ -1,4 +1,6 @@
 import Phaser from 'phaser';
+import { loadPlayerPlayStats, recordPlayerPlayStat } from './game/playerPlayStats';
+import { normalizeGuideLevelCount, skipUnusedGuideLevels } from './game/guideLevels';
 import './styles.css';
 import './gameplay/adaptive/difficultyFlow.css';
 import type { GameEventMap } from './app/GameEvents';
@@ -113,7 +115,7 @@ import {
   type ThreeModeLevelLibrary,
 } from './gameplay/adaptive/threeModeLevelData';
 import {
-  loadStageDifficulty, saveStageDifficulty, lockStageDifficulty, recordStageOutcome, restartStageAttempt,
+  loadStageDifficulty, saveStageDifficulty, lockStageDifficulty, recordStageOutcome, restartStageAttempt, replayStageAttempt,
   type StageAttempt, type StageOutcome,
 } from './gameplay/adaptive/stageDifficulty';
 import { DifficultyFlowView } from './gameplay/adaptive/DifficultyFlowView';
@@ -540,6 +542,7 @@ class NumberConnectApp {
   private powerUpMessage?: string;
   private powerUpMessageTone: 'neutral' | 'active' | 'success' = 'neutral';
   private videoViews: VideoViewRecord[] = loadVideoViews();
+  private readonly playerPlayStats = loadPlayerPlayStats(window.localStorage);
   private playContext: PlayContext = 'normal';
   private beadPatterns: BeadPatternData[] = [];
   private completedBeadPatternIds = new Set<string>();
@@ -846,6 +849,7 @@ class NumberConnectApp {
   }
 
   private resetLevelDebugExperience(levelId = this.settings.puzzleMainLevelId): void {
+    recordPlayerPlayStat(this.playerPlayStats, window.localStorage, levelId);
     this.levelDebugExperienceLevelId = levelId;
     this.levelDebugExperienceErrors = 0;
     this.levelDebugExperienceReleases = 0;
@@ -907,6 +911,8 @@ class NumberConnectApp {
   }
 
   private recordLevelDebugError(step: BoardWrongStepData): void {
+    recordPlayerPlayStat(this.playerPlayStats, window.localStorage, this.settings.puzzleMainLevelId, 'errors');
+    this.renderDifficultyState();
     this.levelDebugExperienceErrors += 1;
     const record: PuzzleErrorExperience = {
       order: this.levelDebugExperienceErrors,
@@ -929,6 +935,10 @@ class NumberConnectApp {
   }
 
   private recordLevelDebugExperience(metric: 'releases' | 'revives'): void {
+    if (metric === 'revives') {
+      recordPlayerPlayStat(this.playerPlayStats, window.localStorage, this.settings.puzzleMainLevelId, 'revives');
+      this.renderDifficultyState();
+    }
     if (metric === 'releases') this.levelDebugExperienceReleases += 1;
     if (metric === 'revives') this.levelDebugExperienceRevives += 1;
     if (this.levelDebugActiveStageExperience) {
@@ -1855,13 +1865,15 @@ class NumberConnectApp {
   }
 
   private normalizePlayPuzzleLevel(): void {
+    const previousLevelId = this.settings.puzzleMainLevelId;
     const completed = this.playPuzzleProgress.revealed >= puzzlePieceCount(this.playPuzzlePattern);
     if (completed) {
       const levelCount = Math.max(1, this.threeModeCampaign.length);
       this.settings.puzzleMainLevelId = this.settings.puzzleMainLevelId % levelCount + 1;
     }
+    this.settings.puzzleMainLevelId = skipUnusedGuideLevels(this.settings.puzzleMainLevelId, this.settings.guideLevelCount);
     const expectedPattern = this.playPuzzlePatternForLevel();
-    if (completed || this.playPuzzlePattern.id !== expectedPattern.id) {
+    if (completed || previousLevelId !== this.settings.puzzleMainLevelId || this.playPuzzlePattern.id !== expectedPattern.id) {
       this.playPuzzlePattern = expectedPattern;
       this.playPuzzleProgress = { patternId: expectedPattern.id, revealed: 0 };
       savePlayPuzzleProgress(this.playPuzzleProgress);
@@ -2093,6 +2105,9 @@ class NumberConnectApp {
 
   private async startNormalMode(): Promise<void> {
     if (this.threeModeCampaign.length === 0) return;
+    if (skipUnusedGuideLevels(this.settings.puzzleMainLevelId, this.settings.guideLevelCount) !== this.settings.puzzleMainLevelId) {
+      this.normalizePlayPuzzleLevel();
+    }
     this.playContext = 'normal';
     this.mode = 'normal';
     this.currentAdaptiveStage = Math.min(
@@ -2185,13 +2200,13 @@ class NumberConnectApp {
     this.currentAdaptiveStage = stage;
     const formationId = configuredLevel.stages[stage - 1].formationId;
     this.activeDifficultyStage = this.settings.adaptiveDifficultyEnabled && !formationId.startsWith('guide_')
-      ? lockStageDifficulty(this.stageDifficulty, configuredLevel.id, stage, formationId)
+      ? lockStageDifficulty(this.stageDifficulty, configuredLevel.id, stage, formationId, undefined, configuredLevel.id === 11)
       : undefined;
     if (this.activeDifficultyStage) this.restartDifficultyAttempt(this.activeDifficultyStage);
     this.persistDifficulty();
     return resolveThreeModeStage(this.threeModeLibrary, configuredLevel, {
       stage,
-      targetDifficulty: this.activeDifficultyStage?.selection.difficulty,
+      targetDifficulty: this.activeDifficultyStage?.replayDifficulty ?? this.activeDifficultyStage?.selection.difficulty,
       runtimeLevelId: configuredLevel.id,
     }).level;
   }
@@ -2249,11 +2264,12 @@ class NumberConnectApp {
     this.renderDifficultyState('result');
   }
 
-  private restartDifficultyAttempt(entry: StageAttempt): void {
+  private restartDifficultyAttempt(entry: StageAttempt, replay = false): void {
     const before = this.stageDifficulty.history.at(-1);
     const stressBefore = this.stageDifficulty.stress;
     const skillBefore = this.stageDifficulty.skill;
-    restartStageAttempt(this.stageDifficulty, entry);
+    if (replay) replayStageAttempt(this.stageDifficulty, entry);
+    else restartStageAttempt(this.stageDifficulty, entry);
     const record = this.stageDifficulty.history.at(-1);
     if (record && record !== before) {
       this.lastFlowResult = { levelId: entry.levelId, stage: entry.stage, outcome: 'fail',
@@ -2269,6 +2285,7 @@ class NumberConnectApp {
       entry: this.currentDifficultyAttempt(), skill: this.stageDifficulty.skill,
       stress: this.stageDifficulty.stress, progress: this.currentProgress, total: this.currentTotal,
       lastResult: this.lastFlowResult, persisted: this.stageDifficulty,
+      playStats: this.playerPlayStats,
     }, event);
   }
 
@@ -3813,6 +3830,10 @@ class NumberConnectApp {
     }
     const placement = this.mode === 'endless' ? 'endless-life-depleted' : 'normal-life-depleted';
     this.videoViews.push(createVideoView(placement, this.mode === 'endless' ? this.stage : undefined));
+    if (this.canUseLevelDebugControls()) {
+      recordPlayerPlayStat(this.playerPlayStats, window.localStorage, this.settings.puzzleMainLevelId, 'ads');
+      this.renderDifficultyState();
+    }
     this.events.emit('video.rewarded', { placement, stage: this.mode === 'endless' ? this.stage : undefined });
     saveVideoViews(this.videoViews);
     this.renderVideoStats();
@@ -3823,7 +3844,7 @@ class NumberConnectApp {
   private restartCurrent(): void {
     const entry = this.currentDifficultyAttempt();
     if (entry && !entry.completed) {
-      this.restartDifficultyAttempt(entry);
+      this.restartDifficultyAttempt(entry, true);
       this.persistDifficulty();
     }
     this.resultOverlay.hidden = true;
@@ -3834,6 +3855,9 @@ class NumberConnectApp {
     if (this.mode === 'endless') {
       const profile = getEndlessStageSettings(this.stage);
       this.setCurrentBoard(this.createEndlessLevel(this.stage, profile), profile);
+    } else if (entry && !entry.excluded && !entry.completed) {
+      this.setCurrentBoard(this.createNormalLevel());
+      this.renderDifficultyState('retry');
     } else if (this.currentLevel) {
       this.setCurrentBoard(this.currentLevel);
     }
@@ -3897,7 +3921,7 @@ class NumberConnectApp {
 
   private selectNextNormalLevel(): void {
     if (this.threeModeCampaign.length === 0) return;
-    const nextLevelId = this.settings.puzzleMainLevelId % this.threeModeCampaign.length + 1;
+    const nextLevelId = skipUnusedGuideLevels(this.settings.puzzleMainLevelId % this.threeModeCampaign.length + 1, this.settings.guideLevelCount);
     const nextPattern = this.playPuzzlePatternForLevel(nextLevelId);
     this.settings.puzzleMainLevelId = nextLevelId;
     this.currentAdaptiveStage = 1;
@@ -4034,6 +4058,7 @@ class NumberConnectApp {
   }
 
   private populateSettingsForm(): void {
+    query<HTMLSelectElement>('#settings-guide-level-count').value = String(this.settings.guideLevelCount);
     this.setChargeProgressModeControl(this.settings.chargeProgressMode);
     query<HTMLInputElement>('#settings-next').checked = this.settings.showNextNumber;
     query<HTMLInputElement>('#settings-difficulty-score').checked = this.settings.showDifficultyScore;
@@ -4050,7 +4075,7 @@ class NumberConnectApp {
   }
 
   private refreshLevelOptions(): void {
-    const levelOptions = this.threeModeCampaign.map((level) => ({
+    const levelOptions = this.threeModeCampaign.filter(level => skipUnusedGuideLevels(level.id, this.settings.guideLevelCount) === level.id).map((level) => ({
         levelId: level.id,
         displayId: level.id,
         label: `拼图关卡 · ${level.stages.length}个阶段`,
@@ -4098,6 +4123,7 @@ class NumberConnectApp {
   }
 
   private applySettingsChange(): void {
+    this.settings.guideLevelCount = normalizeGuideLevelCount(Number(query<HTMLSelectElement>('#settings-guide-level-count').value));
     const isNormalPlay = this.settingsContext === 'play'
       && this.playContext === 'normal'
       && this.mode === 'normal';

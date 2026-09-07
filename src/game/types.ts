@@ -60,6 +60,7 @@ export interface GameSettings {
   hexSize: number;
   rectangleSizeIndex: number;
   puzzleMainLevelId: number;
+  guideLevelCount: number;
   hiddenPercent: number;
   maxHiddenRun: number;
   maxVisibleRun: number;
@@ -192,6 +193,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   hexSize: 6,
   rectangleSizeIndex: 1,
   puzzleMainLevelId: 1,
+  guideLevelCount: 3,
   hiddenPercent: 35,
   maxHiddenRun: 3,
   maxVisibleRun: 4,

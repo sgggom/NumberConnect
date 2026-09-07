@@ -1,3 +1,4 @@
+import { normalizeGuideLevelCount } from './guideLevels';
 import {
   BoardShape,
   DEFAULT_SETTINGS,
@@ -126,6 +127,7 @@ export const loadSettings = (): GameSettings => {
       ...currentSettings,
       chargeProgressMode,
       puzzleMainLevelId,
+      guideLevelCount: normalizeGuideLevelCount(stored.guideLevelCount),
       uiTheme,
       touchPreviewSize,
       showPuzzleFlow: stored.showPuzzleFlow !== false,

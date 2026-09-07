@@ -36,6 +36,8 @@ export interface StageAttempt {
   excluded: boolean;
   errors: number;
   attempt: number;
+  replayDifficulty?: number;
+  assessment?: boolean;
 }
 export interface DifficultyRecord {
   key: string;
@@ -99,7 +101,7 @@ export const selectStageDifficulty = (
 };
 export const lockStageDifficulty = (
   state: StageDifficultyState, levelId: number, stage: number, formationId: string,
-  ratings?: number[],
+  ratings?: number[], assessment = false,
 ): StageAttempt => {
   const key = `${levelId}:${stage}:${formationId}`;
   if (state.stages[key]) return state.stages[key];
@@ -108,6 +110,12 @@ export const lockStageDifficulty = (
     measured: false, completed: false, failureRecorded: false, started: false,
     assisted: false, excluded: false, errors: 0, attempt: 1,
   };
+  if (assessment) {
+    const rating = (ratings ?? defaultStageRatings(stage))[4];
+    entry.selection = { ...entry.selection, difficulty: 5, desired: 5, rating,
+      p: predictStagePass(state.skill, rating), limited: false, bound: false };
+    entry.assessment = true;
+  }
   state.stages[key] = entry;
   return entry;
 };
@@ -122,7 +130,9 @@ export const recordStageOutcome = (
     return;
   }
   const skillBefore = state.skill;
-  const p = predictStagePass(state.skill, entry.selection.rating);
+  const difficulty = entry.replayDifficulty ?? entry.selection.difficulty;
+  const rating = entry.replayDifficulty === undefined ? entry.selection.rating : defaultStageRatings(entry.stage)[difficulty - 1];
+  const p = predictStagePass(state.skill, rating);
   const learning = DDA_CONFIG.k * (0.4 + 0.6 * Math.exp(-state.evidence / 12));
   const evidenceUsed = !entry.measured;
   const weight = evidenceUsed ? DDA_CONFIG.weights[profileIndex(entry.stage)] : 0;
@@ -132,7 +142,7 @@ export const recordStageOutcome = (
   state.stress = clamp(state.stress + (outcome === 'clean' ? -1 : outcome === 'normal' ? 0 : 1), 0, 3);
   entry.measured = true;
   const record: DifficultyRecord = {
-    key: entry.key, outcome, difficulty: entry.selection.difficulty, rating: entry.selection.rating,
+    key: entry.key, outcome, difficulty, rating,
     p, target: entry.selection.target, skillBefore, skillAfter: state.skill,
     delta: state.skill - skillBefore, stress: state.stress, weight, evidenceUsed, attempt: entry.attempt,
   };
@@ -160,6 +170,14 @@ export const restartStageAttempt = (state: StageDifficultyState, entry: StageAtt
   entry.errors = 0;
 };
 
+/** Explicit replay lowers only this stage's playable rank; the selection remains the baseline. */
+export const replayStageAttempt = (state: StageDifficultyState, entry: StageAttempt): void => {
+  if (entry.completed || entry.excluded) return;
+  if (!entry.measured) recordStageOutcome(state, entry, 'fail');
+  restartStageAttempt(state, entry);
+  entry.replayDifficulty = Math.max(1, (entry.replayDifficulty ?? entry.selection.difficulty) - 1);
+};
+
 type StoragePort = Pick<Storage, 'getItem' | 'setItem'>;
 const finiteBetween = (v: unknown, lo: number, hi: number): v is number => (
   typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi
@@ -178,6 +196,8 @@ export const loadStageDifficulty = (storage: StoragePort): StageDifficultyState 
         || !Number.isInteger(e.levelId) || e.levelId < 1 || !Number.isInteger(e.stage) || e.stage < 1
         || typeof e.formationId !== 'string' || !e.selection
         || !Number.isInteger(e.selection.difficulty) || !finiteBetween(e.selection.difficulty, 1, 10)
+        || (e.replayDifficulty !== undefined && (!Number.isInteger(e.replayDifficulty)
+          || !finiteBetween(e.replayDifficulty, 1, e.selection.difficulty)))
         || !finiteBetween(e.selection.rating, 0, 12) || !finiteBetween(e.selection.p, 0, 1)
         || !finiteBetween(e.selection.target, 0, 1)
         || !Number.isInteger(e.attempt) || e.attempt < 1 || !finiteBetween(e.errors, 0, Number.MAX_SAFE_INTEGER)

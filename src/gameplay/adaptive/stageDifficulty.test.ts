@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   createStageDifficultyState, defaultStageRatings, loadStageDifficulty, lockStageDifficulty,
-  predictStagePass, recordStageOutcome, restartStageAttempt, saveStageDifficulty, selectStageDifficulty,
+  predictStagePass, recordStageOutcome, restartStageAttempt, replayStageAttempt, saveStageDifficulty, selectStageDifficulty,
   STAGE_DDA_STORAGE_KEY, type StageOutcome,
 } from './stageDifficulty';
 import {
@@ -203,5 +203,99 @@ describe('authored campaign integration', () => {
         } else expect(resolved.formationId).toBe(id);
       }
     }
+  });
+});
+
+
+describe('temporary replay relief', () => {
+  it('lowers each explicit replay to rank 1 while preserving first evidence and baseline', () => {
+    const state = createStageDifficultyState(); state.skill = 8;
+    const entry = lockStageDifficulty(state, 11, 3, 'level_78_44_4');
+    const selection = structuredClone(entry.selection);
+    recordStageOutcome(state, entry, 'fail');
+    const skill = state.skill, evidence = state.evidence;
+    for (let n = 1; n <= 12; n++) {
+      replayStageAttempt(state, entry);
+      expect(entry.replayDifficulty).toBe(Math.max(1, selection.difficulty - n));
+      expect(entry.selection).toEqual(selection);
+      recordStageOutcome(state, entry, 'fail');
+      expect(state.skill).toBe(skill); expect(state.evidence).toBe(evidence);
+    }
+    replayStageAttempt(state, entry);
+    const result = recordStageOutcome(state, entry, 'clean')!;
+    expect(result.difficulty).toBe(1); expect(result.evidenceUsed).toBe(false);
+    expect(state.skill).toBe(skill); expect(state.evidence).toBe(evidence);
+    expect(state.lastDifficulties[2]).toBe(selection.difficulty);
+    const next = lockStageDifficulty(state, 12, 3, 'level_78_45_4');
+    expect(next.replayDifficulty).toBeUndefined();
+    expect(next.selection.difficulty).toBeGreaterThanOrEqual(selection.difficulty - 1);
+  });
+
+  it('scores the original board before an unplayed explicit replay, then never scores again', () => {
+    const state = createStageDifficultyState(); state.skill = 8;
+    const entry = lockStageDifficulty(state, 11, 3, 'level_78_44_4');
+    replayStageAttempt(state, entry);
+    expect(state.history).toHaveLength(1);
+    expect(state.history[0].difficulty).toBe(entry.selection.difficulty);
+    expect(entry.measured).toBe(true);
+    const skill = state.skill;
+    replayStageAttempt(state, entry);
+    expect(state.history).toHaveLength(1);
+    recordStageOutcome(state, entry, 'clean');
+    expect(state.skill).toBe(skill);
+  });
+
+  it('persists temporary ranks and resumes without another downgrade; accepts old saves', () => {
+    const storage = memoryStorage(), state = createStageDifficultyState(); state.skill = 8;
+    const entry = lockStageDifficulty(state, 11, 3, 'level_78_44_4');
+    saveStageDifficulty(state, storage);
+    expect(loadStageDifficulty(storage)).toEqual(state);
+    replayStageAttempt(state, entry); saveStageDifficulty(state, storage);
+    const loaded = loadStageDifficulty(storage), restored = loaded.stages[entry.key];
+    restartStageAttempt(loaded, restored);
+    expect(restored.replayDifficulty).toBe(entry.replayDifficulty);
+    expect(loaded.skill).toBe(state.skill); expect(loaded.history).toEqual(state.history);
+    restored.replayDifficulty = 0; saveStageDifficulty(loaded, storage);
+    expect(loadStageDifficulty(storage)).toEqual(createStageDifficultyState());
+  });
+
+  it('does not downgrade completed stages or manual testing', () => {
+    for (const flag of ['completed', 'excluded'] as const) {
+      const state = createStageDifficultyState();
+      const entry = lockStageDifficulty(state, 11, 3, 'level_78_44_4'); entry[flag] = true;
+      const before = structuredClone(state); replayStageAttempt(state, entry);
+      expect(state).toEqual(before);
+    }
+  });
+});
+
+
+describe('first formal assessment level', () => {
+  it('starts every stage at five despite changing skill, stress and rank bounds, and scores results', () => {
+    const state = createStageDifficultyState(); state.skill = 0; state.stress = 3;
+    state.lastDifficulties = [10, 10, 10, 10];
+    for (let stage = 1; stage <= 4; stage++) {
+      const entry = lockStageDifficulty(state, 11, stage, `level_55_${stage}_1`, undefined, true);
+      expect(entry.selection.difficulty).toBe(5); expect(entry.selection.limited).toBe(false);
+      expect(entry.selection.rating).toBe(defaultStageRatings(stage)[4]);
+      const before = state.skill;
+      expect(recordStageOutcome(state, entry, 'clean')!.evidenceUsed).toBe(true);
+      expect(state.skill).toBeGreaterThan(before);
+    }
+    expect(state.evidence).toBeCloseTo(2.3);
+    expect(state.lastDifficulties).toEqual([5,5,5,5]);
+    const expected = selectStageDifficulty(state, 1);
+    expect(lockStageDifficulty(state, 12, 1, 'level_55_9_1').selection).toEqual(expected);
+  });
+  it('keeps assessment replay relief and its first-score marker across reload', () => {
+    const state = createStageDifficultyState(), storage = memoryStorage();
+    const entry = lockStageDifficulty(state, 11, 3, 'level_78_44_4', undefined, true);
+    recordStageOutcome(state, entry, 'fail'); const skill = state.skill;
+    replayStageAttempt(state, entry); expect(entry.replayDifficulty).toBe(4);
+    saveStageDifficulty(state, storage); const restored = loadStageDifficulty(storage);
+    const resumed = lockStageDifficulty(restored, 11, 3, 'level_78_44_4', undefined, true);
+    expect(resumed.selection.difficulty).toBe(5); expect(resumed.replayDifficulty).toBe(4);
+    expect(recordStageOutcome(restored, resumed, 'clean')!.evidenceUsed).toBe(false);
+    expect(restored.skill).toBe(skill); expect(restored.lastDifficulties[2]).toBe(5);
   });
 });

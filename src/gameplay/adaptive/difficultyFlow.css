@@ -73,3 +73,24 @@
   .difficulty-persisted dd { text-align: left; }
   .difficulty-persisted dl { gap: 6px; }
 }
+
+.difficulty-persisted { top: 27%; height: 46%; padding: 12px; }
+.difficulty-persisted-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.difficulty-persisted-columns dl { min-width: 0; gap: 5px; }
+.difficulty-persisted-columns dl + dl { border-left: 1px solid #d9d1e7; padding-left: 12px; }
+.difficulty-persisted-columns dl > div { display: block; font-size: 10px; line-height: 1.35; }
+.difficulty-persisted-columns dt { font-size: 9px; color: #897b9f; }
+.difficulty-persisted-columns dd { text-align: left; overflow-wrap: anywhere; }
+.difficulty-persisted-columns .difficulty-stats-scope { display: block; font-size: 9px; line-height: 1.5; }
+@container (max-width: 630px) {
+  .difficulty-persisted { top: 27%; height: 46%; padding: 10px; }
+  .difficulty-persisted-columns { gap: 7px; }
+  .difficulty-persisted-columns dl + dl { padding-left: 7px; }
+}
+.difficulty-persisted { left: 30%; width: 40%; }
+.difficulty-flow-steps li:nth-child(2), .difficulty-flow-steps li:nth-child(4) { left: 84%; }
+.difficulty-flow-steps li:nth-child(6), .difficulty-flow-steps li:nth-child(8) { left: 16%; }
+.difficulty-persisted-columns dl { align-content: start; gap: 4px; }
+.difficulty-persisted-columns dt, .difficulty-persisted-columns dd { margin: 0; line-height: 12px; }
+.difficulty-persisted-columns .difficulty-stats-scope { margin-top: 5px; }
+.difficulty-persisted { height: 50%; }
