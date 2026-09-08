@@ -31,7 +31,7 @@ describe('live difficulty flow', () => {
     expect(flow.currentStep).toBe(8);
     expect(flow.branch).toBe('retry');
     expect(flow.nodes[5].detail).toContain(record.skillAfter.toFixed(3));
-    expect(flow.nodes[6].detail).toContain('0 → 1');
+    expect(flow.nodes[6].detail).toContain('0 → 2');
     expect(flow.nodes[7].detail).toContain('第 5 步');
   });
 

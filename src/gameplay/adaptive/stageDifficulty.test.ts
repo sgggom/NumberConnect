@@ -19,21 +19,22 @@ const memoryStorage = () => {
     setItem: (key: string, value: string) => { data.set(key, value); } };
 };
 
-describe('latest simulator compatibility', () => {
-  it.each(['clean', 'normal', 'assisted', 'fail', 'mixed'])('matches 240 %s results exactly', pattern => {
-    const source = simulator.create();
+describe('original ability model compatibility', () => {
+  it.each(['clean', 'normal', 'assisted', 'fail', 'mixed'])('matches ability across 240 %s results', pattern => {
+    const source = simulator.create({ protection: 0 });
     const state = createStageDifficultyState();
     const mixed: StageOutcome[] = ['clean', 'normal', 'fail', 'fail', 'assisted', 'clean', 'assisted', 'normal'];
     for (let n = 0; n < 240; n++) {
       const key = pattern === 'mixed' ? mixed[n % mixed.length] : pattern as StageOutcome;
+      // Isolate ability regression; whole-level relief has separate coverage.
+      state.levelRelief[source.level] ??= { reliefApplied: 0, errorCount: 0, completionStressSettled: false };
       const entry = lockStageDifficulty(state, source.level, source.stage, `level_55_${source.stage}_1`);
-      expect(entry.selection).toEqual(source.current);
+      expect({ ...entry.selection, stress: 0 }).toEqual({ ...source.current, stress: 0 });
       entry.failureRecorded = false; // Each source.apply represents a separate attempt.
       const result = recordStageOutcome(state, entry, key)!;
       const original = simulator.apply(source, key);
       expect(state.skill).toBe(source.skill);
       expect(state.evidence).toBe(source.evidence);
-      expect(state.stress).toBe(source.stress);
       expect(state.lastDifficulties).toEqual(source.lastDifficulties);
       expect(result.delta).toBe(original.delta);
       expect(result.weight).toBe(original.weight);
@@ -60,7 +61,7 @@ describe('stage lifecycle and persistence', () => {
     const skill = state.skill;
     expect(skill).toBeLessThan(4);
     expect(recordStageOutcome(state, entry, 'fail')).toBeUndefined();
-    expect(state.stress).toBe(1);
+    expect(state.stress).toBe(2);
     entry.failureRecorded = false;
     recordStageOutcome(state, entry, 'fail');
     entry.failureRecorded = false;
@@ -77,10 +78,10 @@ describe('stage lifecycle and persistence', () => {
     recordStageOutcome(state, lockStageDifficulty(state, 1, 1, 'level_55_1_1'), 'assisted');
     expect(state.skill).toBeLessThan(4);
     expect(state.evidence).toBe(.2);
-    expect(state.stress).toBe(1);
+    expect(state.stress).toBe(0);
   });
 
-  it('resets attempt-local errors after retry so a clean recovery relieves pressure', () => {
+  it('resets attempt errors without applying whole-level stress at stage completion', () => {
     const state = createStageDifficultyState();
     const entry = lockStageDifficulty(state, 1, 3, 'level_55_1_1');
     entry.started = true;
@@ -92,7 +93,7 @@ describe('stage lifecycle and persistence', () => {
     expect(entry.failureRecorded).toBe(false);
     recordStageOutcome(state, entry, 'clean');
     expect(state.skill).toBe(skill);
-    expect(state.stress).toBe(0);
+    expect(state.stress).toBe(2);
   });
 
   it('counts abandonment of an attempted board once, including reload after assistance', () => {
@@ -111,13 +112,13 @@ describe('stage lifecycle and persistence', () => {
     expect(state.skill).toBe(skill);
   });
 
-  it('uses equal ability evidence for clean and erroneous independent wins, with different protection', () => {
+  it('uses equal ability evidence for clean and erroneous independent wins, without stage-completion stress changes', () => {
     const clean = createStageDifficultyState(), normal = createStageDifficultyState();
     clean.stress = normal.stress = 2;
     recordStageOutcome(clean, lockStageDifficulty(clean, 1, 1, 'level_55_1_1'), 'clean');
     recordStageOutcome(normal, lockStageDifficulty(normal, 1, 1, 'level_55_1_1'), 'normal');
     expect(clean.skill).toBe(normal.skill);
-    expect(clean.stress).toBe(1);
+    expect(clean.stress).toBe(2);
     expect(normal.stress).toBe(2);
   });
 
@@ -228,7 +229,8 @@ describe('temporary replay relief', () => {
     expect(state.lastDifficulties[2]).toBe(selection.difficulty);
     const next = lockStageDifficulty(state, 12, 3, 'level_78_45_4');
     expect(next.replayDifficulty).toBeUndefined();
-    expect(next.selection.difficulty).toBeGreaterThanOrEqual(selection.difficulty - 1);
+    expect(next.baselineDifficulty).toBeGreaterThanOrEqual(selection.difficulty - 1);
+    expect(next.selection.difficulty).toBe(Math.max(1, next.baselineDifficulty! - 1));
   });
 
   it('scores the original board before an unplayed explicit replay, then never scores again', () => {

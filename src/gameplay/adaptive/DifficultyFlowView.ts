@@ -42,6 +42,11 @@ export class DifficultyFlowView {
       : input.formationId.startsWith('guide_') ? '五局节奏 · 引导关不占局数'
       : entry ? '五局节奏 · 旧存档保留原选档，从下一新关开始' : '五局节奏 · 动态难度关闭';
     rhythm.append(rhythmTitle);
+    const relief = state?.levelRelief[input.levelId];
+    const reliefNote = document.createElement('p');
+    reliefNote.dataset.relief = '';
+    reliefNote.textContent = `受挫 ${input.stress}/3 · ${state?.pendingRelief ? '待释放：下一新整关 −1，领取时清零' : '累积中：满 3 锁定一次减压'} ｜ 本关减压 ${relief?.reliefApplied ? '所有阶段 −1 档' : '0 档'} ｜ 本关累计错误 ${relief?.errorCount ?? 0}`;
+    rhythm.append(reliefNote);
     if (entry?.rhythm && !entry.excluded) {
       const stages = document.createElement('div'); stages.className = 'difficulty-rhythm-stages';
       RHYTHM_OFFSETS[entry.rhythm.position - 1].forEach((offset, i) => {
@@ -73,27 +78,43 @@ export class DifficultyFlowView {
     const average = (value: number) => total ? (value / total).toFixed(2) : '—';
     const totals = document.createElement('dl'); totals.dataset.playStats = '';
     const metrics = [['总共关卡数', String(total)], ['平均每关错误数', average(stats?.errors ?? 0)],
-      ['平均广告观看次数', average(stats?.ads ?? 0)], ['平均复活次数', average(stats?.revives ?? 0)]];
+      ['平均广告观看次数', average(stats?.ads ?? 0)], ['平均复活次数', average(stats?.revives ?? 0)],
+      ['待释放减压', state?.pendingRelief ? '下一新整关 −1' : '无'],
+      ['本关减压 / 累计错误', `${relief?.reliefApplied ? '−1' : '0'} 档 / ${relief?.errorCount ?? 0} 次`]];
     metrics.forEach(([label, value]) => {
       const row = document.createElement('div'), dt = document.createElement('dt'), dd = document.createElement('dd');
       dt.textContent = label; dd.textContent = value; row.append(dt, dd); totals.append(row);
     });
     const scope = document.createElement('small'); scope.className = 'difficulty-stats-scope';
-    scope.textContent = '更新后累计 · 普通拼图（含引导／当前关） · 重开不重复计关 · 均值按关';
+    scope.textContent = '更新后累计 · 含引导 · 按关平均';
     totals.append(scope); columns.append(totals); center.append(columns);
     this.root.querySelector<HTMLElement>('[data-live]')!.textContent = `实时数据 · 不作为跨局存档：当前状态  ${flow.currentStep ? `${flow.currentStep} / 8` : '等待'}　｜　棋盘进度 ${input.progress} / ${input.total}　｜　${flow.status}`;
     const history = this.root.querySelector<HTMLElement>('[data-history]')!;
     history.replaceChildren();
     const outcomes = { clean: '无错完成', normal: '有错完成', assisted: '辅助完成', fail: '失败' };
     const records = state?.history ?? [];
-    records.slice(-5).reverse().forEach((record, index) => {
+    records.slice(-5).reverse().forEach((record) => {
       const li = document.createElement('li');
-      const previous = records[records.length - index - 2];
       const [level, stage] = record.key.split(':');
-      li.textContent = `关 ${level} · 阶段 ${stage} · ${outcomes[record.outcome]} · 第 ${record.difficulty} 档 ｜ 能力 ${record.skillBefore.toFixed(3)} → ${record.skillAfter.toFixed(3)} ｜ 受挫 ${previous ? previous.stress + ' → ' : records.length < 200 ? '0 → ' : ''}${record.stress}${record.evidenceUsed ? '' : ' · 不重复评价能力'}`;
+      li.textContent = `关 ${level} · 阶段 ${stage} · ${outcomes[record.outcome]} · 第 ${record.difficulty} 档 ｜ 能力 ${record.skillBefore.toFixed(3)} → ${record.skillAfter.toFixed(3)}${record.evidenceUsed ? '' : ' · 不重复评价能力'}`;
       history.append(li);
     });
     if (!records.length) { const li = document.createElement('li'); li.textContent = '暂无结算变化；引导、手动调试不计入评分记录。'; history.append(li); }
+    let stressLog = this.root.querySelector<HTMLElement>('[data-stress-history]');
+    if (!stressLog) {
+      stressLog = document.createElement('section'); stressLog.dataset.stressHistory = ''; stressLog.className = 'difficulty-history';
+      history.parentElement!.after(stressLog);
+    }
+    stressLog.replaceChildren();
+    const stressTitle = document.createElement('h3'); stressTitle.textContent = '受挫事件 · 持久化 · 最近 5 条';
+    const stressList = document.createElement('ol');
+    for (const event of (state?.stressHistory ?? []).slice(-5).reverse()) {
+      const item = document.createElement('li');
+      item.textContent = `关 ${event.levelId} · ${event.type} ｜ ${event.before} → ${event.after}${event.pending ? ' · 待下一整关减压' : ''}`;
+      stressList.append(item);
+    }
+    if (!stressList.children.length) { const item = document.createElement('li'); item.textContent = '暂无受挫事件'; stressList.append(item); }
+    stressLog.append(stressTitle, stressList);
 
     this.stage.textContent = flow.stageLabel;
     this.status.textContent = flow.status;

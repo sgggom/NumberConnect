@@ -62,14 +62,14 @@ export const buildDifficultyFlow = (input: FlowInput): DifficultyFlow => {
     details[0] = entry
       ? `选档时能力 ${entry.selection.skill.toFixed(3)} · 受挫 ${entry.selection.stress}；现在 ${input.skill.toFixed(3)} / ${input.stress}`
       : `能力 ${input.skill.toFixed(3)} · 受挫 ${input.stress}（保持）`;
-    details[1] = entry ? `基础 ${pct(DDA_CONFIG.targets[Math.min(input.stage - 1, 3)])} + 受挫保护 → ${pct(entry.selection.target)}（上限 97%）` : skip;
+    details[1] = entry ? `阶段目标 ${pct(DDA_CONFIG.targets[Math.min(input.stage - 1, 3)])} · 受挫不改变目标` : skip;
     details[2] = entry ? `理想第 ${entry.selection.desired} 档；原始选档预计 ${pct(entry.selection.p)} · 难度值 ${entry.selection.rating.toFixed(2)}` : skip;
     details[3] = entry ? `第 ${entry.selection.desired} 档 → 第 ${entry.selection.difficulty} 档 · ${entry.selection.limited ? '已限制升降幅度' : '无需限制'}`
       + (entry.selection.bound ? '；目标超出曲线范围' : '') : skip;
     details[4] = `当前第 ${currentRank} 档 · 进度 ${input.progress}/${input.total}`
       + (entry ? ` · 本次错误 ${entry.errors}${entry.assisted ? ' · 已用辅助' : ''}` : '');
     details[5] = skip || (entry?.measured ? '首次结果已计分；后续结果不再加减能力' : '等待首次结果：独立完成加分，失败／辅助完成扣分');
-    details[6] = skip || `当前受挫 ${input.stress}/3；无错 −1，有错完成不变，失败／辅助 +1`;
+    details[6] = skip || (input.persisted?.pendingRelief ? '受挫 3/3 已锁定；下一新整关 −1 档，领取时清零' : `受挫 ${input.stress}/3；失败 +2，复活／道具／操作后放弃 +1；整关完成按累计错误 −1/0/+1`);
     details[7] = entry && !entry.excluded ? '完成 → 下一新阶段；重开临时 −1 档（最低 1）；复活保留棋盘' : '完成 → 下一新阶段；重开／复活保持档位';
     if (entry?.replayDifficulty !== undefined) {
       details[4] += ` · 临时降档（原始第 ${entry.selection.difficulty} 档）；不影响整体评价`;
@@ -81,8 +81,8 @@ export const buildDifficultyFlow = (input: FlowInput): DifficultyFlow => {
     }
     if (entry?.rhythm) {
       const plannedOffset = rhythmOffset(entry.rhythm.position, input.stage);
-      const offset = entry.selection.difficulty - (entry.baselineDifficulty ?? entry.selection.difficulty);
-      details[3] = `动态基线 ${entry.baselineDifficulty} 档 ${offset >= 0 ? '+' : '−'} ${Math.abs(offset)} → 初始 ${entry.selection.difficulty} 档；当前 ${currentRank} 档（计划 ${plannedOffset > 0 ? "+" : ""}${plannedOffset}，初始已锁定）`;
+      const relief = input.persisted?.levelRelief[input.levelId]?.reliefApplied ?? 0;
+      details[3] = `基线 ${entry.baselineDifficulty} · 节奏 ${plannedOffset > 0 ? '+' : ''}${plannedOffset}（限 1–10）· 整关减压 −${relief} → 初始 ${entry.selection.difficulty}；当前 ${currentRank}`;
       details[2] = `动态理想第 ${entry.selection.desired} 档；节奏调整后初始预计 ${pct(entry.selection.p)} · 难度值 ${entry.selection.rating.toFixed(2)}`;
     }
     if (entry?.excluded) {
@@ -96,7 +96,7 @@ export const buildDifficultyFlow = (input: FlowInput): DifficultyFlow => {
       ? `${result.record.skillBefore.toFixed(3)} → ${result.record.skillAfter.toFixed(3)}（${signed(result.record.delta)}）· ${result.record.evidenceUsed ? '首次评价' : '已评价，不重复计分'}`
       : result.reason ?? '本次不计分';
     details[6] = result.record
-      ? `${result.stressBefore} → ${result.record.stress} · ${OUTCOMES[result.outcome]}`
+      ? `${result.stressBefore} → ${input.stress} · ${input.persisted?.pendingRelief ? '已满 3，等待下一新整关减压' : '按受挫事件结算，见下方记录'}`
       : result.reason ?? '受挫保持不变';
     details[7] = result.outcome === 'fail' ? entry && !entry.excluded ? '重开 → 临时降 1 档后回第 5 步（最低 1）；复活 → 原棋盘；离开 → 保留' : '重开／复活 → 第 5 步；保持档位'
       : input.stage < input.totalStages ? '本阶段完成 → 下一阶段，从第 1 步重新选档'

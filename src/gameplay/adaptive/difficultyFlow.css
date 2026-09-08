@@ -97,6 +97,7 @@
 
 .difficulty-rhythm { margin-bottom: 12px; padding: 12px; background: #edf5fa; border: 1px solid #d3e4ed; border-radius: 12px; color: #315870; }
 .difficulty-rhythm > strong { font-size: 13px; }
+.difficulty-rhythm [data-relief] { margin: 8px 0 0; font-size: 11px; line-height: 1.6; }
 .difficulty-rhythm > small { display: block; margin-top: 7px; font-size: 10px; line-height: 1.5; color: #6a8495; }
 .difficulty-rhythm-stages { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 8px; }
 .difficulty-rhythm-stages span { padding: 6px; background: #f9fcfd; border: 1px solid #dbe7ee; border-radius: 6px; font-size: 11px; text-align: center; }

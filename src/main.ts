@@ -1,3 +1,4 @@
+import { recordFrustrationAction, finishLevelFrustration } from './gameplay/adaptive/frustration';
 import Phaser from 'phaser';
 import { assignLevelRhythm } from './gameplay/adaptive/fiveGameRhythm';
 import { loadPlayerPlayStats, recordPlayerPlayStat } from './game/playerPlayStats';
@@ -2200,6 +2201,10 @@ class NumberConnectApp {
     const stage = Math.max(1, Math.min(this.currentAdaptiveStage, configuredLevel.stages.length));
     this.currentAdaptiveStage = stage;
     const formationId = configuredLevel.stages[stage - 1].formationId;
+    // Loading with DDA off still makes this an old level: never claim relief midway.
+    if (!this.settings.adaptiveDifficultyEnabled && !this.stageDifficulty.levelRelief[configuredLevel.id]) {
+      this.stageDifficulty.levelRelief[configuredLevel.id] = { reliefApplied: 0, errorCount: 0, completionStressSettled: true };
+    }
     this.activeDifficultyStage = this.settings.adaptiveDifficultyEnabled && !formationId.startsWith('guide_')
       ? lockStageDifficulty(this.stageDifficulty, configuredLevel.id, stage, formationId, undefined, configuredLevel.id === 11,
         assignLevelRhythm(this.stageDifficulty, configuredLevel.id))
@@ -2239,7 +2244,7 @@ class NumberConnectApp {
     const entry = this.currentDifficultyAttempt();
     if (!entry || entry.completed) return;
     if (event !== 'errors' && entry[event]) return;
-    if (event === 'errors') entry.errors += 1;
+    if (event === 'errors') { entry.errors += 1; recordFrustrationAction(this.stageDifficulty, entry, 'error'); }
     else entry[event] = true;
     this.persistDifficulty();
     this.renderDifficultyState();
@@ -2261,6 +2266,8 @@ class NumberConnectApp {
           : String(this.currentLevel?.formationId).startsWith('guide_') ? '引导关：能力与受挫保持不变'
             : '动态难度关闭：能力与受挫保持不变',
     };
+    if (entry && actualOutcome !== 'fail') finishLevelFrustration(this.stageDifficulty, entry, this.adaptiveTotalStages());
+    if (record) record.stress = this.stageDifficulty.stress;
     this.difficultyFlowPhase = 'result';
     this.persistDifficulty();
     this.renderDifficultyState('result');
@@ -2626,8 +2633,14 @@ class NumberConnectApp {
     const applyEffectOnce = (): T => {
       if (!effectApplied) {
         effectApplied = true;
-        this.markDifficultyEvent('assisted');
         effectResult = applyEffect();
+        const entry = this.currentDifficultyAttempt();
+        if (Array.isArray(effectResult) && effectResult.length > 0) {
+          this.markDifficultyEvent('assisted');
+          if (entry) recordFrustrationAction(this.stageDifficulty, entry, 'tool');
+          this.persistDifficulty();
+          this.renderDifficultyState();
+        }
       }
       return effectResult!;
     };
@@ -3820,7 +3833,7 @@ class NumberConnectApp {
   private continueAfterFailureVideo(): void {
     this.markDifficultyEvent('assisted');
     const entry = this.currentDifficultyAttempt();
-    if (entry) entry.failureRecorded = false;
+    if (entry) recordFrustrationAction(this.stageDifficulty, entry, 'revive');
     this.difficultyFlowPhase = 'playing';
     this.persistDifficulty();
     this.renderDifficultyState('retry');

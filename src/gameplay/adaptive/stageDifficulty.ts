@@ -1,3 +1,4 @@
+import { STRESS_RULE_VERSION, initializeLevelRelief, updateStress, migrateFrustration, validFrustration, type LevelRelief, type StressEvent } from './frustration';
 /** Port of 动态难度模拟器/model.js (2026-09-07, first independent completion).
  * Ranks select authored library variants; ratings are experimental, not measured win rates.
  */
@@ -5,7 +6,7 @@ import { rhythmOffset, isRhythmPosition, type RhythmPosition, type RhythmLedger 
 export const STAGE_DDA_VERSION = 'first-independent-v1';
 export const STAGE_DDA_STORAGE_KEY = 'number-connect.stage-dda.v1';
 export const DDA_CONFIG = {
-  initial: 4, k: 0.85, step: 1, protection: 0.08,
+  initial: 4, k: 0.85, step: 1,
   targets: [0.95, 0.9, 0.6, 0.85],
   weights: [0.2, 0.4, 1, 0.7],
   ranges: [[0, 1.5], [0.5, 2.5], [2, 8], [1.5, 6]],
@@ -58,6 +59,10 @@ export interface DifficultyRecord {
   attempt: number;
 }
 export interface StageDifficultyState {
+  stressRuleVersion: string;
+  pendingRelief: boolean;
+  levelRelief: Record<string, LevelRelief>;
+  stressHistory: StressEvent[];
   rhythm?: RhythmLedger;
   version: typeof STAGE_DDA_VERSION;
   skill: number;
@@ -79,6 +84,7 @@ export const defaultStageRatings = (stage: number): number[] => {
   return Array.from({ length: 10 }, (_, i) => low + (high - low) * i / 9);
 };
 export const createStageDifficultyState = (): StageDifficultyState => ({
+  stressRuleVersion: STRESS_RULE_VERSION, pendingRelief: false, levelRelief: {}, stressHistory: [],
   version: STAGE_DDA_VERSION, skill: DDA_CONFIG.initial, evidence: 0, stress: 0,
   lastDifficulties: [null, null, null, null], stages: {}, history: [],
 });
@@ -89,7 +95,7 @@ export const selectStageDifficulty = (
     !Number.isFinite(v) || v < 0 || v > 12 || (i > 0 && v < ratings[i - 1])
   ))) throw new Error('每个阵型需要 10 个 0–12 内不递减的难度值。');
   const i = profileIndex(stage);
-  const target = clamp(DDA_CONFIG.targets[i] + state.stress * DDA_CONFIG.protection, 0.05, 0.97);
+  const target = DDA_CONFIG.targets[i];
   const raw = state.skill - Math.log(target / (1 - target)) / 0.65;
   const desired = ratings.reduce((best, value, index) => (
     Math.abs(predictStagePass(state.skill, value) - target)
@@ -109,6 +115,7 @@ export const lockStageDifficulty = (
 ): StageAttempt => {
   const key = `${levelId}:${stage}:${formationId}`;
   if (state.stages[key]) return state.stages[key];
+  const levelRelief = initializeLevelRelief(state, levelId, assessment);
   const entry: StageAttempt = {
     key, levelId, stage, formationId, selection: selectStageDifficulty(state, stage, ratings),
     measured: false, completed: false, failureRecorded: false, started: false,
@@ -127,11 +134,19 @@ export const lockStageDifficulty = (
     const rating = (ratings ?? defaultStageRatings(stage))[difficulty - 1];
     entry.selection = { ...entry.selection, difficulty, rating, p: predictStagePass(state.skill, rating) };
   }
+  if (!assessment) {
+    entry.baselineDifficulty ??= entry.selection.difficulty;
+    if (levelRelief.reliefApplied) {
+      const difficulty = Math.max(1, entry.selection.difficulty - 1);
+      const rating = (ratings ?? defaultStageRatings(stage))[difficulty - 1];
+      entry.selection = { ...entry.selection, difficulty, rating, p: predictStagePass(state.skill, rating) };
+    }
+  }
   state.stages[key] = entry;
   return entry;
 };
 export const recordStageOutcome = (
-  state: StageDifficultyState, entry: StageAttempt, outcome: StageOutcome,
+  state: StageDifficultyState, entry: StageAttempt, outcome: StageOutcome, failureStress: number = 2,
 ): DifficultyRecord | undefined => {
   if (entry.completed || (outcome === 'fail' && entry.failureRecorded)) return;
   const passed = outcome !== 'fail';
@@ -150,7 +165,7 @@ export const recordStageOutcome = (
   const success = outcome === 'clean' || outcome === 'normal' ? 1 : 0;
   state.skill = clamp(state.skill + learning * weight * (success - p), 0, 12);
   state.evidence += weight;
-  state.stress = clamp(state.stress + (outcome === 'clean' ? -1 : outcome === 'normal' ? 0 : 1), 0, 3);
+  if (outcome === 'fail' && failureStress) updateStress(state, entry.levelId, failureStress === 2 ? '关卡失败' : '已操作后放弃', failureStress);
   entry.measured = true;
   const record: DifficultyRecord = {
     key: entry.key, outcome, difficulty, rating,
@@ -173,7 +188,7 @@ export const recordStageOutcome = (
 export const restartStageAttempt = (state: StageDifficultyState, entry: StageAttempt): void => {
   if (entry.completed) return;
   if ((entry.started || entry.assisted || entry.errors > 0) && !entry.failureRecorded) {
-    recordStageOutcome(state, entry, 'fail');
+    recordStageOutcome(state, entry, 'fail', 1);
   }
   entry.failureRecorded = false;
   entry.started = false;
@@ -184,7 +199,7 @@ export const restartStageAttempt = (state: StageDifficultyState, entry: StageAtt
 /** Explicit replay lowers only this stage's playable rank; the selection remains the baseline. */
 export const replayStageAttempt = (state: StageDifficultyState, entry: StageAttempt): void => {
   if (entry.completed || entry.excluded) return;
-  if (!entry.measured) recordStageOutcome(state, entry, 'fail');
+  if (!entry.measured) recordStageOutcome(state, entry, 'fail', entry.started || entry.assisted || entry.errors > 0 ? 1 : 0);
   restartStageAttempt(state, entry);
   entry.replayDifficulty = Math.max(1, (entry.replayDifficulty ?? entry.selection.difficulty) - 1);
 };
@@ -221,6 +236,9 @@ export const loadStageDifficulty = (storage: StoragePort): StageDifficultyState 
         || ['measured', 'completed', 'failureRecorded', 'started', 'assisted', 'excluded']
           .some(flag => typeof e[flag as keyof StageAttempt] !== 'boolean')) return createStageDifficultyState();
     }
+    if (s.stressRuleVersion === undefined) migrateFrustration(s);
+    else if (s.stressRuleVersion !== STRESS_RULE_VERSION || !validFrustration(s)) return createStageDifficultyState();
+    s.stressHistory = s.stressHistory.slice(-200);
     s.history = s.history.filter(r => r && typeof r.key === 'string'
       && ['clean', 'normal', 'assisted', 'fail'].includes(r.outcome)
       && finiteBetween(r.delta, -12, 12) && finiteBetween(r.skillBefore, 0, 12)
