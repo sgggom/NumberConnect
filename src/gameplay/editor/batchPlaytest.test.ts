@@ -179,9 +179,13 @@ describe('批量生成路径与隐藏', () => {
     expect(text.split('\r\n')[0].split('\t')).toEqual([...BATCH_PATH_RESULT_HEADERS]);
     expect(BATCH_PATH_RESULT_HEADERS).toContain('实际路径交叉数量');
     expect(BATCH_PATH_RESULT_HEADERS).toEqual(expect.arrayContaining([
-      '连续向右数量', '连续向下数量', '连续向右下数量', '连续遮挡计数',
+      '连续向右数量', '连续向右下数量', '连续遮挡计数',
     ]));
     expect(BATCH_PATH_RESULT_HEADERS).not.toContain('中推理平均错误数');
+    expect(BATCH_PATH_RESULT_HEADERS).not.toContain('连续向下数量');
+    expect(BATCH_HIDDEN_RESULT_HEADERS).not.toContain('连续向下数量');
+    expect(BATCH_PATH_RESULT_HEADERS.slice(-2)).toEqual(['向右空位数量', '向右下空位数量']);
+    expect(text.split('\r\n')[1].split('\t').slice(-2)).toEqual(['0', '0']);
     expect(text.split('\r\n')[1].split('\t')).toHaveLength(BATCH_PATH_RESULT_HEADERS.length);
   });
 
@@ -209,6 +213,10 @@ describe('批量生成路径与隐藏', () => {
     expect(text.split('\r\n')[1].split('\t')[BATCH_HIDDEN_RESULT_HEADERS.indexOf('关卡名')])
       .toBe('HIDDEN-1_1');
     expect(progress).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(BATCH_HIDDEN_RESULT_HEADERS.slice(-2)).toEqual(['向右空位数量', '向右下空位数量']);
+    const fixedHiddenLevel = { ...level, hiddenCells: [{ x: 1, y: 0 }, { x: 0, y: 1 }, { x: 1, y: 1 }] };
+    const fixedText = formatBatchPlaytestResultsTsv([{ task, level: fixedHiddenLevel, simulation }], 'hidden');
+    expect(fixedText.split('\t').slice(-2)).toEqual(['2', '1']);
   });
 
   it('隐藏失败结果导出具体原因', () => {
@@ -224,6 +232,8 @@ describe('批量生成路径与隐藏', () => {
 
     expect(rows[1][BATCH_HIDDEN_RESULT_HEADERS.indexOf('失败原因')])
       .toBe('整条难度链已弃用：隐藏难度链生成超时。');
+    expect(rows[1]).toHaveLength(BATCH_HIDDEN_RESULT_HEADERS.length);
+    expect(rows[1].slice(-2)).toEqual(['', '']);
   });
 
   it('最多并行执行指定数量的任务并保持结果顺序', async () => {

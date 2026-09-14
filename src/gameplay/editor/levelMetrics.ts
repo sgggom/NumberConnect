@@ -1,4 +1,4 @@
-import { countEditorPathCrossings } from './findEditorPath';
+import { areEditorCellsNeighbors, countEditorPathCrossings } from './findEditorPath';
 import type { EditorCell, EditorShape } from './types';
 
 export type EditorTurnType = 'straight' | 'right-angle' | 'obtuse' | 'acute';
@@ -21,7 +21,6 @@ export interface EditorLevelMetrics {
   lowerLeftMoveRatio: number;
   lowerRightMoveRatio: number;
   consecutiveRightCount: number;
-  consecutiveDownCount: number;
   consecutiveLowerRightCount: number;
   consecutiveOcclusionCount: number;
   startRegion: EditorEndpointRegion;
@@ -57,6 +56,32 @@ const projectCell = (cell: EditorCell, shape: EditorShape): EditorCell => {
     };
   }
   return cell;
+};
+
+export const calculateDirectionalHiddenCounts = (
+  activeCells: ReadonlyArray<EditorCell>,
+  hiddenCellKeys: ReadonlySet<string>,
+  shape: EditorShape,
+): { rightEmptyCount: number; lowerRightEmptyCount: number } => {
+  const activeKeys = new Set(activeCells.map(keyOf));
+  let rightEmptyCount = 0;
+  let lowerRightEmptyCount = 0;
+  for (const cell of activeCells) {
+    const from = projectCell(cell, shape);
+    for (let dy = -1; dy <= 1; dy += 1) {
+      for (let dx = -1; dx <= 1; dx += 1) {
+        const target = { x: cell.x + dx, y: cell.y + dy };
+        if (!activeKeys.has(keyOf(target)) || !hiddenCellKeys.has(keyOf(target))) continue;
+        if (!areEditorCellsNeighbors(cell, target, shape)) continue;
+        const to = projectCell(target, shape);
+        if (to.x - from.x <= 1e-8) continue;
+        const deltaY = to.y - from.y;
+        if (Math.abs(deltaY) <= 1e-8) rightEmptyCount += 1;
+        else if (deltaY > 1e-8) lowerRightEmptyCount += 1;
+      }
+    }
+  }
+  return { rightEmptyCount, lowerRightEmptyCount };
 };
 
 const interiorAngle = (previous: EditorCell, current: EditorCell, next: EditorCell): number => {
@@ -148,10 +173,8 @@ export const calculateEditorLevelMetrics = ({
   let lowerLeftMoves = 0;
   let lowerRightMoves = 0;
   let previousWasRight = false;
-  let previousWasDown = false;
   let previousWasLowerRight = false;
   let consecutiveRightCount = 0;
-  let consecutiveDownCount = 0;
   let consecutiveLowerRightCount = 0;
   let previousWasOccluding = false;
   let consecutiveOcclusionCount = 0;
@@ -180,15 +203,12 @@ export const calculateEditorLevelMetrics = ({
       lowerRightMoves += 1;
     }
     const isRight = horizontalDirection === 'right' && verticalDirection === 'center';
-    const isDown = horizontalDirection === 'center' && verticalDirection === 'down';
     const isLowerRight = horizontalDirection === 'right' && verticalDirection === 'down';
     if (isRight && previousWasRight) consecutiveRightCount += 1;
-    if (isDown && previousWasDown) consecutiveDownCount += 1;
     if (isLowerRight && previousWasLowerRight) consecutiveLowerRightCount += 1;
-    const isOccluding = isRight || isDown || isLowerRight;
+    const isOccluding = isRight || isLowerRight;
     if (isOccluding && previousWasOccluding) consecutiveOcclusionCount += 1;
     previousWasRight = isRight;
-    previousWasDown = isDown;
     previousWasLowerRight = isLowerRight;
     previousWasOccluding = isOccluding;
   }
@@ -234,7 +254,6 @@ export const calculateEditorLevelMetrics = ({
     lowerLeftMoveRatio: moveCount === 0 ? 0 : lowerLeftMoves / moveCount,
     lowerRightMoveRatio: moveCount === 0 ? 0 : lowerRightMoves / moveCount,
     consecutiveRightCount,
-    consecutiveDownCount,
     consecutiveLowerRightCount,
     consecutiveOcclusionCount,
     startRegion: endpointRegion(projectedPath[0], projectedPath),

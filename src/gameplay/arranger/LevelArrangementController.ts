@@ -799,7 +799,6 @@ export class LevelArrangementController {
       item('向左下移动占比', metrics.directionRatios.左下),
       item('向右下移动占比', metrics.directionRatios.右下),
       item('连续向右数量', metrics.consecutiveRightCount),
-      item('连续向下数量', metrics.consecutiveDownCount),
       item('连续向右下数量', metrics.consecutiveLowerRightCount),
       item('连续遮挡计数', metrics.consecutiveOcclusionCount),
       item('起点位置（分为左上/右上/左下/右下/靠中）', metrics.startPosition),

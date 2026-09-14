@@ -96,9 +96,8 @@ describe('level arrangement data', () => {
     expect(result.levels[0].pathMetrics).toMatchObject({
       directionRatios: { 上: 0.2, 左: 0.1 },
       consecutiveRightCount: 5,
-      consecutiveDownCount: 4,
       consecutiveLowerRightCount: 6,
-      consecutiveOcclusionCount: 7,
+      consecutiveOcclusionCount: 0,
       startPosition: '左下',
       endPosition: '右上',
     });
@@ -106,6 +105,16 @@ describe('level arrangement data', () => {
       [header, result.levels[0].parameterValues[index]]
     )));
     expect(parameters).toMatchObject({ 行数: '3', 列数: '2' });
+    const withoutDown = parseArrangementLibraryRows([
+      rectangleHeaders.filter((header) => header !== '连续向下数量'),
+      [
+        'path_2_3_5', 'path_2_3', 2, 1, rectangleLevel, rectanglePath, '长方形', 5, 1,
+        0, 0.2, 1, 0,
+        2, 3, 0.1, 0.2, 4, 6, 7, '右上', '左下',
+      ],
+    ]);
+    expect(withoutDown.levels[0].pathMetrics.consecutiveRightCount).toBe(0);
+    expect(result.parameterHeaders).not.toContain('连续向下数量');
   });
 
   it.each([

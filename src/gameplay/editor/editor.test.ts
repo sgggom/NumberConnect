@@ -15,7 +15,7 @@ import {
   solveInitialFormationPath,
   solveRecognizedGridPath,
 } from './ImageLevelRecognizer';
-import { calculateEditorLevelMetrics } from './levelMetrics';
+import { calculateDirectionalHiddenCounts, calculateEditorLevelMetrics } from './levelMetrics';
 import { LevelEditorModel } from './LevelEditorModel';
 import { decodeClipboardLevelJson } from './clipboardLevelJson';
 
@@ -554,14 +554,13 @@ describe('level editor path generation', () => {
     expect(metrics.lowerLeftMoveRatio).toBe(0);
     expect(metrics.lowerRightMoveRatio).toBeCloseTo(1 / 3);
     expect(metrics.consecutiveRightCount).toBe(0);
-    expect(metrics.consecutiveDownCount).toBe(0);
     expect(metrics.consecutiveLowerRightCount).toBe(0);
-    expect(metrics.consecutiveOcclusionCount).toBe(2);
+    expect(metrics.consecutiveOcclusionCount).toBe(1);
     expect(metrics.startRegion).toBe('左上');
     expect(metrics.endRegion).toBe('右下');
   });
 
-  it('counts repeated right, down, and lower-right moves across interrupted runs', () => {
+  it('counts right and lower-right continuity with downward moves interrupting occlusion', () => {
     const metrics = calculateEditorLevelMetrics({
       path: [
         { x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 },
@@ -572,9 +571,22 @@ describe('level editor path generation', () => {
       shape: 'square',
     });
     expect(metrics.consecutiveRightCount).toBe(2);
-    expect(metrics.consecutiveDownCount).toBe(1);
     expect(metrics.consecutiveLowerRightCount).toBe(1);
-    expect(metrics.consecutiveOcclusionCount).toBe(7);
+    expect(metrics.consecutiveOcclusionCount).toBe(4);
+  });
+
+  it('counts adjacent hidden cells by display direction, including hidden source cells', () => {
+    const cells = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: 1, y: 1 }];
+    expect(calculateDirectionalHiddenCounts(cells, new Set(['1,0', '0,1', '1,1']), 'square'))
+      .toEqual({ rightEmptyCount: 2, lowerRightEmptyCount: 1 });
+    expect(calculateDirectionalHiddenCounts(cells, new Set(), 'square'))
+      .toEqual({ rightEmptyCount: 0, lowerRightEmptyCount: 0 });
+    expect(calculateDirectionalHiddenCounts(cells.slice(1), new Set(['1,1', '2,1']), 'square'))
+      .toEqual({ rightEmptyCount: 1, lowerRightEmptyCount: 0 });
+    expect(calculateDirectionalHiddenCounts(cells, new Set(['1,0']), 'diamond'))
+      .toEqual({ rightEmptyCount: 1, lowerRightEmptyCount: 1 });
+    expect(calculateDirectionalHiddenCounts(cells, new Set(['1,0']), 'hex'))
+      .toEqual({ rightEmptyCount: 0, lowerRightEmptyCount: 1 });
   });
 
   it('calculates crossings, hidden ratio, and longest visibility runs', () => {

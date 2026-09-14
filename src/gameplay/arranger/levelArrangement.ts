@@ -1,4 +1,5 @@
 import { decodeCompactLevelData, type CompactLevelData } from '../../game/levelDataFormat';
+import { calculateEditorLevelMetrics } from '../editor/levelMetrics';
 
 export interface ArrangementLibraryLevel {
   id: string;
@@ -29,7 +30,6 @@ export interface ArrangementPathMetrics {
   averageSegmentLength?: number;
   directionRatios: Partial<Record<'上' | '下' | '左' | '右' | '左上' | '右上' | '左下' | '右下', number>>;
   consecutiveRightCount?: number;
-  consecutiveDownCount?: number;
   consecutiveLowerRightCount?: number;
   consecutiveOcclusionCount?: number;
   startPosition?: string;
@@ -120,7 +120,7 @@ export const ARRANGEMENT_PATH_PARAMETER_HEADERS = new Set([
   '平均路径长度（拐弯的拐点算作端点，看整个棋盘中的线段平均长度）',
   '向上移动占比', '向下移动占比', '向左移动占比', '向右移动占比',
   '向左上移动占比', '向右上移动占比', '向左下移动占比', '向右下移动占比',
-  '连续向右数量', '连续向下数量', '连续向右下数量', '连续遮挡计数',
+  '连续向右数量', '连续向右下数量', '连续遮挡计数',
   '起点位置（分为左上/右上/左下/右下/靠中）', '终点位置',
 ]);
 
@@ -205,7 +205,6 @@ const TRANSPOSED_DIRECTION_HEADERS: Record<string, string> = {
   向左下移动占比: '向右上移动占比',
   向右下移动占比: '向右下移动占比',
   连续向右数量: '连续向下数量',
-  连续向下数量: '连续向右数量',
   连续向右下数量: '连续向右下数量',
   连续遮挡计数: '连续遮挡计数',
 };
@@ -222,6 +221,7 @@ export const createArrangementLibraryRowParser = (
     !header
     || header === '关卡JSON'
     || header === '路径JSON'
+    || header === '连续向下数量'
     || ARRANGEMENT_PATH_PARAMETER_HEADERS.has(header)
     || ARRANGEMENT_DIFFICULTY_PARAMETER_HEADERS.has(header)
       ? []
@@ -280,7 +280,18 @@ export const createArrangementLibraryRowParser = (
       }
       const { transpose, pathKey, boardKey } = cachedPath;
       const levelGrid = transpose ? transposeGrid(rawLevelGrid) : rawLevelGrid;
-      decodeCompactLevelData({ data: levelGrid }, libraryIndex, false);
+      const decodedLevel = decodeCompactLevelData({ data: levelGrid }, libraryIndex, false);
+      // Transposition changes which moves count as rightward or occluding.
+      const transposedMetrics = transpose
+        ? calculateEditorLevelMetrics({
+          path: decodedLevel.solutionPath,
+          hiddenCellKeys: new Set(),
+          shape: 'square',
+        })
+        : undefined;
+      const transposedRightCount = indexOf('连续向下数量') < 0
+        ? transposedMetrics?.consecutiveRightCount
+        : undefined;
       const parameterValues = parameterColumns.map(({ header, columnIndex }): string => {
         const sourceHeader = transpose ? TRANSPOSED_DIRECTION_HEADERS[header] ?? header : header;
         let value = row[indexOf(sourceHeader) >= 0 ? indexOf(sourceHeader) : columnIndex];
@@ -317,10 +328,10 @@ export const createArrangementLibraryRowParser = (
             左下: numericCell(metricCell('向左下移动占比')),
             右下: numericCell(metricCell('向右下移动占比')),
           },
-          consecutiveRightCount: numericCell(metricCell('连续向右数量')),
-          consecutiveDownCount: numericCell(metricCell('连续向下数量')),
+          consecutiveRightCount: transposedRightCount ?? numericCell(metricCell('连续向右数量')),
           consecutiveLowerRightCount: numericCell(metricCell('连续向右下数量')),
-          consecutiveOcclusionCount: numericCell(metricCell('连续遮挡计数')),
+          consecutiveOcclusionCount: transposedMetrics?.consecutiveOcclusionCount
+            ?? numericCell(metricCell('连续遮挡计数')),
           startPosition: positionCell('起点位置（分为左上/右上/左下/右下/靠中）') || undefined,
           endPosition: positionCell('终点位置') || undefined,
         };

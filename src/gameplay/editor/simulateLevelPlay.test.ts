@@ -269,7 +269,6 @@ describe('editor level play simulation', () => {
         lowerLeftMoveRatio: 0.125,
         lowerRightMoveRatio: 0.125,
         consecutiveRightCount: 1,
-        consecutiveDownCount: 1,
         consecutiveLowerRightCount: 1,
         consecutiveOcclusionCount: 3,
         startRegion: '左上',

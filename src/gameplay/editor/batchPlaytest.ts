@@ -7,7 +7,7 @@ import type {
   EditorAlgorithmContext,
   EditorAlgorithmResult,
 } from './algorithms/types';
-import { calculateEditorLevelMetrics } from './levelMetrics';
+import { calculateDirectionalHiddenCounts, calculateEditorLevelMetrics } from './levelMetrics';
 import { summarizeDifficultyScores } from './levelBaseDataTsv';
 import { areEditorCellsNeighbors } from './findEditorPath';
 import {
@@ -55,8 +55,9 @@ export const BATCH_PATH_RESULT_HEADERS = [
   '平均路径长度（拐弯的拐点算作端点，看整个棋盘中的线段平均长度）',
   '向上移动占比', '向下移动占比', '向左移动占比', '向右移动占比',
   '向左上移动占比', '向右上移动占比', '向左下移动占比', '向右下移动占比',
-  '连续向右数量', '连续向下数量', '连续向右下数量', '连续遮挡计数',
+  '连续向右数量', '连续向右下数量', '连续遮挡计数',
   '起点位置（分为左上/右上/左下/右下/靠中）', '终点位置',
+  '向右空位数量', '向右下空位数量',
 ] as const;
 
 export const BATCH_HIDDEN_RESULT_HEADERS = [
@@ -68,12 +69,13 @@ export const BATCH_HIDDEN_RESULT_HEADERS = [
   '平均路径长度（拐弯的拐点算作端点，看整个棋盘中的线段平均长度）',
   '向上移动占比', '向下移动占比', '向左移动占比', '向右移动占比',
   '向左上移动占比', '向右上移动占比', '向左下移动占比', '向右下移动占比',
-  '连续向右数量', '连续向下数量', '连续向右下数量', '连续遮挡计数',
+  '连续向右数量', '连续向右下数量', '连续遮挡计数',
   '起点位置（分为左上/右上/左下/右下/靠中）', '终点位置',
   '每关跑关次数', '推理能力', '平均总步数', '低推理平均错误数', '中推理平均错误数',
   '高推理平均错误数', '平均可连接数量', '直接连接占比 %',
   '平均距离下个显示数字', '平均每步难度分', '前期平均难度分', '中期平均难度分', '后期平均难度分',
   '失败原因',
+  '向右空位数量', '向右下空位数量',
 ] as const;
 
 export const BATCH_PLAYTEST_RESULT_HEADERS = BATCH_HIDDEN_RESULT_HEADERS;
@@ -784,6 +786,7 @@ export const formatBatchPlaytestResultsTsv = (
       return failureRow;
     }
     const hiddenCellKeys = new Set((level.hiddenCells ?? []).map((cell) => `${cell.x},${cell.y}`));
+    const emptyCounts = calculateDirectionalHiddenCounts(level.activeCells, hiddenCellKeys, config.shape);
     const metrics = calculateEditorLevelMetrics({
       path: level.solutionPath,
       hiddenCellKeys,
@@ -801,9 +804,10 @@ export const formatBatchPlaytestResultsTsv = (
         rounded(metrics.rightwardMoveRatio), rounded(metrics.upperLeftMoveRatio),
         rounded(metrics.upperRightMoveRatio), rounded(metrics.lowerLeftMoveRatio),
         rounded(metrics.lowerRightMoveRatio), metrics.consecutiveRightCount,
-        metrics.consecutiveDownCount, metrics.consecutiveLowerRightCount,
+        metrics.consecutiveLowerRightCount,
         metrics.consecutiveOcclusionCount,
         metrics.startRegion, metrics.endRegion,
+        emptyCounts.rightEmptyCount, emptyCounts.lowerRightEmptyCount,
       ];
     }
     const hiddenSimulation = simulation as BatchPlaytestSimulation;
@@ -822,7 +826,7 @@ export const formatBatchPlaytestResultsTsv = (
       rounded(metrics.leftwardMoveRatio), rounded(metrics.rightwardMoveRatio),
       rounded(metrics.upperLeftMoveRatio), rounded(metrics.upperRightMoveRatio),
       rounded(metrics.lowerLeftMoveRatio), rounded(metrics.lowerRightMoveRatio),
-      metrics.consecutiveRightCount, metrics.consecutiveDownCount, metrics.consecutiveLowerRightCount,
+      metrics.consecutiveRightCount, metrics.consecutiveLowerRightCount,
       metrics.consecutiveOcclusionCount,
       metrics.startRegion, metrics.endRegion,
       config.simulationRunCount, reasoningLabel('medium'), rounded(hiddenSimulation.totalSteps),
@@ -835,6 +839,7 @@ export const formatBatchPlaytestResultsTsv = (
       rounded(difficulty.averageStepDifficultyScore), rounded(difficulty.earlyAverageDifficultyScore),
       rounded(difficulty.middleAverageDifficultyScore), rounded(difficulty.lateAverageDifficultyScore),
       '',
+      emptyCounts.rightEmptyCount, emptyCounts.lowerRightEmptyCount,
     ];
   });
   return [...(includeHeader ? [headers] : []), ...rows]

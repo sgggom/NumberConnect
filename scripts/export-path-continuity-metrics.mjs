@@ -3,7 +3,6 @@ import { readSheet } from 'read-excel-file/node';
 
 const HEADERS = [
   '连续向右数量',
-  '连续向下数量',
   '连续向右下数量',
   '连续遮挡计数',
 ];
@@ -23,14 +22,14 @@ const outputRows = [HEADERS];
 for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
   const rawPathJson = String(rows[rowIndex]?.[pathJsonIndex] ?? '').trim();
   if (!rawPathJson) {
-    outputRows.push(['', '', '', '']);
+    outputRows.push(HEADERS.map(() => ''));
     invalidRows += 1;
     continue;
   }
   try {
     outputRows.push(calculateContinuityMetrics(rawPathJson));
   } catch {
-    outputRows.push(['', '', '', '']);
+    outputRows.push(HEADERS.map(() => ''));
     invalidRows += 1;
   }
 }
@@ -62,7 +61,6 @@ function calculateContinuityMetrics(rawPathJson) {
 
   let previousDirection = '';
   let right = 0;
-  let down = 0;
   let lowerRight = 0;
   let occlusion = 0;
   for (let index = 1; index < cells.length; index += 1) {
@@ -74,14 +72,13 @@ function calculateContinuityMetrics(rawPathJson) {
         ? 'down'
         : deltaX > 0 && deltaY > 0 ? 'lower-right' : 'other';
     if (direction === 'right' && previousDirection === 'right') right += 1;
-    if (direction === 'down' && previousDirection === 'down') down += 1;
     if (direction === 'lower-right' && previousDirection === 'lower-right') lowerRight += 1;
     if (isOccluding(direction) && isOccluding(previousDirection)) occlusion += 1;
     previousDirection = direction;
   }
-  return [right, down, lowerRight, occlusion];
+  return [right, lowerRight, occlusion];
 }
 
 function isOccluding(direction) {
-  return direction === 'right' || direction === 'down' || direction === 'lower-right';
+  return direction === 'right' || direction === 'lower-right';
 }
