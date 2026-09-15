@@ -14,6 +14,8 @@ import {
 } from './ImageLevelRecognizer';
 import { calculateEditorLevelMetrics } from './levelMetrics';
 import { LevelEditorModel } from './LevelEditorModel';
+import { startHollowFormationGeneration } from './hollowFormationWorker';
+import { validateHollowFormationRequest, type FormationSymmetry } from './generateHollowFormation';
 import { mountLevelEditorView } from './LevelEditorView';
 import {
   loadLevelEditorPreferences,
@@ -125,7 +127,7 @@ export class LevelEditorController {
   private pathGenerationRun = 0;
   private isPathCalculating = false;
   private pathCalculationProgress = 0;
-  private pathCalculationMode: 'path' | 'hidden' = 'path';
+  private pathCalculationMode: 'path' | 'hidden' | 'formation' = 'path';
   private readonly batchPlaytestTasks = new Set<EditorPathGenerationTask>();
   private readonly batchHiddenGenerationTasks = new Set<ProgressiveHiddenGenerationTask>();
   private readonly batchSimulationTasks = new Set<BatchSimulationTask>();
@@ -279,6 +281,7 @@ export class LevelEditorController {
       () => void this.copyFormationToClipboard(window),
     );
     this.query('#editor-generate-path-button').addEventListener('click', () => void this.generatePath());
+    this.query('#editor-generate-formation-button').addEventListener('click', () => void this.generateHollowShape());
     this.query('#editor-calculate-hidden-button').addEventListener('click', () => void this.calculateHiddenLayout());
     this.query<HTMLInputElement>('#editor-simulation-count').addEventListener('change', (event) => {
       const input = event.currentTarget as HTMLInputElement;
@@ -520,6 +523,10 @@ export class LevelEditorController {
     const fillButton = this.query<HTMLButtonElement>('#editor-fill-button');
     fillButton.hidden = false;
     fillButton.disabled = pathBusy;
+    this.query<HTMLSelectElement>('#editor-formation-symmetry').disabled = pathBusy || this.isImageRecognizing;
+    this.query<HTMLInputElement>('#editor-formation-hollow-min').disabled = pathBusy || this.isImageRecognizing;
+    this.query<HTMLInputElement>('#editor-formation-hollow-max').disabled = pathBusy || this.isImageRecognizing;
+    this.query<HTMLButtonElement>('#editor-generate-formation-button').disabled = pathBusy || this.isImageRecognizing;
     this.query<HTMLButtonElement>('#editor-clear-button').disabled = pathBusy;
     this.query<HTMLButtonElement>('#editor-generate-path-button').disabled = this.model.manualEditMode !== 'off' || pathBusy;
     this.query<HTMLButtonElement>('#editor-calculate-hidden-button').disabled = (
@@ -1651,6 +1658,48 @@ export class LevelEditorController {
     this.setStatus(`已撤销删除，恢复 ${restoredCount} 段路径及对应格子。`);
   }
 
+  private async generateHollowShape(): Promise<void> {
+    if (this.isPathBusy() || this.isImageRecognizing) return;
+    const request = {
+      ...this.model.size(), shape: this.model.shape,
+      symmetry: this.query<HTMLSelectElement>('#editor-formation-symmetry').value as FormationSymmetry,
+      hollowPercentMin: this.query<HTMLInputElement>('#editor-formation-hollow-min').valueAsNumber,
+      hollowPercentMax: this.query<HTMLInputElement>('#editor-formation-hollow-max').valueAsNumber,
+      seed: Math.floor(Math.random() * 0x100000000),
+    };
+    const run = ++this.pathGenerationRun;
+    try {
+      validateHollowFormationRequest(request);
+      this.clearSimulationResult();
+      this.pathCalculationMode = 'formation';
+      this.isPathCalculating = true;
+      this.pathCalculationProgress = 0;
+      this.render();
+      this.setStatus('正在按镂空比例生成造型并验证一笔连路径…');
+      const task = startHollowFormationGeneration(request, (progress) => {
+        if (run === this.pathGenerationRun) this.updatePathCalculationProgress(progress);
+      });
+      this.pathGenerationTask = task;
+      const result = await task.promise;
+      if (run !== this.pathGenerationRun) return;
+      if (!result || !this.model.applyGeneratedFormation(result.path)) throw new Error('未能生成完整的一笔连路径，请重试。');
+      this.pathGenerationTask = undefined;
+      this.isPathCalculating = false;
+      this.pathCalculationProgress = 0;
+      this.render();
+      const emptyCount = request.rows * request.columns - result.path.length;
+      const actualPercent = (emptyCount * 100 / (request.rows * request.columns)).toFixed(1);
+      this.setStatus(`镂空造型已生成：${result.path.length} 个有效格、${emptyCount} 个镂空格，实际 ${actualPercent}%（范围 ${request.hollowPercentMin}–${request.hollowPercentMax}%）。已验证整体连通且可一笔连。可复制造型，或点击“生成路径”继续。`);
+    } catch (error) {
+      if (run !== this.pathGenerationRun) return;
+      this.pathGenerationTask = undefined;
+      this.isPathCalculating = false;
+      this.pathCalculationProgress = 0;
+      this.render();
+      this.setStatus(error instanceof Error ? error.message : '造型生成失败。', true);
+    }
+  }
+
   private async generatePath(): Promise<void> {
     this.cancelPathAnimation();
     this.cancelPathCalculation();
@@ -1763,13 +1812,13 @@ export class LevelEditorController {
     if (percentage === this.pathCalculationProgress && percentage !== 0) return;
     this.pathCalculationProgress = percentage;
     this.renderPathGenerationButton();
-    this.setStatus(`正在计算${this.pathCalculationMode === 'path' ? '路径' : '隐藏'} ${percentage}%…`);
+    this.setStatus(`正在计算${this.pathCalculationMode === 'formation' ? '镂空造型与一笔连路径' : this.pathCalculationMode === 'path' ? '路径' : '隐藏'} ${percentage}%…`);
   }
 
   private renderPathGenerationButton(): void {
     const percentage = Math.max(0, Math.min(100, this.pathCalculationProgress));
     const renderButton = (
-      mode: 'path' | 'hidden',
+      mode: 'path' | 'hidden' | 'formation',
       buttonId: string,
       labelId: string,
       idleLabel: string,
@@ -1781,11 +1830,12 @@ export class LevelEditorController {
       button.style.setProperty('--editor-path-generation-progress', String(active ? percentage / 100 : 0));
       button.setAttribute('aria-busy', String(active));
       label.textContent = active ? `计算中 ${percentage}%` : idleLabel;
-      if (active) button.setAttribute('aria-label', `正在计算${mode === 'path' ? '路径' : '隐藏'}，${percentage}%`);
+      if (active) button.setAttribute('aria-label', `正在计算${mode === 'formation' ? '镂空造型' : mode === 'path' ? '路径' : '隐藏'}，${percentage}%`);
       else button.removeAttribute('aria-label');
     };
     renderButton('path', '#editor-generate-path-button', '#editor-generate-path-label', '生成路径');
     renderButton('hidden', '#editor-calculate-hidden-button', '#editor-calculate-hidden-label', '计算隐藏');
+    renderButton('formation', '#editor-generate-formation-button', '#editor-generate-formation-label', '生成镂空造型');
   }
 
   private animateGeneratedPath(completionMessage: string): void {

@@ -104,7 +104,8 @@
 .arranger-auto-dialog__card > header small { color: var(--green); font-size: .62rem; font-weight: 900; letter-spacing: .1em; }
 .arranger-auto-dialog__card > header h3 { margin: 4px 0 0; font-size: 1.08rem; }
 .arranger-auto-dialog__card .icon-button { width: 34px; height: 34px; color: var(--muted); background: rgba(255,255,255,.07); }
-.arranger-auto-fields { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px; }
+.arranger-auto-fields { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; }
+.arranger-auto-preference-help { margin: 0; color: var(--muted); font-size: .72rem; line-height: 1.6; }
 .arranger-auto-fields label { display: grid; gap: 6px; }
 .arranger-auto-fields span, .arranger-auto-stages strong { font-size: .68rem; font-weight: 850; }
 .arranger-auto-fields input, .arranger-auto-fields select, .arranger-auto-stage input { width: 100%; min-width: 0; height: 38px; padding: 0 10px; border: 1px solid rgba(255,255,255,.11); border-radius: 9px; color: var(--ink); background: rgba(8,16,25,.72); font-size: .72rem; }

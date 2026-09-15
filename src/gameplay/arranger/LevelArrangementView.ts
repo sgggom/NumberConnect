@@ -81,10 +81,13 @@ export const mountLevelArrangementView = (host: HTMLElement): void => {
           <label><span>生成关卡数</span><input id="arranger-auto-level-count" type="number" min="1" step="1" value="${DEFAULT_AUTO_ARRANGEMENT_FORM.levelCount}"></label>
           <label><span>每关棋盘数量</span><input id="arranger-auto-board-count" type="number" min="1" max="20" step="1" value="${DEFAULT_AUTO_ARRANGEMENT_FORM.boardsPerLevel}"></label>
           <label><span>相同路径重复出现间隔</span><input id="arranger-auto-path-gap" type="number" min="0" step="1" value="${DEFAULT_AUTO_ARRANGEMENT_FORM.pathRepeatInterval}"></label>
-          <label><span>连续遮挡计数倾向</span><select id="arranger-auto-occlusion-preference"><option value="large">大</option><option value="medium">中</option><option value="small">小</option><option value="random" selected>随机</option></select></label>
+          <label><span>向右下空位数量倾向</span><select id="arranger-auto-lower-right-empty-preference"><option value="large">大</option><option value="medium">中</option><option value="small" selected>小</option><option value="random">随机</option></select></label>
+          <label><span>向右空位数量倾向</span><select id="arranger-auto-right-empty-preference"><option value="large">大</option><option value="medium">中</option><option value="small" selected>小</option><option value="random">随机</option></select></label>
+          <label><span>连续遮挡计数倾向</span><select id="arranger-auto-occlusion-preference"><option value="large">大</option><option value="medium">中</option><option value="small" selected>小</option><option value="random">随机</option></select></label>
         </div>
+        <p class="arranger-auto-preference-help">倾向优先级：向右下空位 → 向右空位 → 连续遮挡。同等候选随机选；随机表示跳过该项，中表示接近当前候选数量范围的中间值。空位指隐藏数字格。</p>
         <section class="arranger-auto-stages">
-          <header><div><strong>棋盘阶段配置</strong><small>阶段数量随每关棋盘数量自动变化；范围支持 1-20,25,30-35</small></div></header>
+          <header><div><strong>棋盘阶段配置</strong><small>阶段数量随每关棋盘数量自动变化；支持 1-20,25 和造型区间混搭，如 44,[n1~n20],[n30~n40],55；每个造型区间算一个候选项，从中选一个棋盘</small></div></header>
           <div class="arranger-auto-stage-head"><span>棋盘阶段</span><span>可选阵型 ID 范围</span><span>难度范围</span></div>
           <div id="arranger-auto-stage-list" class="arranger-auto-stage-list"></div>
         </section>

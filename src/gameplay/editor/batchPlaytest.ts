@@ -58,6 +58,7 @@ export const BATCH_PATH_RESULT_HEADERS = [
   '连续向右数量', '连续向右下数量', '连续遮挡计数',
   '起点位置（分为左上/右上/左下/右下/靠中）', '终点位置',
   '向右空位数量', '向右下空位数量',
+  '向右/右下隐藏数字周围更大隐藏数字数量',
 ] as const;
 
 export const BATCH_HIDDEN_RESULT_HEADERS = [
@@ -76,6 +77,7 @@ export const BATCH_HIDDEN_RESULT_HEADERS = [
   '平均距离下个显示数字', '平均每步难度分', '前期平均难度分', '中期平均难度分', '后期平均难度分',
   '失败原因',
   '向右空位数量', '向右下空位数量',
+  '向右/右下隐藏数字周围更大隐藏数字数量',
 ] as const;
 
 export const BATCH_PLAYTEST_RESULT_HEADERS = BATCH_HIDDEN_RESULT_HEADERS;
@@ -786,7 +788,7 @@ export const formatBatchPlaytestResultsTsv = (
       return failureRow;
     }
     const hiddenCellKeys = new Set((level.hiddenCells ?? []).map((cell) => `${cell.x},${cell.y}`));
-    const emptyCounts = calculateDirectionalHiddenCounts(level.activeCells, hiddenCellKeys, config.shape);
+    const emptyCounts = calculateDirectionalHiddenCounts(level.solutionPath, hiddenCellKeys, config.shape);
     const metrics = calculateEditorLevelMetrics({
       path: level.solutionPath,
       hiddenCellKeys,
@@ -808,6 +810,7 @@ export const formatBatchPlaytestResultsTsv = (
         metrics.consecutiveOcclusionCount,
         metrics.startRegion, metrics.endRegion,
         emptyCounts.rightEmptyCount, emptyCounts.lowerRightEmptyCount,
+        emptyCounts.laterHiddenNeighborCount,
       ];
     }
     const hiddenSimulation = simulation as BatchPlaytestSimulation;
@@ -840,6 +843,7 @@ export const formatBatchPlaytestResultsTsv = (
       rounded(difficulty.middleAverageDifficultyScore), rounded(difficulty.lateAverageDifficultyScore),
       '',
       emptyCounts.rightEmptyCount, emptyCounts.lowerRightEmptyCount,
+      emptyCounts.laterHiddenNeighborCount,
     ];
   });
   return [...(includeHeader ? [headers] : []), ...rows]

@@ -8,7 +8,7 @@ export interface ArrangementLibraryLevel {
   shapeName: string;
   sourceRow: number;
   sourceName: string;
-  formationId?: number;
+  formationId?: number | string;
   pathId?: number;
   difficultyId?: number;
   configId: string;
@@ -37,6 +37,8 @@ export interface ArrangementPathMetrics {
 }
 
 export interface ArrangementDifficultyMetrics {
+  rightEmptyCount?: number;
+  lowerRightEmptyCount?: number;
   hiddenCount?: number;
   hiddenRatio?: number;
   longestVisible?: number;
@@ -125,6 +127,7 @@ export const ARRANGEMENT_PATH_PARAMETER_HEADERS = new Set([
 ]);
 
 export const ARRANGEMENT_DIFFICULTY_PARAMETER_HEADERS = new Set([
+  '向右空位数量', '向右下空位数量',
   '目标难度', '实际隐藏数', '实际隐藏占比 %', '实际最长连续显示', '实际最长连续隐藏',
   '平均总步数', '低推理平均错误数', '中推理平均错误数', '高推理平均错误数',
   '平均可连接数量', '直接连接占比 %', '平均距离下个显示数字', '平均每步难度分',
@@ -137,14 +140,14 @@ const numericCell = (value: unknown): number | undefined => {
 };
 
 const parseStructuredLevelId = (value: string): {
-  formationId?: number;
+  formationId?: number | string;
   pathId?: number;
   difficultyId?: number;
 } => {
-  const match = /^level_(\d+)_(\d+)_(\d+)$/.exec(value);
+  const match = /^level_([^_]+)_(\d+)_(\d+)$/.exec(value);
   if (!match) return {};
   return {
-    formationId: Number(match[1]),
+    formationId: /^\d+$/.test(match[1]) ? Number(match[1]) : match[1],
     pathId: Number(match[2]),
     difficultyId: Number(match[3]),
   };
@@ -168,6 +171,8 @@ const transposeGrid = (grid: ReadonlyArray<ReadonlyArray<number>>): number[][] =
 );
 
 const configuredSize = (configId: string): { width: number; height: number } | undefined => {
+  // Named shapes do not encode board dimensions in their path/difficulty IDs.
+  if (/^level_[^_]*[^\d_][^_]*(?:_|$)/i.test(configId.trim())) return undefined;
   const compactMatch = /^level_(\d)(\d{1,2})(?:_|$)/i.exec(configId.trim());
   if (compactMatch) {
     return { width: Number(compactMatch[1]), height: Number(compactMatch[2]) };
@@ -281,6 +286,13 @@ export const createArrangementLibraryRowParser = (
       const { transpose, pathKey, boardKey } = cachedPath;
       const levelGrid = transpose ? transposeGrid(rawLevelGrid) : rawLevelGrid;
       const decodedLevel = decodeCompactLevelData({ data: levelGrid }, libraryIndex, false);
+      const shapeName = String(row[indexOf('棋盘形状')] ?? '').trim();
+      const emptyCountCell = (header: string): number | undefined => {
+        const raw = row[indexOf(header)];
+        if (raw === undefined || raw === null || String(raw).trim() === '') return undefined;
+        const value = Number(raw);
+        return Number.isInteger(value) && value >= 0 ? value : undefined;
+      };
       // Transposition changes which moves count as rightward or occluding.
       const transposedMetrics = transpose
         ? calculateEditorLevelMetrics({
@@ -341,7 +353,7 @@ export const createArrangementLibraryRowParser = (
         id: levelId,
         boardKey,
         pathKey,
-        shapeName: String(row[indexOf('棋盘形状')] ?? '').trim(),
+        shapeName,
         sourceRow,
         sourceName,
         ...structuredId,
@@ -350,6 +362,8 @@ export const createArrangementLibraryRowParser = (
         mediumErrorCount: numericCell(row[indexOf('中推理平均错误数')]),
         pathMetrics,
         difficultyMetrics: {
+          rightEmptyCount: emptyCountCell('向右空位数量'),
+          lowerRightEmptyCount: emptyCountCell('向右下空位数量'),
           hiddenCount: numericCell(row[indexOf('实际隐藏数')]),
           hiddenRatio: numericCell(row[indexOf('实际隐藏占比 %')]),
           longestVisible: numericCell(row[indexOf('实际最长连续显示')]),
@@ -395,14 +409,22 @@ export const parseArrangementLibraryRows = (
   return parser.finish();
 };
 
+export const compareFormationIds = (left?: number | string, right?: number | string): number => {
+  if (left === right) return 0;
+  if (left === undefined) return 1;
+  if (right === undefined) return -1;
+  return String(left).localeCompare(String(right), 'en', { numeric: true });
+};
+
 export const arrangementBoardFamilies = (
   levels: ReadonlyArray<ArrangementLibraryLevel>,
 ): ArrangementBoardFamily[] => {
   const groups = new Map<string, ArrangementLibraryLevel[]>();
   levels.forEach((level) => {
-    const variants = groups.get(level.boardKey);
+    const key = typeof level.formationId === 'string' ? `${level.formationId}:${level.boardKey}` : level.boardKey;
+    const variants = groups.get(key);
     if (variants) variants.push(level);
-    else groups.set(level.boardKey, [level]);
+    else groups.set(key, [level]);
   });
   return [...groups.entries()].map(([key, boardLevels]) => {
     const pathGroups = new Map<string, ArrangementLibraryLevel[]>();
@@ -435,8 +457,7 @@ export const arrangementBoardFamilies = (
     const representative = boardLevels.find((level) => level.formationId !== undefined) ?? boardLevels[0];
     return { key, representative, paths };
   }).sort((left, right) => (
-    (left.representative.formationId ?? Number.MAX_SAFE_INTEGER)
-    - (right.representative.formationId ?? Number.MAX_SAFE_INTEGER)
+    compareFormationIds(left.representative.formationId, right.representative.formationId)
     || left.representative.sourceRow - right.representative.sourceRow
   ));
 };
@@ -550,7 +571,7 @@ export const arrangementLevelDataJson = (
       : `path:${level.pathKey}`;
     return usedPathKeys.has(pathKey);
   }).sort((left, right) => (
-    (left.formationId ?? Number.MAX_SAFE_INTEGER) - (right.formationId ?? Number.MAX_SAFE_INTEGER)
+    compareFormationIds(left.formationId, right.formationId)
     || (left.pathId ?? Number.MAX_SAFE_INTEGER) - (right.pathId ?? Number.MAX_SAFE_INTEGER)
     || (left.difficultyId ?? Number.MAX_SAFE_INTEGER) - (right.difficultyId ?? Number.MAX_SAFE_INTEGER)
     || left.sourceRow - right.sourceRow

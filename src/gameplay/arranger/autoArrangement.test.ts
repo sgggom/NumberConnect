@@ -7,12 +7,12 @@ import {
   parseFormationIdRange,
 } from './autoArrangement';
 
-const entry = (formationId: number, pathId: number, difficultyId: number): ArrangementLibraryLevel => ({
+const entry = (formationId: number | string, pathId: number, difficultyId: number): ArrangementLibraryLevel => ({
   id: `level_${formationId}_${pathId}_${difficultyId}`,
   boardKey: `board-${formationId}`,
   pathKey: `path-${formationId}-${pathId}`,
   shapeName: '正方形',
-  sourceRow: formationId * 100 + pathId * 10 + difficultyId,
+  sourceRow: (typeof formationId === 'number' ? formationId : 0) * 100 + pathId * 10 + difficultyId,
   sourceName: `level_${formationId}_${pathId}_${difficultyId}`,
   formationId,
   pathId,
@@ -27,7 +27,7 @@ const entry = (formationId: number, pathId: number, difficultyId: number): Arran
   levelData: { data: [[1]] },
 });
 
-const family = (formationId: number, pathIds: number[]): ArrangementBoardFamily => {
+const family = (formationId: number | string, pathIds: number[]): ArrangementBoardFamily => {
   const paths = pathIds.map((pathId) => {
     const difficulties = [1, 2].map((difficultyId) => {
       const representative = entry(formationId, pathId, difficultyId);
@@ -39,6 +39,45 @@ const family = (formationId: number, pathIds: number[]): ArrangementBoardFamily 
 };
 
 describe('automatic level arrangement', () => {
+  it('keeps each named range as one option while accepting mixed numeric ranges', () => {
+    expect(parseFormationIdRange('44,[n1 ~ n20]，55,[n30~n40],1-2,n50')).toEqual([
+      '[n1~n20]', '[n30~n40]', 1, 2, 44, 55, 'n50',
+    ].sort((left, right) => String(left).localeCompare(String(right), 'en', { numeric: true })));
+    expect(() => parseFormationIdRange('[n20~n1]')).toThrow('起始值');
+    expect(() => parseFormationIdRange('[n1~m20]')).toThrow('前缀');
+    expect(() => parseFormationIdRange('[n1~n20')).toThrow('无法识别');
+  });
+
+  it('treats multiple shape ranges and numeric IDs as equal candidate options', () => {
+    const families = [family(44, [1]), family('n1', [1]), family('n20', [1]), family('n30', [1]), family('n99', [1])];
+    const pick = (groupRandom: number): string => {
+      const randomValues = [groupRandom, 0];
+      return generateAutoArrangement(families, {
+        levelCount: 1, boardsPerLevel: 1, pathRepeatInterval: 0, occlusionPreference: 'random',
+        stages: [{ formationIds: [44, '[n1~n20]', '[n30~n40]'], difficultyIds: [2] }],
+        randomSource: () => randomValues.shift() ?? 0,
+      })[0].levelIds[0];
+    };
+    expect(pick(0)).toBe('level_44_1_2');
+    expect(pick(.4)).toBe('level_n1_1_2');
+    expect(pick(.8)).toBe('level_n30_1_2');
+  });
+
+  it('handles overlapping shape ranges without reusing levels or bypassing path cooldown', () => {
+    const config = {
+      levelCount: 4, boardsPerLevel: 1, pathRepeatInterval: 2, occlusionPreference: 'random' as const,
+      stages: [{ formationIds: ['[n1~n2]', '[n2~n3]'], difficultyIds: [1, 2] }],
+      randomSource: () => 0,
+    };
+    const groups = generateAutoArrangement([family('n1', [1]), family('n2', [1])], config);
+    expect(groups.map((group) => group.levelIds[0])).toEqual([
+      'level_n1_1_1', 'level_n2_1_1', 'level_n1_1_2', 'level_n2_1_2',
+    ]);
+    expect(() => generateAutoArrangement([family('n1', [1])], {
+      ...config, levelCount: 1, stages: [{ formationIds: ['[n30~n40]'], difficultyIds: [1] }],
+    })).toThrow('找不到阵型：[n30~n40]');
+  });
+
   it('parses individual ids and numeric ranges', () => {
     expect(parseFormationIdRange('1-3, 8，10-11')).toEqual([1, 2, 3, 8, 10, 11]);
     expect(parseDifficultyIdRange('1-3,8')).toEqual([1, 2, 3, 8]);
@@ -104,6 +143,46 @@ describe('automatic level arrangement', () => {
     expect(firstFor('small')).toMatch(/^level_1_1_/);
   });
 
+  it.each(['rightEmptyPreference', 'lowerRightEmptyPreference'] as const)('supports large, medium, small and random for %s', (preferenceKey) => {
+    const scoredFamily = family(1, [1, 2, 3]);
+    const metricKey = preferenceKey === 'rightEmptyPreference' ? 'rightEmptyCount' : 'lowerRightEmptyCount';
+    [1, 5, 9].forEach((score, index) => {
+      scoredFamily.paths[index].difficulties.forEach(({ variants }) => {
+        variants.forEach((level) => { level.difficultyMetrics[metricKey] = score; });
+      });
+    });
+    const pick = (preference: 'large' | 'medium' | 'small' | 'random', random = 0) => generateAutoArrangement([scoredFamily], {
+      levelCount: 1, boardsPerLevel: 1, pathRepeatInterval: 0,
+      occlusionPreference: 'random', [preferenceKey]: preference,
+      stages: [{ formationIds: [1], difficultyIds: [1] }], randomSource: () => random,
+    })[0].levelIds[0];
+    expect(pick('large')).toBe('level_1_3_1');
+    expect(pick('medium')).toBe('level_1_2_1');
+    expect(pick('small', .999)).toBe('level_1_1_1');
+    expect(pick('random')).toBe('level_1_1_1');
+    expect(pick('random', .999)).toBe('level_1_3_1');
+  });
+
+  it('applies lower-right, right, then occlusion priority and respects cooldown', () => {
+    const scoredFamily = family(1, [1, 2, 3, 4]);
+    [[9, 1, 0], [9, 5, 0], [8, 100, 100], [9, 5, 10]].forEach(([lowerRight, right, occlusion], index) => {
+      scoredFamily.paths[index].difficulties.forEach(({ variants }) => {
+        variants.forEach((level) => {
+          level.difficultyMetrics = { lowerRightEmptyCount: lowerRight, rightEmptyCount: right };
+          level.pathMetrics.consecutiveOcclusionCount = occlusion;
+        });
+      });
+    });
+    const groups = generateAutoArrangement([scoredFamily], {
+      levelCount: 4, boardsPerLevel: 1, pathRepeatInterval: 10,
+      lowerRightEmptyPreference: 'large', rightEmptyPreference: 'large', occlusionPreference: 'large',
+      stages: [{ formationIds: [1], difficultyIds: [1, 2] }], randomSource: () => 0,
+    });
+    expect(groups.map(({ levelIds }) => levelIds[0])).toEqual([
+      'level_1_4_1', 'level_1_2_1', 'level_1_1_1', 'level_1_3_1',
+    ]);
+  });
+
   it('rejects a requested level count larger than the stage pools can provide', () => {
     expect(() => generateAutoArrangement([family(1, [1])], {
       levelCount: 3,
@@ -142,17 +221,18 @@ describe('automatic level arrangement', () => {
     expect(first[0].levelIds[0]).not.toBe(last[0].levelIds[0]);
   });
 
-  it('keeps the fixed defaults used by the current 400-level layout', () => {
+  it('keeps the fixed defaults used by the current 500-level layout', () => {
     expect(DEFAULT_AUTO_ARRANGEMENT_FORM).toMatchObject({
-      levelCount: 400,
-      boardsPerLevel: 4,
-      pathRepeatInterval: 100,
+      levelCount: 500,
+      boardsPerLevel: 3,
+      pathRepeatInterval: 500,
+      occlusionPreference: 'small',
+      rightEmptyPreference: 'small',
+      lowerRightEmptyPreference: 'small',
       stages: [
-        { formationRange: '44,45,54', difficultyRange: '3,4,5' },
-        { formationRange: '44,45,54,55,56', difficultyRange: '3,4,5' },
-        { formationRange: '44,45,54,55,56,57,66', difficultyRange: '4,5,6' },
-        { formationRange: '67,68,77,78,79,88,89', difficultyRange: '5,6,7' },
-      ],
+        { formationRange: '[n1~n50]', difficultyRange: '3,4,5' },
+        { formationRange: '56,57,58,59,66,67,68,77', difficultyRange: '4,5,6' },
+        { formationRange: '69,610,78,79,710,711', difficultyRange: '4,5,6' },      ],
     });
   });
 });

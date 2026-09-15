@@ -59,29 +59,35 @@ const projectCell = (cell: EditorCell, shape: EditorShape): EditorCell => {
 };
 
 export const calculateDirectionalHiddenCounts = (
-  activeCells: ReadonlyArray<EditorCell>,
+  solutionPath: ReadonlyArray<EditorCell>,
   hiddenCellKeys: ReadonlySet<string>,
   shape: EditorShape,
-): { rightEmptyCount: number; lowerRightEmptyCount: number } => {
-  const activeKeys = new Set(activeCells.map(keyOf));
+): { rightEmptyCount: number; lowerRightEmptyCount: number; laterHiddenNeighborCount: number } => {
   let rightEmptyCount = 0;
   let lowerRightEmptyCount = 0;
-  for (const cell of activeCells) {
+  let laterHiddenNeighborCount = 0;
+  const pathIndices = new Map(solutionPath.map((cell, index) => [keyOf(cell), index]));
+  for (let index = 1; index < solutionPath.length; index += 1) {
+    const cell = solutionPath[index - 1];
+    const target = solutionPath[index];
+    if (!hiddenCellKeys.has(keyOf(target))) continue;
+    if (!areEditorCellsNeighbors(cell, target, shape)) continue;
     const from = projectCell(cell, shape);
-    for (let dy = -1; dy <= 1; dy += 1) {
-      for (let dx = -1; dx <= 1; dx += 1) {
-        const target = { x: cell.x + dx, y: cell.y + dy };
-        if (!activeKeys.has(keyOf(target)) || !hiddenCellKeys.has(keyOf(target))) continue;
-        if (!areEditorCellsNeighbors(cell, target, shape)) continue;
-        const to = projectCell(target, shape);
-        if (to.x - from.x <= 1e-8) continue;
-        const deltaY = to.y - from.y;
-        if (Math.abs(deltaY) <= 1e-8) rightEmptyCount += 1;
-        else if (deltaY > 1e-8) lowerRightEmptyCount += 1;
-      }
+    const to = projectCell(target, shape);
+    if (to.x - from.x <= 1e-8) continue;
+    const deltaY = to.y - from.y;
+    if (Math.abs(deltaY) <= 1e-8) rightEmptyCount += 1;
+    else if (deltaY > 1e-8) lowerRightEmptyCount += 1;
+    else continue;
+    // At this point all smaller numbers have already been connected and revealed.
+    for (let dy = -1; dy <= 1; dy += 1) for (let dx = -1; dx <= 1; dx += 1) {
+      const neighbor = { x: target.x + dx, y: target.y + dy };
+      const neighborKey = keyOf(neighbor);
+      if (!hiddenCellKeys.has(neighborKey) || (pathIndices.get(neighborKey) ?? -1) <= index) continue;
+      if (areEditorCellsNeighbors(target, neighbor, shape)) laterHiddenNeighborCount += 1;
     }
   }
-  return { rightEmptyCount, lowerRightEmptyCount };
+  return { rightEmptyCount, lowerRightEmptyCount, laterHiddenNeighborCount };
 };
 
 const interiorAngle = (previous: EditorCell, current: EditorCell, next: EditorCell): number => {

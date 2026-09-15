@@ -19,6 +19,21 @@ const levelJson = JSON.stringify({ data: [[1, -2], [4, 3]] });
 const pathJson = JSON.stringify({ data: [[1, 2], [4, 3]] });
 
 describe('level arrangement data', () => {
+  it('imports named shapes without treating path and difficulty IDs as dimensions', () => {
+    const grid = { data: [[1, 2, 3], [6, 5, 4]] };
+    const json = JSON.stringify(grid);
+    const result = parseArrangementLibraryRows([
+      headers,
+      ['level_n1_2_3', 'level_n1_2_3', 2, 1, json, json, '造型', 3, 0],
+      ['level_n1_2_1', 'level_n1_2_1', 3, 1, json, json, '造型', 1, 0],
+      ['level_n2_2_1', 'level_n2_2_1', 4, 1, json, json, '造型', 1, 0],
+    ]);
+    expect(result.levels[0]).toMatchObject({ formationId: 'n1', pathId: 2, difficultyId: 3, levelData: grid });
+    expect(arrangementBoardFamilies(result.levels)).toHaveLength(2);
+    const exported = JSON.parse(arrangementLevelDataJson([{ id: 1, levelIds: ['level_n1_2_3'] }], result.levels));
+    expect(Object.keys(exported)).toEqual(['level_n1_2_1', 'level_n1_2_3']);
+  });
+
   it('reads the batch playtest result format into a sequential level library', () => {
     const result = parseArrangementLibraryRows([
       headers,
@@ -47,6 +62,33 @@ describe('level arrangement data', () => {
     });
     expect(result.levels[0].levelData.data).toEqual([[1, -2], [4, 3]]);
     expect(result.parameterHeaders.some((label) => label.endsWith('JSON'))).toBe(false);
+  });
+
+  it('reads exported empty counts separately for hidden variants sharing a path', () => {
+    const result = parseArrangementLibraryRows([
+      [...headers, '向右空位数量', '向右下空位数量'],
+      ['level_55_10_1', 'path_2_2', 2, 1, levelJson, pathJson, '正方形', 1, 0, 0, 0, 1, 0, 1, 0],
+      ['level_55_10_2', 'path_2_2', 2, 2, JSON.stringify({ data: [[1, 2], [4, -3]] }), pathJson, '正方形', 2, 0, 0, 0, 2, 0, 2, 1],
+    ]);
+    expect(result.levels[0].pathMetrics).toBe(result.levels[1].pathMetrics);
+    expect(result.levels.map(({ difficultyMetrics }) => [difficultyMetrics.rightEmptyCount, difficultyMetrics.lowerRightEmptyCount]))
+      .toEqual([[1, 0], [2, 1]]);
+  });
+
+  it('leaves missing empty counts unset and preserves supplied values without recomputation', () => {
+    const grid = JSON.stringify({ data: [[1, -2, 3], [6, -5, 4]] });
+    const path = JSON.stringify({ data: [[1, 2, 3], [6, 5, 4]] });
+    const result = parseArrangementLibraryRows([
+      [...headers, '向右空位数量', '向右下空位数量'],
+      ['normal', 'path_3_2', 2, 1, grid, path, '长方形', 1, 0, 0, 0, 2, 0, '', ''],
+      ['transposed', 'path_2_3', 2, 2, grid, path, '长方形', 1, 0, 0, 0, 2, 0, 2, 1],
+    ]);
+    expect(result.levels.map(({ difficultyMetrics }) => [difficultyMetrics.rightEmptyCount, difficultyMetrics.lowerRightEmptyCount]))
+      .toEqual([[undefined, undefined], [2, 1]]);
+    const oldFormat = parseArrangementLibraryRows([
+      headers, ['old', 'path_2_2', 2, 1, levelJson, pathJson, '正方形', 1, 0],
+    ]);
+    expect(oldFormat.levels[0].difficultyMetrics).toMatchObject({ rightEmptyCount: undefined, lowerRightEmptyCount: undefined });
   });
 
   it('requires the two source columns and skips invalid data rows', () => {

@@ -52,11 +52,14 @@ describe('level arrangement view', () => {
     expect(markup).toContain('id="arranger-auto-dialog"');
     expect(markup).toContain('id="arranger-auto-read-layout"');
     expect(markup).toContain('id="arranger-auto-level-count"');
-    expect(markup).toContain('id="arranger-auto-level-count" type="number" min="1" step="1" value="400"');
-    expect(markup).toContain('id="arranger-auto-board-count" type="number" min="1" max="20" step="1" value="4"');
+    expect(markup).toContain('id="arranger-auto-level-count" type="number" min="1" step="1" value="500"');
+    expect(markup).toContain('id="arranger-auto-board-count" type="number" min="1" max="20" step="1" value="3"');
     expect(markup).toContain('id="arranger-auto-path-gap"');
     expect(markup).toContain('id="arranger-auto-occlusion-preference"');
-    expect(markup).toContain('<option value="random" selected>随机</option>');
+    expect(markup).toContain('id="arranger-auto-lower-right-empty-preference"');
+    expect(markup).toContain('id="arranger-auto-right-empty-preference"');
+    expect(markup).toContain('向右下空位 → 向右空位 → 连续遮挡');
+    expect(markup).toContain('<option value="small" selected>小</option>');
     expect(markup).toContain('阶段数量随每关棋盘数量自动变化');
     expect(markup).toContain('难度范围');
     expect(markup).not.toContain('id="arranger-auto-add-stage"');

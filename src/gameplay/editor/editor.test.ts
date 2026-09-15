@@ -575,18 +575,49 @@ describe('level editor path generation', () => {
     expect(metrics.consecutiveOcclusionCount).toBe(4);
   });
 
-  it('counts adjacent hidden cells by display direction, including hidden source cells', () => {
+  it('counts only the next hidden number in path order using display directions', () => {
     const cells = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: 1, y: 1 }];
     expect(calculateDirectionalHiddenCounts(cells, new Set(['1,0', '0,1', '1,1']), 'square'))
-      .toEqual({ rightEmptyCount: 2, lowerRightEmptyCount: 1 });
+      .toMatchObject({ rightEmptyCount: 2, lowerRightEmptyCount: 0 });
     expect(calculateDirectionalHiddenCounts(cells, new Set(), 'square'))
-      .toEqual({ rightEmptyCount: 0, lowerRightEmptyCount: 0 });
+      .toMatchObject({ rightEmptyCount: 0, lowerRightEmptyCount: 0 });
     expect(calculateDirectionalHiddenCounts(cells.slice(1), new Set(['1,1', '2,1']), 'square'))
-      .toEqual({ rightEmptyCount: 1, lowerRightEmptyCount: 0 });
+      .toMatchObject({ rightEmptyCount: 1, lowerRightEmptyCount: 0 });
     expect(calculateDirectionalHiddenCounts(cells, new Set(['1,0']), 'diamond'))
-      .toEqual({ rightEmptyCount: 1, lowerRightEmptyCount: 1 });
+      .toMatchObject({ rightEmptyCount: 0, lowerRightEmptyCount: 1 });
     expect(calculateDirectionalHiddenCounts(cells, new Set(['1,0']), 'hex'))
-      .toEqual({ rightEmptyCount: 0, lowerRightEmptyCount: 1 });
+      .toMatchObject({ rightEmptyCount: 0, lowerRightEmptyCount: 1 });
+  });
+
+  it('ignores nonconsecutive hidden neighbors and counts hidden-to-hidden numbered steps', () => {
+    const path = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 1 }, { x: 2, y: 0 }, { x: 1, y: 1 }];
+    const hidden = new Set(['1,0', '2,1', '1,1']);
+    expect(calculateDirectionalHiddenCounts(path, hidden, 'square'))
+      .toMatchObject({ rightEmptyCount: 1, lowerRightEmptyCount: 1 });
+    expect(calculateDirectionalHiddenCounts([...path].reverse(), hidden, 'square'))
+      .toMatchObject({ rightEmptyCount: 0, lowerRightEmptyCount: 0 });
+    expect(calculateDirectionalHiddenCounts(path, new Set(['1,0']), 'square'))
+      .toMatchObject({ rightEmptyCount: 1, lowerRightEmptyCount: 0 });
+  });
+
+  it('sums larger hidden neighbors around numbered right and lower-right hidden steps', () => {
+    const path = [
+      { x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 1 }, { x: 2, y: 0 },
+      { x: 1, y: 1 }, { x: 0, y: 1 }, { x: 0, y: 2 },
+    ];
+    const hidden = new Set(path.slice(1, 6).map(({ x, y }) => `${x},${y}`));
+    // Hidden 2 sees 3,4,5,6; hidden 3 sees 4,5. Smaller 2 is excluded around 3.
+    expect(calculateDirectionalHiddenCounts(path, hidden, 'square')).toEqual({
+      rightEmptyCount: 1, lowerRightEmptyCount: 1, laterHiddenNeighborCount: 6,
+    });
+    // Hidden 3 is the actual next number after 2 and counts as a later hidden neighbor.
+    expect(calculateDirectionalHiddenCounts(path, new Set(['1,0', '2,1']), 'square')).toEqual({
+      rightEmptyCount: 1, lowerRightEmptyCount: 1, laterHiddenNeighborCount: 1,
+    });
+    expect(calculateDirectionalHiddenCounts(path, new Set(['1,0', '0,2', '9,9']), 'square')).toMatchObject({
+      laterHiddenNeighborCount: 0,
+    });
+    expect(calculateDirectionalHiddenCounts(path, new Set(), 'square')).toMatchObject({ laterHiddenNeighborCount: 0 });
   });
 
   it('calculates crossings, hidden ratio, and longest visibility runs', () => {

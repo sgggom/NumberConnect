@@ -4,6 +4,7 @@ import {
   addArrangementLevels,
   arrangementBoardFamilies,
   combinedArrangementLevelDataJson,
+  compareFormationIds,
   arrangementRows,
   findArrangementLevelLocation,
   parseArrangementClipboardText,
@@ -298,7 +299,7 @@ export class LevelArrangementController {
       ?? this.availableDifficultyRange();
     row.innerHTML = `
       <b data-stage-number>阶段 ${index}</b>
-      <input data-stage-formations type="text" placeholder="例如 1-20,25" aria-label="阶段 ${index} 阵型范围">
+      <input data-stage-formations type="text" placeholder="例如 44,[n1~n20],[n30~n40],55" aria-label="阶段 ${index} 阵型范围">
       <input data-stage-difficulties type="text" placeholder="例如 1-5,8" aria-label="阶段 ${index} 难度范围">
     `;
     row.querySelector<HTMLInputElement>('[data-stage-formations]')!.value = resolvedFormationRange;
@@ -328,8 +329,8 @@ export class LevelArrangementController {
   private availableFormationRange(): string {
     return this.families
       .map((family) => family.representative.formationId)
-      .filter((id): id is number => id !== undefined)
-      .sort((left, right) => left - right)
+      .filter((id): id is number | string => id !== undefined)
+      .sort(compareFormationIds)
       .join(',');
   }
 
@@ -380,6 +381,8 @@ export class LevelArrangementController {
         boardsPerLevel: Number(this.query<HTMLInputElement>('#arranger-auto-board-count').value),
         pathRepeatInterval: Number(this.query<HTMLInputElement>('#arranger-auto-path-gap').value),
         occlusionPreference: this.query<HTMLSelectElement>('#arranger-auto-occlusion-preference').value as AutoArrangementOcclusionPreference,
+        rightEmptyPreference: this.query<HTMLSelectElement>('#arranger-auto-right-empty-preference').value as AutoArrangementOcclusionPreference,
+        lowerRightEmptyPreference: this.query<HTMLSelectElement>('#arranger-auto-lower-right-empty-preference').value as AutoArrangementOcclusionPreference,
         stages,
       });
       this.groups = groups;
@@ -818,6 +821,8 @@ export class LevelArrangementController {
     };
     return [
       { label: '隐藏结果数', value: String(levels.length) },
+      numberItem('向右下空位数量', average((metrics) => metrics.lowerRightEmptyCount)),
+      numberItem('向右空位数量', average((metrics) => metrics.rightEmptyCount)),
       numberItem('平均隐藏数', average((metrics) => metrics.hiddenCount)),
       numberItem('平均隐藏占比', average((metrics) => metrics.hiddenRatio), true),
       numberItem('最长连续显示', average((metrics) => metrics.longestVisible)),

@@ -207,6 +207,22 @@ export class LevelEditorModel {
     this.invalidatePath();
   }
 
+  public applyGeneratedFormation(path: ReadonlyArray<EditorCell>): boolean {
+    const { rows, columns } = this.size();
+    if (path.length === 0 || new Set(path.map(keyOf)).size !== path.length) return false;
+    if (path.some((cell, index) => !Number.isInteger(cell.x) || !Number.isInteger(cell.y)
+      || cell.x < 0 || cell.x >= columns || cell.y < 0 || cell.y >= rows
+      || (index > 0 && !areEditorCellsNeighbors(path[index - 1], cell, this.currentShape)))) return false;
+    this.invalidatePath();
+    this.paintedCells.clear();
+    path.forEach((cell) => this.paintedCells.add(keyOf(cell)));
+    // The witness only validates solvability; generating the visible path is a separate action.
+    this.pathSource = 'generated';
+    this.manualMode = 'off';
+    this.generationCount = 0;
+    return true;
+  }
+
   public applyLevel(level: LevelData): void {
     this.deletionUndo = undefined;
     if (level.boardShape === BoardShape.Diamond) {

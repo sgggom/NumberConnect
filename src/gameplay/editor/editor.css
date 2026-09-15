@@ -188,6 +188,12 @@
 .stepper button { height: 42px; border-radius: 10px; color: var(--ink); background: rgba(255,255,255,.09); font-size: 1.15rem; }
 .stepper b { text-align: center; }
 .editor-actions { margin-top: auto; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.editor-hollow-formation { display: grid; gap: 7px; padding: 10px; border: 1px solid rgba(88,208,170,.3); border-radius: 12px; background: rgba(88,208,170,.05); }
+.editor-hollow-formation label { font-size: .75rem; font-weight: 800; }
+.editor-hollow-range { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.editor-hollow-range label { display: grid; gap: 6px; }
+.editor-hollow-formation select, .editor-hollow-formation input { width: 100%; min-width: 0; padding: 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--ink); }
+.editor-hollow-formation small { color: var(--muted); font-size: .65rem; line-height: 1.5; }
 .editor-actions .button { min-width: 0; }
 .editor-actions :is(#editor-generate-path-button, #editor-calculate-hidden-button) { --editor-path-generation-progress: 0; position: relative; isolation: isolate; overflow: hidden; display: inline-grid; place-items: center; }
 .editor-actions :is(#editor-generate-path-button, #editor-calculate-hidden-button)::before { content: ""; position: absolute; inset: 0; z-index: 0; border-radius: inherit; background: linear-gradient(90deg, #2f9e83, #58d0aa); transform: scaleX(var(--editor-path-generation-progress)); transform-origin: left center; transition: transform .08s linear; pointer-events: none; }

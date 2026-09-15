@@ -1,4 +1,4 @@
-const LEVEL_EDITOR_VIEW_VERSION = '40';
+const LEVEL_EDITOR_VIEW_VERSION = '46';
 
 export const mountLevelEditorView = (host: HTMLElement): void => {
   const hasCurrentView = host.dataset.editorViewVersion === LEVEL_EDITOR_VIEW_VERSION
@@ -202,6 +202,24 @@ export const mountLevelEditorView = (host: HTMLElement): void => {
             </div>
             <small class="editor-image-import__shortcut">直接 Ctrl+V：图片使用上次选择，JSON 始终按完整关卡导入</small>
           </div>
+        </div>
+        <div class="editor-hollow-formation">
+          <label for="editor-formation-symmetry">自动生成镂空造型</label>
+          <select id="editor-formation-symmetry">
+            <option value="random">随机镂空类型</option>
+            <option value="central">中心对称</option>
+            <option value="vertical">上下对称</option>
+            <option value="horizontal">左右对称</option>
+            <option value="diagonal">对角线对称</option>
+            <option value="rotate-2">旋转对称（两边 · 180°）</option>
+            <option value="rotate-4">旋转对称（四边 · 90°）</option>
+          </select>
+          <div class="editor-hollow-range">
+            <label>镂空比例下限 %<input id="editor-formation-hollow-min" type="number" min="0" max="90" step="1" value="20"></label>
+            <label>镂空比例上限 %<input id="editor-formation-hollow-max" type="number" min="0" max="90" step="1" value="40"></label>
+          </div>
+          <small>每次在上下限内随机取目标比例，实际比例也保持在范围内；范围内无可用格数时请扩大范围。仅生成造型，路径需另行生成。内部和边缘均可镂空，保持对称、连通且可一笔连。中心对称等同两边旋转；对角线、四边旋转需等宽高。支持方格棋盘和菱形。</small>
+          <button id="editor-generate-formation-button" class="button button--secondary" type="button"><span id="editor-generate-formation-label">生成镂空造型</span></button>
         </div>
         <div class="editor-actions">
           <button id="editor-fill-button" class="button button--secondary button--small">填满棋盘</button>
