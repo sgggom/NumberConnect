@@ -83,7 +83,6 @@ export const BATCH_HIDDEN_RESULT_HEADERS = [
 export const BATCH_PLAYTEST_RESULT_HEADERS = BATCH_HIDDEN_RESULT_HEADERS;
 
 export const MAX_BATCH_HIDDEN_LEVELS = 200_000;
-export const MAX_BATCH_HIDDEN_SIMULATIONS = 5_000_000;
 export const BATCH_PLAYTEST_ATTEMPT_TIMEOUT_MS = 60_000;
 export const BATCH_HIDDEN_CHAIN_TIMEOUT_MS = 60_000;
 export const BATCH_HIDDEN_CHAIN_MAX_ATTEMPTS = 16;
@@ -469,15 +468,8 @@ export const parseBatchPlaytestConfigRows = (
     ? '没有启用的跑关配置，请至少将一行“启用”设为“是”。'
     : '没有可生成的隐藏配置。');
   const totalLevels = configs.reduce((sum, config) => sum + config.generationCount, 0);
-  const totalSimulations = mode === 'hidden' ? configs.reduce(
-    (sum, config) => sum + config.generationCount * config.simulationRunCount * 3,
-    0,
-  ) : 0;
   if (mode === 'hidden' && totalLevels > MAX_BATCH_HIDDEN_LEVELS) {
     throw new Error(`一次最多生成 ${MAX_BATCH_HIDDEN_LEVELS} 关，当前配置为 ${totalLevels} 关。`);
-  }
-  if (totalSimulations > MAX_BATCH_HIDDEN_SIMULATIONS) {
-    throw new Error(`一次最多执行 ${MAX_BATCH_HIDDEN_SIMULATIONS} 次模拟，当前配置为 ${totalSimulations} 次。`);
   }
   return configs;
 };
@@ -512,13 +504,6 @@ export const createBatchPlaytestTasks = (
   const hiddenTasks = tasks.filter((task) => task.config.mode === 'hidden');
   if (hiddenTasks.length > MAX_BATCH_HIDDEN_LEVELS) {
     throw new Error(`一次最多生成 ${MAX_BATCH_HIDDEN_LEVELS} 关，当前难度范围展开后为 ${hiddenTasks.length} 关。`);
-  }
-  const totalSimulations = hiddenTasks.reduce(
-    (sum, task) => sum + task.config.simulationRunCount * 3,
-    0,
-  );
-  if (totalSimulations > MAX_BATCH_HIDDEN_SIMULATIONS) {
-    throw new Error(`一次最多执行 ${MAX_BATCH_HIDDEN_SIMULATIONS} 次模拟，当前难度范围展开后为 ${totalSimulations} 次。`);
   }
   return tasks;
 };

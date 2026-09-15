@@ -78,6 +78,29 @@ describe('批量生成路径与隐藏', () => {
     expect(createBatchPlaytestTasks(configs)).toHaveLength(1200);
   });
 
+  it('读取配置时不限制总模拟次数', () => {
+    const configs = parseBatchPlaytestConfigRows([
+      hiddenHeaders,
+      ...Array.from({ length: 180 }, (_, index) => [
+        `HIDDEN-${index}`, '正方形', path3x3, '[5,9]', 8, 100, 100,
+      ]),
+    ], 'hidden');
+    expect(configs.reduce((sum, config) => sum + config.generationCount * config.simulationRunCount * 3, 0))
+      .toBe(5_400_000);
+  });
+
+  it('允许展开截图中的 13980000 次模拟任务', () => {
+    const configs = parseBatchPlaytestConfigRows([
+      hiddenHeaders,
+      ...Array.from({ length: 466 }, (_, index) => [
+        `HIDDEN-${index}`, '正方形', path3x3, '[5,9]', 8, 10, 100,
+      ]),
+    ], 'hidden');
+    const tasks = createBatchPlaytestTasks(configs);
+    expect(tasks).toHaveLength(46_600);
+    expect(tasks.reduce((sum, task) => sum + task.config.simulationRunCount * 3, 0)).toBe(13_980_000);
+  });
+
   it('默认按每个生成序号依次展开难度 1–10', () => {
     const [config] = parseBatchPlaytestConfigRows([
       hiddenHeaders,
