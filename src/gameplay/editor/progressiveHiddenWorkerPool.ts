@@ -264,7 +264,7 @@ const startOnCurrentThread = (
   return { promise, cancel: () => { canceled = true; } };
 };
 
-export const startProgressiveHiddenChainGeneration = (
+const startGenerationRound = (
   tasks: ReadonlyArray<BatchPlaytestTask>,
   onProgress: (completed: number, total: number, difficulty: number) => void,
   timeoutMs = BATCH_HIDDEN_CHAIN_TIMEOUT_MS,
@@ -276,6 +276,50 @@ export const startProgressiveHiddenChainGeneration = (
   } catch {
     return startOnCurrentThread(tasks, timeoutMs, onProgress);
   }
+};
+
+export const startProgressiveHiddenChainGeneration = (
+  tasks: ReadonlyArray<BatchPlaytestTask>,
+  onProgress: (completed: number, total: number, difficulty: number) => void,
+  timeoutMs = BATCH_HIDDEN_CHAIN_TIMEOUT_MS,
+  onRetry: (round: number, reason: string) => void = () => undefined,
+): ProgressiveHiddenGenerationTask => {
+  if (!tasks.some(task => task.config.hiddenScoreTargets)) return startGenerationRound(tasks, onProgress, timeoutMs);
+  let canceled = false;
+  let active: ProgressiveHiddenGenerationTask | undefined;
+  let rejectCanceled: (error: Error) => void = () => undefined;
+  const promise = new Promise<EditorAlgorithmResult[]>((resolve, reject) => {
+    rejectCanceled = reject;
+    const run = async (): Promise<void> => {
+      for (let round = 0; !canceled; round++) {
+        const roundTasks = tasks.map(task => ({
+          ...task,
+          config: { ...task.config, seed: (task.config.seed + Math.imul(round, 0x9e3779b1)) >>> 0 },
+        }));
+        try {
+          active = startGenerationRound(roundTasks, onProgress, timeoutMs);
+          const results = await active.promise;
+          if (!canceled) resolve(results);
+          return;
+        } catch (error) {
+          if (canceled) return;
+          if (error instanceof Error && error.name === 'AbortError') { reject(error); return; }
+          onRetry(round + 2, error instanceof Error ? error.message : '目标隐藏生成未完成');
+          // Let cancellation/UI events run, including when an invalid layout fails immediately.
+          await new Promise<void>(resume => globalThis.setTimeout(resume, 250));
+        }
+      }
+    };
+    void run().catch(reject);
+  });
+  return {
+    promise,
+    cancel: () => {
+      canceled = true;
+      active?.cancel();
+      rejectCanceled(canceledError());
+    },
+  };
 };
 
 export const disposeProgressiveHiddenWorkerPool = (): void => {

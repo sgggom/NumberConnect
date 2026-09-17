@@ -14,6 +14,7 @@ type WorkerMessageListener = (event: MessageEvent<ProgressiveHiddenWorkerRespons
 class FakeProgressiveHiddenWorker {
   static instances: FakeProgressiveHiddenWorker[] = [];
   static shouldRespond = true;
+  static failuresRemaining = 0;
 
   private readonly listeners: WorkerMessageListener[] = [];
   public terminated = false;
@@ -32,6 +33,11 @@ class FakeProgressiveHiddenWorker {
     if (!FakeProgressiveHiddenWorker.shouldRespond) return;
     globalThis.setTimeout(() => {
       if (this.terminated) return;
+      if (FakeProgressiveHiddenWorker.failuresRemaining > 0) {
+        FakeProgressiveHiddenWorker.failuresRemaining--;
+        this.emit({ type: 'failed', jobId: request.jobId, message: '评分目标未匹配' });
+        return;
+      }
       this.emit({
         type: 'completed',
         jobId: request.jobId,
@@ -84,6 +90,8 @@ describe('progressive hidden worker pool', () => {
     vi.unstubAllGlobals();
     FakeProgressiveHiddenWorker.instances = [];
     FakeProgressiveHiddenWorker.shouldRespond = true;
+    FakeProgressiveHiddenWorker.failuresRemaining = 0;
+    vi.useRealTimers();
   });
 
   it('runs separate path chains in all available worker slots', async () => {
@@ -112,5 +120,44 @@ describe('progressive hidden worker pool', () => {
     await expect(startProgressiveHiddenChainGeneration([task], () => undefined).promise)
       .resolves.toHaveLength(1);
     expect(FakeProgressiveHiddenWorker.instances).toHaveLength(2);
+  });
+
+  const scoredTask = (): BatchPlaytestTask => ({ ...task, config: { ...task.config, hiddenScoreTargets: { one: Array(10).fill(0), two: Array(10).fill(0) } } });
+
+  it('keeps retrying scored chains with new seeds until a complete result arrives', async () => {
+    vi.useFakeTimers(); vi.stubGlobal('Worker', FakeProgressiveHiddenWorker);
+    FakeProgressiveHiddenWorker.failuresRemaining = 2;
+    const onRetry = vi.fn();
+    const job = startProgressiveHiddenChainGeneration([scoredTask()], () => undefined, 1000, onRetry);
+    await vi.advanceTimersByTimeAsync(510);
+    await expect(job.promise).resolves.toHaveLength(1);
+    expect(onRetry.mock.calls.map(call => call[0])).toEqual([2,3]);
+    const seeds = FakeProgressiveHiddenWorker.instances.flatMap(w => w.requests.map(r => r.tasks[0].config.seed));
+    expect(new Set(seeds).size).toBe(3);
+    expect(task.config.seed).toBe(1);
+  });
+
+  it('recycles a timed-out scored worker and retries rather than skipping the path', async () => {
+    vi.useFakeTimers(); vi.stubGlobal('Worker', FakeProgressiveHiddenWorker);
+    FakeProgressiveHiddenWorker.shouldRespond = false;
+    const job = startProgressiveHiddenChainGeneration([scoredTask()], () => undefined, 5);
+    await vi.advanceTimersByTimeAsync(5);
+    expect(FakeProgressiveHiddenWorker.instances[0].terminated).toBe(true);
+    FakeProgressiveHiddenWorker.shouldRespond = true;
+    await vi.advanceTimersByTimeAsync(255);
+    await expect(job.promise).resolves.toHaveLength(1);
+    expect(FakeProgressiveHiddenWorker.instances).toHaveLength(2);
+  });
+
+  it('can cancel between retries without starting another round', async () => {
+    vi.useFakeTimers(); vi.stubGlobal('Worker', FakeProgressiveHiddenWorker);
+    FakeProgressiveHiddenWorker.failuresRemaining = 100;
+    const job = startProgressiveHiddenChainGeneration([scoredTask()], () => undefined, 1000);
+    const canceled = expect(job.promise).rejects.toMatchObject({ name: 'AbortError' });
+    await vi.advanceTimersByTimeAsync(1);
+    job.cancel();
+    await canceled;
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(FakeProgressiveHiddenWorker.instances.flatMap(w => w.requests)).toHaveLength(1);
   });
 });
