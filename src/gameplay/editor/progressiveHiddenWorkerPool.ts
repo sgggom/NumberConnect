@@ -143,6 +143,7 @@ class ProgressiveHiddenWorkerPool {
         this.settleSlot(slot, () => job.resolve(response.results));
       } else {
         const error = new Error(response.message);
+        if (response.errorName) error.name = response.errorName;
         if (response.message.includes('超时')) error.name = 'ProgressiveHiddenTimeoutError';
         this.settleSlot(slot, () => job.reject(error));
       }

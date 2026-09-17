@@ -4,7 +4,7 @@ import { createProgressiveHiddenLayout, createProgressiveHiddenSegments, progres
 import type { EditorCell } from './types';
 
 export interface HiddenScoreTargets { one: number[]; two: number[] }
-export interface HiddenTargetSearch { seed: number; excludedLayouts?: string[] }
+export interface HiddenTargetSearch { seed: number; excludedLayouts?: string[]; candidateHiddenCells?: EditorCell[] }
 const key = (cell: EditorCell): string => `${cell.x},${cell.y}`;
 
 /** Keep inherited totals; changing targets must have at least one new hidden cell. */
@@ -57,6 +57,24 @@ export const createTargetHiddenLayout = (options: ProgressiveHiddenLayoutOptions
     }
     return doubles <= limits.doubleRuns && triples <= limits.tripleRuns;
   };
+  if (options.search?.candidateHiddenCells) {
+    const rejectCandidate = (): never => {
+      const error = new Error(`难度 ${difficulty} 当前候选不满足布局或评分目标。`);
+      error.name = 'HiddenCandidateRejected'; throw error;
+    };
+    const cells = options.search.candidateHiddenCells;
+    const candidate = new Set<number>();
+    for (const cell of cells) {
+      const index = indexes.get(key(cell));
+      if (index === undefined || candidate.has(index)) rejectCandidate();
+      candidate.add(index!);
+    }
+    if (!valid(candidate)) rejectCandidate();
+    const counts = calculateHiddenDifficultyCounts({path,hiddenCellKeys:new Set(cells.map(key)),shape});
+    checkDeadline();
+    if (counts.some((n,i)=>n!==desired[i])) rejectCandidate();
+    return [...candidate].sort((a,b)=>a-b).map(i=>({...path[i]}));
+  }
   type Candidate = { hidden: number[]; error: number; counts: number[] };
   const cache = new Map<string, Candidate>();
   const excluded = new Set(options.search?.excludedLayouts ?? []);

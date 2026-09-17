@@ -573,7 +573,7 @@ const mixedSeed = (task: BatchPlaytestTask, attempt: number): number => (
   ^ Math.imul(attempt + 1, 83492791)
 ) >>> 0;
 
-const progressiveChainSeed = (task: BatchPlaytestTask, attempt: number): number => (
+export const progressiveChainSeed = (task: BatchPlaytestTask, attempt: number): number => (
   task.config.seed
   ^ Math.imul(task.config.sourceRow + 1, 73856093)
   ^ Math.imul(task.generationNumber + 1, 19349663)

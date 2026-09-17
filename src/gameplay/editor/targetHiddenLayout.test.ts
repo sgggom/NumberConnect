@@ -35,6 +35,12 @@ describe('strict target hidden generation', () => {
     expect(second.map(key).sort().join('|')).not.toBe(signature);
     expect(calculateHiddenDifficultyCounts({path,hiddenCellKeys:new Set(second.map(key)),shape:'square'})).toEqual([second.length,0,0]);
   });
+  it('validates exactly the supplied candidate without substituting a random match', () => {
+    const options = {path,targets,difficulty:1,seed:98765,segmentLengthMin:6,segmentLengthMax:9,maxVisibleRun:9};
+    const candidate=createTargetHiddenLayout(options);
+    expect(createTargetHiddenLayout({...options,search:{seed:0,candidateHiddenCells:candidate}})).toEqual(candidate);
+    expect(()=>createTargetHiddenLayout({...options,search:{seed:0,candidateHiddenCells:[path[0]]}})).toThrow('当前候选');
+  });
   it('rejects impossible targets and expired deadlines instead of returning approximate results', () => {
     const options = {path,targets,difficulty:1,seed:98765,segmentLengthMin:6,segmentLengthMax:9,maxVisibleRun:9};
     expect(() => createTargetHiddenLayout({...options,targets:{one:Array(10).fill(99),two:Array(10).fill(0)}})).toThrow('冲突');

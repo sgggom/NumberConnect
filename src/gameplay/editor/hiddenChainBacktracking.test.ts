@@ -1,44 +1,53 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { HiddenBacktrackPolicy, searchHiddenChain } from './hiddenChainBacktracking';
+import { enumerateHiddenCandidates, searchHiddenChain } from './hiddenChainBacktracking';
 import type { BatchPlaytestTask } from './batchPlaytest';
-import type { EditorAlgorithmResult } from './algorithms/types';
+import type { EditorCell } from './types';
 
-describe('hidden chain backtracking', () => {
-  afterEach(() => vi.useRealTimers());
-  it('escalates after ten retreats at the same difficulty, then retreats after every failed attempt', () => {
-    const policy = new HiddenBacktrackPolicy();
-    expect(policy.attemptLimit).toBe(100);
-    for (let i = 0; i < 9; i++) expect(policy.retreat(5)).toBe(4);
-    expect(policy.retreat(5)).toBe(3);
-    expect(policy.attemptLimit).toBe(1);
-    expect(policy.retreat(3)).toBe(2);
-    expect(policy.retreat(0)).toBe(0);
+const path=Array.from({length:10},(_,x)=>({x,y:0}));
+const task=(d:number):BatchPlaytestTask=>({taskIndex:d-1,generationNumber:1,config:{mode:'hidden',sourceRow:2,id:'fixture',enabled:true,shape:'square',rows:1,columns:10,targetCrossings:0,turnProbability:0,hiddenPercent:0,segmentLengthMin:5,segmentLengthMax:5,targetDifficulty:d,maxVisibleRun:9,maxHiddenRun:3,generationCount:1,simulationRunCount:1,reasoningLevel:'medium',seed:1,outputLabel:'',presetPath:path,hiddenScoreTargets:{one:Array(10).fill(0),two:Array(10).fill(0)}}});
+const signature=(cells:EditorCell[]=[])=>cells.map(c=>c.x).join(',');
+const rejected=()=>{const e=new Error('No match');e.name='HiddenCandidateRejected';return e;};
+describe('exhaustive hidden candidate search',()=>{
+  afterEach(()=>vi.useRealTimers());
+  it('enumerates single additions and unordered multi-position combinations once',()=>{
+    const previous=[path[1],path[5]];
+    const singles=[...enumerateHiddenCandidates(task(2),previous)];
+    expect(singles.map(signature)).toEqual(['1,5,6','1,5,7','1,5,8']);
+    const two=task(5); two.config.hiddenScoreTargets!.one[4]=1;
+    // Difficulty 5 on ten digits needs one extra, unless inherited totals force another.
+    const combos=[...enumerateHiddenCandidates(two,previous)];
+    expect(combos.map(signature)).toEqual(['1,5,6,7','1,5,6,8','1,5,7,8']);
+    expect(new Set(combos.map(signature)).size).toBe(combos.length);
   });
-  it('reselects the previous rank after 100 failures, retaining the earlier prefix and excluding its dead-end layout', async () => {
+  it('preserves an already-scored parallel sibling and resumes it when the next rank is exhausted',async()=>{
     vi.useFakeTimers();
-    const tasks = [1,2,3].map(difficulty => ({ config: { targetDifficulty: difficulty, seed: 1 } } as BatchPlaytestTask));
-    const calls = [0,0,0];
-    const seen: Array<{difficulty:number; previous:unknown; excluded:string[]}> = [];
-    const first: EditorAlgorithmResult = { path: [], hiddenCells: [{x:1,y:1}], targetHiddenCount: 1 };
-    const retry = vi.fn();
-    const promise = searchHiddenChain({
-      tasks, parallelism:()=>1, canceled:()=>false, onProgress:()=>undefined, onRetry:retry,
-      start: (task, search) => {
-        const d = task.config.targetDifficulty;
-        calls[d-1]++;
-        seen.push({difficulty:d,previous:search.previousHiddenCells,excluded:search.excludedLayouts??[]});
-        if (d === 3 && calls[1] === 1) return {promise:Promise.reject(new Error('No match')),cancel:()=>undefined};
-        const result = d === 1 ? first : {path:[],hiddenCells:[...(search.previousHiddenCells??[]),{x:d,y:calls[d-1]}],targetHiddenCount:d};
-        return {promise:Promise.resolve([result]),cancel:()=>undefined};
-      },
-    });
-    await vi.advanceTimersByTimeAsync(200);
-    const results = await promise;
-    expect(calls).toEqual([1,2,101]);
-    expect(results[0]).toBe(first);
-    expect(seen.filter(s=>s.difficulty===2)[1].previous).toEqual(first.hiddenCells);
-    expect(seen.filter(s=>s.difficulty===2)[1].excluded).toEqual(['1,1|2,1']);
-    expect(retry.mock.calls.some(c=>c[1].includes('回退到难度 2'))).toBe(true);
-    expect(results[2].hiddenCells).toContainEqual({x:2,y:2});
+    const seen:string[]=[];let firstParent='';
+    const promise=searchHiddenChain({tasks:[task(1),task(2)],parallelism:()=>2,canceled:()=>false,onProgress:()=>undefined,onRetry:()=>undefined,
+      start:(t,s)=>{
+        const current=signature(s.candidateHiddenCells),parent=signature(s.previousHiddenCells);
+        seen.push(`${t.config.targetDifficulty}:${parent}:${current}`);
+        if(t.config.targetDifficulty===1 && !firstParent)firstParent=current;
+        const bad=t.config.targetDifficulty===2 && parent===firstParent;
+        return {promise:bad?Promise.reject(rejected()):Promise.resolve([{path,hiddenCells:s.candidateHiddenCells,targetHiddenCount:s.candidateHiddenCells!.length}]),cancel:()=>undefined};
+      }});
+    await vi.advanceTimersByTimeAsync(100);
+    const result=await promise;
+    expect(signature(result[0].hiddenCells)).not.toBe(firstParent);
+    expect(seen.filter(s=>s.startsWith('1:'))).toHaveLength(2);
+    expect(new Set(seen).size).toBe(seen.length);
+    expect(result[0].hiddenCells!.every(c=>result[1].hiddenCells!.includes(c))).toBe(true);
+  });
+  it('reports exhaustion only after checking every base candidate exactly once',async()=>{
+    vi.useFakeTimers();const seen:string[]=[];
+    const promise=searchHiddenChain({tasks:[task(1)],parallelism:()=>3,canceled:()=>false,onProgress:()=>undefined,onRetry:()=>undefined,start:(_,s)=>{seen.push(signature(s.candidateHiddenCells));return{promise:Promise.reject(rejected()),cancel:()=>undefined};}});
+    const check=expect(promise).rejects.toMatchObject({name:'HiddenCandidatesExhausted'});
+    await vi.advanceTimersByTimeAsync(100);await check;
+    expect(seen).toEqual([...enumerateHiddenCandidates(task(1))].map(signature));
+  });
+  it('does not mislabel a worker timeout as an exhausted or impossible candidate',async()=>{
+    vi.useFakeTimers();
+    const promise=searchHiddenChain({tasks:[task(1)],parallelism:()=>1,canceled:()=>false,onProgress:()=>undefined,onRetry:()=>undefined,start:()=>({promise:Promise.reject(new Error('timeout')),cancel:()=>undefined})});
+    const check=expect(promise).rejects.toMatchObject({name:'HiddenEnumerationInterrupted'});
+    await vi.advanceTimersByTimeAsync(10);await check;
   });
 });

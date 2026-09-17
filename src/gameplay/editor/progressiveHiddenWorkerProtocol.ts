@@ -28,4 +28,5 @@ export type ProgressiveHiddenWorkerResponse =
     type: 'failed';
     jobId: number;
     message: string;
+    errorName?: string;
   };

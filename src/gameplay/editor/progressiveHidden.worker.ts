@@ -68,6 +68,7 @@ workerScope.addEventListener('message', (event) => {
     workerScope.postMessage({
       type: 'failed',
       jobId: request.jobId,
+      errorName: error instanceof Error ? error.name : 'Error',
       message: error instanceof Error ? error.message : '累进隐藏生成失败。',
     });
   }
