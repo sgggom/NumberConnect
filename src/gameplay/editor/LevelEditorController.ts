@@ -2251,6 +2251,7 @@ export class LevelEditorController {
     let completedResults: Array<BatchPlaytestResult | undefined> = [];
     try {
       const configs = await readBatchPlaytestConfigFile(file, mode);
+      const scoreTargetCount = configs.filter(config => config.hiddenScoreTargets).length;
       if (run !== this.batchPlaytestRun) return;
       const tasks = createBatchPlaytestTasks(configs);
       const taskChains = createBatchPlaytestTaskChains(tasks);
@@ -2258,7 +2259,7 @@ export class LevelEditorController {
       completedResults = new Array(tasks.length);
       this.batchPlaytestProgress.total = tasks.length;
       this.renderBatchPlaytestButton();
-      this.batchPlaytestDetail = `已读取 ${configs.length} 组配置，正在启动 ${tasks.length} 关…`;
+      this.batchPlaytestDetail = `已读取 ${configs.length} 组配置${scoreTargetCount ? `，其中 ${scoreTargetCount} 组按评分目标严格匹配` : ''}，正在启动 ${tasks.length} 关…`;
       this.renderBatchPlaytestDialog();
       this.setStatus(mode === 'path'
         ? `已读取 ${configs.length} 组路径配置，使用 ${Math.min(concurrency, tasks.length)} 个线程并行生成 ${tasks.length} 条路径。`

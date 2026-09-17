@@ -10,6 +10,7 @@ import type {
 import { calculateDirectionalHiddenCounts, calculateEditorLevelMetrics } from './levelMetrics';
 import { summarizeDifficultyScores } from './levelBaseDataTsv';
 import { calculateHiddenDifficultyCounts, HIDDEN_DIFFICULTY_COUNT_HEADERS } from './hiddenDifficultyCounts';
+import { createTargetHiddenLayout, type HiddenScoreTargets } from './targetHiddenLayout';
 import { areEditorCellsNeighbors } from './findEditorPath';
 import {
   averageSimulatedPlayResults,
@@ -113,6 +114,7 @@ export interface BatchPlaytestConfig {
   outputLabel: string;
   presetActiveCells?: EditorCell[];
   presetPath?: EditorCell[];
+  hiddenScoreTargets?: HiddenScoreTargets;
 }
 
 export interface BatchPlaytestTask {
@@ -364,6 +366,22 @@ const pathFromPreset = (
   return fixedPath;
 };
 
+export const HIDDEN_SCORE_TARGET_HEADERS = ['隐藏1目标（1-10档）', '隐藏2目标（1-10档）'] as const;
+
+const parseHiddenScoreTargets = (one: unknown, two: unknown, sourceRow: number): HiddenScoreTargets | undefined => {
+  const empty = (value: unknown): boolean => value === null || value === undefined || String(value).trim() === '';
+  if (empty(one) && empty(two)) return undefined;
+  const parse = (value: unknown, column: string): number[] => {
+    let values: unknown;
+    try { values = JSON.parse(String(value)); } catch { /* validated below */ }
+    if (!Array.isArray(values) || values.length !== 10 || values.some(n => !Number.isSafeInteger(n) || n < 0)) {
+      throw new Error(`第 ${sourceRow} 行“${column}”必须填写10个非负整数，例如 [0,0,0,0,1,1,1,2,2,2]。`);
+    }
+    return values;
+  };
+  return { one: parse(one, HIDDEN_SCORE_TARGET_HEADERS[0]), two: parse(two, HIDDEN_SCORE_TARGET_HEADERS[1]) };
+};
+
 export const parseBatchPlaytestConfigRows = (
   rows: ReadonlyArray<ReadonlyArray<unknown>>,
   mode: BatchPlaytestMode,
@@ -463,6 +481,10 @@ export const parseBatchPlaytestConfigRows = (
       outputLabel: outputLabelIndex < 0 ? '' : String(row[outputLabelIndex] ?? '').trim(),
       presetActiveCells,
       presetPath,
+      hiddenScoreTargets: mode === 'hidden' ? parseHiddenScoreTargets(
+        row[optionalIndex(HIDDEN_SCORE_TARGET_HEADERS[0])],
+        row[optionalIndex(HIDDEN_SCORE_TARGET_HEADERS[1])], sourceRow,
+      ) : undefined,
     });
   });
 
@@ -568,7 +590,7 @@ export const createProgressiveBatchHiddenResult = (
     throw new Error('累进隐藏生成只支持带固定路径的隐藏任务。');
   }
   const path = task.config.presetPath.map((cell) => ({ ...cell }));
-  const hiddenCells = createProgressiveHiddenLayout({
+  const options = {
     path,
     segmentLengthMin: task.config.segmentLengthMin,
     segmentLengthMax: task.config.segmentLengthMax,
@@ -578,7 +600,10 @@ export const createProgressiveBatchHiddenResult = (
     shape: task.config.shape,
     deadlineAt,
     previousHiddenCells,
-  });
+  };
+  const hiddenCells = task.config.hiddenScoreTargets
+    ? createTargetHiddenLayout({ ...options, targets: task.config.hiddenScoreTargets })
+    : createProgressiveHiddenLayout(options);
   return {
     path,
     hiddenCells,
