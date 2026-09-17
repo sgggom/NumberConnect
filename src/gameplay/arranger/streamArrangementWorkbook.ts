@@ -4,22 +4,24 @@ import {
   createArrangementLibraryRowParser,
   type ArrangementLibraryParseResult,
   type ArrangementLibraryRowParser,
+  type ArrangementLibraryLevel,
 } from './levelArrangement';
 
 const SHEET_ENTRY = 'xl/worksheets/sheet1.xml';
 const SHARED_STRINGS_ENTRY = 'xl/sharedStrings.xml';
-const ZIP_INPUT_CHUNK_SIZE = 1024 * 1024;
+const ZIP_INPUT_CHUNK_SIZE = 64 * 1024;
 
 const localName = (name: string): string => name.replace(/^.*:/, '');
 const elementName = (element: string | { originalName?: string; name?: string }): string => (
   localName(typeof element === 'string' ? element : element.originalName ?? element.name ?? '')
 );
 
-const streamZipEntry = (
+function* streamZipEntry(
   archive: Uint8Array,
   targetName: string,
   onChunk: (chunk: Uint8Array, final: boolean) => void,
-): void => {
+  required = true,
+): Generator<void> {
   let found = false;
   let complete = false;
   let failure: Error | undefined;
@@ -37,17 +39,21 @@ const streamZipEntry = (
         failure = error instanceof Error ? error : new Error(String(error));
       }
     };
-    if (file.name === targetName) found = true;
-    file.start();
+    if (file.name === targetName) {
+      found = true;
+      file.start();
+    }
   });
   unzip.register(UnzipInflate);
   for (let offset = 0; offset < archive.length && !complete && !failure; offset += ZIP_INPUT_CHUNK_SIZE) {
     const end = Math.min(archive.length, offset + ZIP_INPUT_CHUNK_SIZE);
     unzip.push(archive.subarray(offset, end), end === archive.length);
+    yield;
   }
   if (failure) throw failure;
+  if (!found && !required) return;
   if (!found || !complete) throw new Error(`工作簿缺少 ${targetName}。`);
-};
+}
 
 const readSharedStrings = (archive: Uint8Array): string[] => {
   const values: string[] = [];
@@ -75,11 +81,11 @@ const readSharedStrings = (archive: Uint8Array): string[] => {
     }
   });
   parser.on('error', (error: Error) => { throw error; });
-  streamZipEntry(archive, SHARED_STRINGS_ENTRY, (chunk, final) => {
+  for (const _ of streamZipEntry(archive, SHARED_STRINGS_ENTRY, (chunk, final) => {
     const text = decoder.decode(chunk, { stream: !final });
     if (text) parser.write(text);
     if (final) parser.end();
-  });
+  }, false)) { void _; }
   return values;
 };
 
@@ -98,10 +104,11 @@ const cellValue = (type: string | undefined, rawValue: string, sharedStrings: Re
   return Number.isFinite(numeric) ? numeric : rawValue;
 };
 
-export const readArrangementWorkbookStream = (
+export const readArrangementWorkbookStream = async (
   buffer: ArrayBuffer,
   onProgress?: (message: string) => void,
-): ArrangementLibraryParseResult => {
+  onBatch?: (levels: ArrangementLibraryLevel[]) => Promise<void>,
+): Promise<ArrangementLibraryParseResult> => {
   const archive = new Uint8Array(buffer);
   onProgress?.('正在读取共享文本…');
   const sharedStrings = readSharedStrings(archive);
@@ -117,6 +124,7 @@ export const readArrangementWorkbookStream = (
   let currentValue = '';
   let captureValue = false;
   let processedRows = 0;
+  let pending: ArrangementLibraryLevel[] = [];
 
   parser.on('openTag', (element: { originalName?: string; name?: string; attrs: Record<string, string> }) => {
     const name = elementName(element);
@@ -144,18 +152,27 @@ export const readArrangementWorkbookStream = (
       currentValue = '';
     } else if (name === 'row' && currentRow) {
       processedRows += 1;
-      if (!libraryParser) libraryParser = createArrangementLibraryRowParser(currentRow);
+      if (!libraryParser) libraryParser = createArrangementLibraryRowParser(currentRow,
+        onBatch ? (level) => { pending.push(level); } : undefined);
       else libraryParser.addRow(currentRow, currentRowNumber);
       if (processedRows % 5000 === 0) onProgress?.(`已整理 ${processedRows - 1} 行关卡数据…`);
       currentRow = undefined;
     }
   });
   parser.on('error', (error: Error) => { throw error; });
-  streamZipEntry(archive, SHEET_ENTRY, (chunk, final) => {
+  for (const _ of streamZipEntry(archive, SHEET_ENTRY, (chunk, final) => {
     const text = decoder.decode(chunk, { stream: !final });
     if (text) parser.write(text);
     if (final) parser.end();
-  });
+  })) {
+    void _;
+    if (onBatch && pending.length > 0) {
+      const batch = pending;
+      pending = [];
+      // Await each write before decompressing more input: no unbounded write queue.
+      await onBatch(batch);
+    }
+  }
   if (!libraryParser) throw new Error('跑关结果中没有数据。');
   return libraryParser.finish();
 };

@@ -19,6 +19,17 @@ const levelJson = JSON.stringify({ data: [[1, -2], [4, 3]] });
 const pathJson = JSON.stringify({ data: [[1, 2], [4, 3]] });
 
 describe('level arrangement data', () => {
+  it('imports the later hidden neighbor count as a difficulty metric and keeps missing data unset', () => {
+    const header = '向右/右下隐藏数字周围更大隐藏数字数量';
+    const result = parseArrangementLibraryRows([
+      [...headers, header],
+      ['level_55_10_1', 'path_2_2', 2, 1, levelJson, pathJson, '正方形', 1, 0, 0, 0, 2, 0, 7],
+      ['level_55_10_2', 'path_2_2', 3, 1, levelJson, pathJson, '正方形', 2, 0, 0, 0, 2, 0, 0],
+      ['level_55_10_3', 'path_2_2', 4, 1, levelJson, pathJson, '正方形', 3, 0, 0, 0, 2, 0, ''],
+    ]);
+    expect(result.levels.map((level) => level.difficultyMetrics.laterHiddenNeighborCount)).toEqual([7, 0, undefined]);
+    expect(result.parameterHeaders).not.toContain(header);
+  });
   it('imports named shapes without treating path and difficulty IDs as dimensions', () => {
     const grid = { data: [[1, 2, 3], [6, 5, 4]] };
     const json = JSON.stringify(grid);

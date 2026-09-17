@@ -1,3 +1,5 @@
+import { scoreArrangementCandidates } from './arrangementScoring';
+import { arrangementBoardSize, preferEarlyBoardSize } from './earlyBoardProgression';
 import type {
   ArrangementBoardFamily,
   ArrangementLevelGroup,
@@ -13,9 +15,11 @@ export interface AutoArrangementConfig {
   levelCount: number;
   boardsPerLevel: number;
   pathRepeatInterval: number;
+  shapeRepeatInterval?: number;
   occlusionPreference: AutoArrangementOcclusionPreference;
-  rightEmptyPreference?: AutoArrangementOcclusionPreference;
-  lowerRightEmptyPreference?: AutoArrangementOcclusionPreference;
+  straightPreference?: AutoArrangementOcclusionPreference;
+  crossingComplexityPreference?: AutoArrangementOcclusionPreference;
+  laterHiddenNeighborPreference?: AutoArrangementOcclusionPreference;
   stages: AutoArrangementStage[];
   randomSource?: () => number;
 }
@@ -26,9 +30,11 @@ export const DEFAULT_AUTO_ARRANGEMENT_FORM = {
   levelCount: 500,
   boardsPerLevel: 3,
   pathRepeatInterval: 500,
+  shapeRepeatInterval: 0,
   occlusionPreference: 'small' as const,
-  rightEmptyPreference: 'small' as const,
-  lowerRightEmptyPreference: 'small' as const,
+  straightPreference: 'small' as const,
+  crossingComplexityPreference: 'small' as const,
+  laterHiddenNeighborPreference: 'small' as const,
   stages: [
     { formationRange: '[n1~n50]', difficultyRange: '3,4,5' },
     { formationRange: '56,57,58,59,66,67,68,77', difficultyRange: '4,5,6' },
@@ -42,11 +48,15 @@ const parseNumericIdRange = (value: string, label: string): number[] => {
     if (range) {
       const start = Number(range[1]);
       const end = Number(range[2]);
+      if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || end - start > 100_000) {
+        throw new Error(`${label}范围过大，请缩小到 100000 个编号以内。`);
+      }
       if (start > end) throw new Error(`${label}范围“${part}”起始值不能大于结束值。`);
       for (let id = start; id <= end; id += 1) ids.add(id);
       return;
     }
     if (!/^\d+$/.test(part)) throw new Error(`无法识别${label}范围“${part}”。`);
+    if (!Number.isSafeInteger(Number(part))) throw new Error(`${label}编号过大。`);
     ids.add(Number(part));
   });
   if (ids.size === 0) throw new Error(`每个阶段至少需要选择一个${label}。`);
@@ -76,10 +86,10 @@ export const parseFormationIdRange = (value: string): (number | string)[] => {
 };
 export const parseDifficultyIdRange = (value: string): number[] => parseNumericIdRange(value, '难度');
 
-export const generateAutoArrangement = (
+function* generateArrangementSteps(
   families: ReadonlyArray<ArrangementBoardFamily>,
   config: AutoArrangementConfig,
-): ArrangementLevelGroup[] => {
+): Generator<number, ArrangementLevelGroup[]> {
   if (!Number.isInteger(config.levelCount) || config.levelCount < 1) {
     throw new Error('生成关卡数必须是大于 0 的整数。');
   }
@@ -88,6 +98,10 @@ export const generateAutoArrangement = (
   }
   if (!Number.isInteger(config.pathRepeatInterval) || config.pathRepeatInterval < 0) {
     throw new Error('相同路径重复间隔必须是非负整数。');
+  }
+  const shapeInterval = config.shapeRepeatInterval ?? 0;
+  if (!Number.isSafeInteger(shapeInterval) || shapeInterval < 0) {
+    throw new Error('相同造型出现间隔必须是非负整数。');
   }
   const stages = [...config.stages];
   if (stages.length !== config.boardsPerLevel) {
@@ -105,6 +119,7 @@ export const generateAutoArrangement = (
     });
   };
   const lastUsedLevel = new Map<string, number>();
+  const lastUsedShape = new Map<string, number>();
   const groups: ArrangementLevelGroup[] = [];
   const stagePools = stages.map((stage, stageIndex) => {
     const selections = stage.formationIds.map((id) => ({ id, families: familiesFor(id) }));
@@ -128,6 +143,7 @@ export const generateAutoArrangement = (
         return difficulty.variants.map((level) => ({
           level,
           pathKey: `${level.formationId ?? family.representative.formationId}:${path.key}`,
+          shapeKey: namedShapeKey(level.formationId ?? family.representative.formationId),
           selectionGroup: grouped ? String(selection.id) : undefined,
         }));
       })
@@ -136,6 +152,7 @@ export const generateAutoArrangement = (
     return candidates;
   });
 
+  const stageSizes = stagePools.map((pool) => [...new Set(pool.map(({ level }) => arrangementBoardSize(level)))].sort((a, b) => a - b));
   const eligibleLevelIds = new Set(stagePools.flatMap((pool) => pool.map(({ level }) => level.id)));
   const maximumLevelCount = Math.min(
     Math.floor(eligibleLevelIds.size / config.boardsPerLevel),
@@ -148,72 +165,91 @@ export const generateAutoArrangement = (
   const usedLevelIds = new Set<string>();
   const random = config.randomSource ?? Math.random;
   for (let levelNumber = 1; levelNumber <= config.levelCount; levelNumber += 1) {
+    if (levelNumber % 10 === 1) yield levelNumber;
     const levelIds: string[] = [];
     for (let stageIndex = 0; stageIndex < stagePools.length; stageIndex += 1) {
       const pool = stagePools[stageIndex];
       const selection = findAvailableLevel(
         pool,
+        stageSizes[stageIndex],
         levelNumber,
         config.pathRepeatInterval,
         lastUsedLevel,
+        shapeInterval,
+        lastUsedShape,
         usedLevelIds,
         config,
         random,
       );
       if (!selection) {
-        throw new Error(`第 ${levelNumber} 关的阶段 ${stageIndex + 1} 无法满足路径间隔 ${config.pathRepeatInterval}，请扩大阵型范围或减小间隔。`);
+        throw new Error(`第 ${levelNumber} 关的阶段 ${stageIndex + 1} 无法满足路径间隔 ${config.pathRepeatInterval}${shapeInterval > 0 ? `、相同造型间隔 ${shapeInterval}（仅带 n 的造型）` : ''}，请扩大阵型范围或减小间隔。`);
       }
       levelIds.push(selection.level.id);
       usedLevelIds.add(selection.level.id);
       lastUsedLevel.set(selection.pathKey, levelNumber);
+      if (selection.shapeKey !== undefined) lastUsedShape.set(selection.shapeKey, levelNumber);
     }
     groups.push({ id: levelNumber, levelIds });
   }
   return groups;
+}
+
+export const generateAutoArrangement = (
+  families: ReadonlyArray<ArrangementBoardFamily>, config: AutoArrangementConfig,
+): ArrangementLevelGroup[] => {
+  const steps = generateArrangementSteps(families, config);
+  let step = steps.next();
+  while (!step.done) step = steps.next();
+  return step.value;
 };
 
+export const generateAutoArrangementAsync = async (
+  families: ReadonlyArray<ArrangementBoardFamily>, config: AutoArrangementConfig,
+  onProgress?: (completed: number) => void,
+): Promise<ArrangementLevelGroup[]> => {
+  const steps = generateArrangementSteps(families, config);
+  let step = steps.next();
+  while (!step.done) {
+    onProgress?.(step.value);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    step = steps.next();
+  }
+  return step.value;
+};
+
+const namedShapeKey = (formationId: number | string | undefined): string | undefined => (
+  typeof formationId === 'string' && /n/i.test(formationId) ? formationId : undefined
+);
+
 const findAvailableLevel = (
-  candidates: ReadonlyArray<{ level: ArrangementPathFamily['difficulties'][number]['variants'][number]; pathKey: string; selectionGroup?: string }>,
+  candidates: ReadonlyArray<{ level: ArrangementPathFamily['difficulties'][number]['variants'][number]; pathKey: string; shapeKey?: string; selectionGroup?: string }>,
+  poolSizes: readonly number[],
   levelNumber: number,
   interval: number,
   lastUsedLevel: ReadonlyMap<string, number>,
+  shapeInterval: number,
+  lastUsedShape: ReadonlyMap<string, number>,
   usedLevelIds: ReadonlySet<string>,
-  preferences: Pick<AutoArrangementConfig, 'lowerRightEmptyPreference' | 'rightEmptyPreference' | 'occlusionPreference'>,
+  preferences: Pick<AutoArrangementConfig, 'laterHiddenNeighborPreference' | 'crossingComplexityPreference' | 'straightPreference' | 'occlusionPreference'>,
   random: () => number,
 ): (typeof candidates)[number] | undefined => {
   let available = candidates.filter((candidate) => {
     if (usedLevelIds.has(candidate.level.id)) return false;
+    const lastShape = candidate.shapeKey === undefined ? undefined : lastUsedShape.get(candidate.shapeKey);
+    if (lastShape !== undefined && levelNumber - lastShape < shapeInterval) return false;
     const lastUsed = lastUsedLevel.get(candidate.pathKey);
     return lastUsed === undefined || levelNumber - lastUsed >= interval;
   });
   if (available.length === 0) return undefined;
+  available = preferEarlyBoardSize(available, poolSizes, levelNumber, random);
   if (available[0].selectionGroup !== undefined) {
     const groups = [...new Set(available.map((candidate) => candidate.selectionGroup))];
     const group = groups[Math.floor(random() * groups.length) % groups.length];
     available = available.filter((candidate) => candidate.selectionGroup === group);
   }
-  const criteria: Array<{
-    preference: AutoArrangementOcclusionPreference | undefined;
-    score: (candidate: (typeof candidates)[number]) => number;
-  }> = [
-    { preference: preferences.lowerRightEmptyPreference, score: ({ level }) => level.difficultyMetrics.lowerRightEmptyCount ?? 0 },
-    { preference: preferences.rightEmptyPreference, score: ({ level }) => level.difficultyMetrics.rightEmptyCount ?? 0 },
-    { preference: preferences.occlusionPreference, score: ({ level }) => level.pathMetrics.consecutiveOcclusionCount ?? 0 },
-  ];
-  // Lower-priority preferences only break ties left by higher-priority preferences.
-  for (const { preference, score } of criteria) {
-    if (!preference || preference === 'random' || available.length === 1) continue;
-    let minimum = Infinity;
-    let maximum = -Infinity;
-    for (const candidate of available) {
-      const value = score(candidate);
-      minimum = Math.min(minimum, value);
-      maximum = Math.max(maximum, value);
-    }
-    const target = preference === 'large' ? maximum : preference === 'small' ? minimum : (minimum + maximum) / 2;
-    let bestDistance = Infinity;
-    for (const candidate of available) bestDistance = Math.min(bestDistance, Math.abs(score(candidate) - target));
-    available = available.filter((candidate) => Math.abs(score(candidate) - target) === bestDistance);
-  }
+  const scores = scoreArrangementCandidates(available.map(({ level }) => level), preferences);
+  let bestScore = -Infinity;
+  for (const score of scores) bestScore = Math.max(bestScore, score);
+  available = available.filter((_, index) => Math.abs(scores[index] - bestScore) < 1e-8);
   return available[Math.floor(random() * available.length) % available.length];
 };

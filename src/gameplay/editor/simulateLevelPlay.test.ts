@@ -286,6 +286,7 @@ describe('editor level play simulation', () => {
       earlyAverageDifficultyScore: 4.444,
       middleAverageDifficultyScore: 7.555,
       lateAverageDifficultyScore: 12.345,
+      hiddenDifficultyCounts: [8, 5, 1],
     });
 
     expect(row).not.toContain('\n');
@@ -313,6 +314,7 @@ describe('editor level play simulation', () => {
       '4.44',
       '7.56',
       '12.35',
+      '8', '5', '1',
     ]);
   });
 

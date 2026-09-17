@@ -22,7 +22,11 @@ export interface ArrangementLibraryLevel {
   levelData: CompactLevelData;
 }
 
+// Only these searchable/sortable fields stay in the page; grids live in IndexedDB.
+export type ArrangementLibraryIndex = Omit<ArrangementLibraryLevel, 'levelData' | 'parameterValues'>;
+
 export interface ArrangementPathMetrics {
+  connectionCount?: number;
   crossings?: number;
   rightAngleRatio?: number;
   acuteAngleRatio?: number;
@@ -37,6 +41,7 @@ export interface ArrangementPathMetrics {
 }
 
 export interface ArrangementDifficultyMetrics {
+  laterHiddenNeighborCount?: number;
   rightEmptyCount?: number;
   lowerRightEmptyCount?: number;
   hiddenCount?: number;
@@ -58,20 +63,20 @@ export interface ArrangementDifficultyMetrics {
 
 export interface ArrangementBoardFamily {
   key: string;
-  representative: ArrangementLibraryLevel;
+  representative: ArrangementLibraryIndex;
   paths: ArrangementPathFamily[];
 }
 
 export interface ArrangementPathFamily {
   key: string;
-  representative: ArrangementLibraryLevel;
+  representative: ArrangementLibraryIndex;
   difficulties: ArrangementDifficultyFamily[];
 }
 
 export interface ArrangementDifficultyFamily {
   difficulty?: number;
-  representative: ArrangementLibraryLevel;
-  variants: ArrangementLibraryLevel[];
+  representative: ArrangementLibraryIndex;
+  variants: ArrangementLibraryIndex[];
 }
 
 export interface ArrangementLevelGroup {
@@ -127,6 +132,7 @@ export const ARRANGEMENT_PATH_PARAMETER_HEADERS = new Set([
 ]);
 
 export const ARRANGEMENT_DIFFICULTY_PARAMETER_HEADERS = new Set([
+  '向右/右下隐藏数字周围更大隐藏数字数量',
   '向右空位数量', '向右下空位数量',
   '目标难度', '实际隐藏数', '实际隐藏占比 %', '实际最长连续显示', '实际最长连续隐藏',
   '平均总步数', '低推理平均错误数', '中推理平均错误数', '高推理平均错误数',
@@ -216,6 +222,7 @@ const TRANSPOSED_DIRECTION_HEADERS: Record<string, string> = {
 
 export const createArrangementLibraryRowParser = (
   headerRow: ReadonlyArray<unknown>,
+  onLevel?: (level: ArrangementLibraryLevel) => void,
 ): ArrangementLibraryRowParser => {
   const headers = headerRow.map((value) => String(value ?? '').trim());
   REQUIRED_HEADERS.forEach((header) => {
@@ -242,6 +249,7 @@ export const createArrangementLibraryRowParser = (
   }>>();
   const pathMetricsByKey = new Map<string, ArrangementPathMetrics>();
   let skippedRows = 0;
+  let levelCount = 0;
 
   const addRow = (row: ReadonlyArray<unknown>, sourceRow: number): void => {
     const rawJson = String(row[indexOf('关卡JSON')] ?? '').trim();
@@ -251,7 +259,7 @@ export const createArrangementLibraryRowParser = (
       return;
     }
     try {
-      const libraryIndex = levels.length + 1;
+      const libraryIndex = levelCount + 1;
       const sourceName = String(row[indexOf('关卡名')] ?? '').trim();
       if (!sourceName) throw new Error('关卡名为空');
       const configRow = numericCell(row[indexOf('配置表行号')]) ?? sourceRow;
@@ -325,6 +333,7 @@ export const createArrangementLibraryRowParser = (
       let pathMetrics = pathMetricsByKey.get(pathKey);
       if (!pathMetrics) {
         pathMetrics = {
+          connectionCount: Math.max(0, decodedLevel.solutionPath.length - 1),
           crossings: numericCell(row[indexOf('实际路径交叉数量')]),
           rightAngleRatio: numericCell(row[indexOf('直角拐弯占比')]),
           acuteAngleRatio: numericCell(row[indexOf('锐角拐弯占比')]),
@@ -349,7 +358,7 @@ export const createArrangementLibraryRowParser = (
         };
         pathMetricsByKey.set(pathKey, pathMetrics);
       }
-      levels.push({
+      const level: ArrangementLibraryLevel = {
         id: levelId,
         boardKey,
         pathKey,
@@ -362,6 +371,7 @@ export const createArrangementLibraryRowParser = (
         mediumErrorCount: numericCell(row[indexOf('中推理平均错误数')]),
         pathMetrics,
         difficultyMetrics: {
+          laterHiddenNeighborCount: emptyCountCell('向右/右下隐藏数字周围更大隐藏数字数量'),
           rightEmptyCount: emptyCountCell('向右空位数量'),
           lowerRightEmptyCount: emptyCountCell('向右下空位数量'),
           hiddenCount: numericCell(row[indexOf('实际隐藏数')]),
@@ -384,7 +394,10 @@ export const createArrangementLibraryRowParser = (
         columns: levelGrid[0].length,
         parameterValues,
         levelData: { data: levelGrid },
-      });
+      };
+      if (onLevel) onLevel(level);
+      else levels.push(level);
+      levelCount += 1;
       seenLevelIds.add(levelId);
     } catch {
       skippedRows += 1;
@@ -394,7 +407,7 @@ export const createArrangementLibraryRowParser = (
   return {
     addRow,
     finish: () => {
-      if (levels.length === 0) throw new Error('没有读取到有效的关卡JSON。');
+      if (levelCount === 0) throw new Error('没有读取到有效的关卡JSON。');
       return { levels, parameterHeaders, skippedRows };
     },
   };
@@ -417,9 +430,9 @@ export const compareFormationIds = (left?: number | string, right?: number | str
 };
 
 export const arrangementBoardFamilies = (
-  levels: ReadonlyArray<ArrangementLibraryLevel>,
+  levels: ReadonlyArray<ArrangementLibraryIndex>,
 ): ArrangementBoardFamily[] => {
-  const groups = new Map<string, ArrangementLibraryLevel[]>();
+  const groups = new Map<string, ArrangementLibraryIndex[]>();
   levels.forEach((level) => {
     const key = typeof level.formationId === 'string' ? `${level.formationId}:${level.boardKey}` : level.boardKey;
     const variants = groups.get(key);
@@ -427,14 +440,14 @@ export const arrangementBoardFamilies = (
     else groups.set(key, [level]);
   });
   return [...groups.entries()].map(([key, boardLevels]) => {
-    const pathGroups = new Map<string, ArrangementLibraryLevel[]>();
+    const pathGroups = new Map<string, ArrangementLibraryIndex[]>();
     boardLevels.forEach((level) => {
       const pathLevels = pathGroups.get(level.pathKey);
       if (pathLevels) pathLevels.push(level);
       else pathGroups.set(level.pathKey, [level]);
     });
     const paths = [...pathGroups.entries()].map(([pathKey, pathLevels]): ArrangementPathFamily => {
-      const difficultyGroups = new Map<number | undefined, ArrangementLibraryLevel[]>();
+      const difficultyGroups = new Map<number | undefined, ArrangementLibraryIndex[]>();
       pathLevels.forEach((level) => {
         const difficultyLevels = difficultyGroups.get(level.difficulty);
         if (difficultyLevels) difficultyLevels.push(level);
@@ -550,10 +563,10 @@ export const parseArrangementClipboardText = (text: string): ArrangementLevelGro
   });
 };
 
-export const arrangementLevelDataJson = (
+export const selectArrangementExportLevels = <T extends ArrangementLibraryIndex>(
   groups: ReadonlyArray<ArrangementLevelGroup>,
-  library: ReadonlyArray<ArrangementLibraryLevel>,
-): string => {
+  library: ReadonlyArray<T>,
+): T[] => {
   const libraryById = new Map(library.map((level) => [level.id, level]));
   const usedLevelIds = new Set(groups.flatMap((group) => group.levelIds));
   const usedPathKeys = new Set([...usedLevelIds].flatMap((levelId) => {
@@ -576,7 +589,14 @@ export const arrangementLevelDataJson = (
     || (left.difficultyId ?? Number.MAX_SAFE_INTEGER) - (right.difficultyId ?? Number.MAX_SAFE_INTEGER)
     || left.sourceRow - right.sourceRow
   ));
-  return JSON.stringify(Object.fromEntries(selected.map((level) => [
+  return selected;
+};
+
+export const arrangementLevelDataJson = (
+  groups: ReadonlyArray<ArrangementLevelGroup>,
+  library: ReadonlyArray<ArrangementLibraryLevel>,
+): string => {
+  return JSON.stringify(Object.fromEntries(selectArrangementExportLevels(groups, library).map((level) => [
     level.id,
     level.levelData,
   ])));

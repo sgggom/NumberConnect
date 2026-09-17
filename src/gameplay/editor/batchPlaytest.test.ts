@@ -236,10 +236,20 @@ describe('批量生成路径与隐藏', () => {
     expect(text.split('\r\n')[1].split('\t')[BATCH_HIDDEN_RESULT_HEADERS.indexOf('关卡名')])
       .toBe('HIDDEN-1_1');
     expect(progress).toEqual([1, 2, 3, 4, 5, 6]);
-    expect(BATCH_HIDDEN_RESULT_HEADERS.slice(-3)).toEqual(['向右空位数量', '向右下空位数量', '向右/右下隐藏数字周围更大隐藏数字数量']);
+    expect(BATCH_HIDDEN_RESULT_HEADERS.slice(-3)).toEqual([
+      '0档隐藏数量（0≤分数<1）', '1档隐藏数量（1≤分数<2）', '2档隐藏数量（分数≥2）',
+    ]);
+    const counts = text.split('\r\n')[1].split('\t').slice(-3).map(Number);
+    expect(counts.every((count) => Number.isInteger(count) && count >= 0)).toBe(true);
+    expect(counts.reduce((sum, count) => sum + count, 0)).toBe(level.hiddenCells!.length);
     const fixedHiddenLevel = { ...level, hiddenCells: [{ x: 1, y: 0 }, { x: 0, y: 1 }, { x: 1, y: 1 }] };
     const fixedText = formatBatchPlaytestResultsTsv([{ task, level: fixedHiddenLevel, simulation }], 'hidden');
-    expect(fixedText.split('\t').slice(-3)).toEqual(['1', '0', '2']);
+    expect(fixedText.split('\t').slice(-6, -3)).toEqual(['1', '0', '2']);
+    expect(fixedText.split('\t').slice(-3).map(Number).reduce((a, b) => a + b, 0)).toBe(3);
+    const visibleText = formatBatchPlaytestResultsTsv([
+      { task, level: { ...level, hiddenCells: [] }, simulation },
+    ], 'hidden');
+    expect(visibleText.split('\t').slice(-3)).toEqual(['0', '0', '0']);
   });
 
   it('隐藏失败结果导出具体原因', () => {

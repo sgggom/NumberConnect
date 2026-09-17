@@ -55,10 +55,14 @@ describe('level arrangement view', () => {
     expect(markup).toContain('id="arranger-auto-level-count" type="number" min="1" step="1" value="500"');
     expect(markup).toContain('id="arranger-auto-board-count" type="number" min="1" max="20" step="1" value="3"');
     expect(markup).toContain('id="arranger-auto-path-gap"');
+    expect(markup).toContain('id="arranger-auto-shape-gap" type="number" min="0" step="1" value="0"');
     expect(markup).toContain('id="arranger-auto-occlusion-preference"');
-    expect(markup).toContain('id="arranger-auto-lower-right-empty-preference"');
-    expect(markup).toContain('id="arranger-auto-right-empty-preference"');
-    expect(markup).toContain('向右下空位 → 向右空位 → 连续遮挡');
+    expect(markup).toContain('id="arranger-auto-crossing-complexity-preference"');
+    expect(markup).toContain('id="arranger-auto-later-hidden-neighbor-preference"');
+    expect(markup).toContain('多个更大隐藏数字数量 40%＋交叉复杂度 25%＋直行占比 25%＋连续遮挡 10%');
+    expect(markup).toContain('id="arranger-auto-straight-preference"');
+    expect(markup).not.toContain('向右下空位数量倾向');
+    expect(markup).not.toContain('向右空位数量倾向');
     expect(markup).toContain('<option value="small" selected>小</option>');
     expect(markup).toContain('阶段数量随每关棋盘数量自动变化');
     expect(markup).toContain('难度范围');

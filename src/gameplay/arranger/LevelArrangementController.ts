@@ -3,22 +3,21 @@ import type { LevelData } from '../../game/types';
 import {
   addArrangementLevels,
   arrangementBoardFamilies,
-  combinedArrangementLevelDataJson,
+  selectArrangementExportLevels,
   compareFormationIds,
   arrangementRows,
   findArrangementLevelLocation,
   parseArrangementClipboardText,
   type ArrangementBoardFamily,
   type ArrangementLevelGroup,
-  type ArrangementLibraryLevel,
-  readArrangementLibraryFile,
+  type ArrangementLibraryIndex,
   removeArrangementLevel,
 } from './levelArrangement';
 import { mountLevelArrangementView } from './LevelArrangementView';
 import { buildPathTrend, pathTrendColorAt } from './pathTrend';
 import {
   DEFAULT_AUTO_ARRANGEMENT_FORM,
-  generateAutoArrangement,
+  generateAutoArrangementAsync,
   parseDifficultyIdRange,
   parseFormationIdRange,
   type AutoArrangementOcclusionPreference,
@@ -26,9 +25,15 @@ import {
 import {
   clearArrangementLibraryFile,
   loadArrangementLibraryFile,
-  saveArrangementLibraryFile,
 } from './arrangementLibraryCache';
+import type { ArrangementLibraryLevel } from './levelArrangement';
+import {
+  DATABASE_BATCH_SIZE, importArrangementLibrary, loadActiveArrangementLibrary,
+  loadArrangementIndices, loadArrangementDetails, loadArrangementDraft, saveArrangementDraft,
+  type ArrangementLibraryManifest,
+} from './arrangementDatabase';
 import './arranger.css';
+import { crossingDensity, straightRatio } from './arrangementScoring';
 
 const PAGE_SIZE = 100;
 interface LibraryParameterGroup {
@@ -67,8 +72,8 @@ export interface LevelArrangementControllerOptions {
 }
 
 export class LevelArrangementController {
-  private library: ArrangementLibraryLevel[] = [];
-  private libraryById = new Map<string, ArrangementLibraryLevel>();
+  private library: ArrangementLibraryIndex[] = [];
+  private libraryById = new Map<string, ArrangementLibraryIndex>();
   private libraryParameterHeaders: string[] = [];
   private families: ArrangementBoardFamily[] = [];
   private arrangementMode: ArrangementMode = 'main';
@@ -89,6 +94,16 @@ export class LevelArrangementController {
   private cacheRestoreAttempted = false;
   private showTrend = true;
   private showConnection = false;
+  private libraryId?: string;
+  private previewEntry?: ArrangementLibraryLevel;
+  private previewRequest = 0;
+  private draftSaveTimer?: ReturnType<typeof setTimeout>;
+  private restoringDraft = false;
+  private listPages = new Map<string, number>();
+  private previewTimer?: ReturnType<typeof setTimeout>;
+  private searchTimer?: ReturnType<typeof setTimeout>;
+  private exporting = false;
+  private generationToken = 0;
 
   public constructor(
     private readonly host: HTMLElement,
@@ -107,17 +122,18 @@ export class LevelArrangementController {
     this.query('#arranger-auto-close').addEventListener('click', () => this.closeAutoArrangementDialog());
     this.query('#arranger-auto-cancel').addEventListener('click', () => this.closeAutoArrangementDialog());
     this.query('#arranger-auto-read-layout').addEventListener('click', () => void this.readArrangementFromClipboard());
-    this.query('#arranger-auto-generate').addEventListener('click', () => this.generateAutomaticArrangement());
+    this.query('#arranger-auto-generate').addEventListener('click', () => void this.generateAutomaticArrangement());
     this.query('#arranger-auto-board-count').addEventListener('input', () => this.syncAutoArrangementStages());
     this.query<HTMLDialogElement>('#arranger-auto-dialog').addEventListener('cancel', (event) => {
       event.preventDefault();
       this.closeAutoArrangementDialog();
     });
     this.query('#arranger-copy-groups').addEventListener('click', () => void this.copyGroups());
-    this.query('#arranger-copy-level-data').addEventListener('click', () => this.exportLevelData());
+    this.query('#arranger-copy-level-data').addEventListener('click', () => void this.exportLevelData());
     this.query<HTMLInputElement>('#arranger-search').addEventListener('input', () => {
       this.page = 0;
-      this.renderLibrary();
+      clearTimeout(this.searchTimer);
+      this.searchTimer = setTimeout(() => this.renderLibrary(), 150);
     });
     this.query('#arranger-add-selected').addEventListener('click', () => this.addSelectedFamiliesToPool());
     this.query('#arranger-page-previous').addEventListener('click', () => this.changePage(-1));
@@ -131,11 +147,15 @@ export class LevelArrangementController {
       this.renderPreview();
     });
     this.query('#arranger-playtest-button').addEventListener('click', () => {
-      const entry = this.previewLevelId ? this.libraryById.get(this.previewLevelId) : undefined;
+      const entry = this.previewEntry?.id === this.previewLevelId ? this.previewEntry : undefined;
       if (entry) this.options.onPlaytest(this.decodeLevel(entry));
     });
     this.groupList.addEventListener('click', (event) => this.handleGroupClick(event));
     this.groupList.addEventListener('pointerover', (event) => this.handleGroupHover(event));
+    window.addEventListener('pagehide', () => this.saveDraft());
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') this.saveDraft();
+    });
     this.libraryList.addEventListener('click', (event) => this.handleLibraryClick(event));
     this.libraryList.addEventListener('pointerover', (event) => this.handleLibraryHover(event));
     this.renderGroups();
@@ -171,11 +191,11 @@ export class LevelArrangementController {
     status.textContent = `正在读取 ${file.name}…`;
     this.cacheRestoreAttempted = true;
     try {
-      const result = await readArrangementLibraryFile(file, (message) => {
+      const result = await importArrangementLibrary(file, (message) => {
         status.textContent = message;
       });
-      this.applyLibrary(result.levels, result.parameterHeaders, result.skippedRows, `已读取 ${file.name}`);
-      await saveArrangementLibraryFile(file);
+      await this.applyStoredLibrary(result, false);
+      await clearArrangementLibraryFile().catch(() => undefined);
     } catch (error) {
       status.textContent = error instanceof Error ? error.message : '读取跑关结果失败。';
     } finally {
@@ -190,25 +210,61 @@ export class LevelArrangementController {
     openButton.disabled = true;
     status.textContent = '正在恢复上次打开的关卡库…';
     try {
+      const manifest = await loadActiveArrangementLibrary();
+      if (manifest) {
+        await this.applyStoredLibrary(manifest, true);
+        return;
+      }
       const file = await loadArrangementLibraryFile();
       if (!file) {
         status.textContent = '尚未读取关卡库';
         return;
       }
-      const result = await readArrangementLibraryFile(file, (message) => {
+      const result = await importArrangementLibrary(file, (message) => {
         status.textContent = message;
       });
-      this.applyLibrary(result.levels, result.parameterHeaders, result.skippedRows, `已自动恢复 ${file.name}`);
-    } catch {
-      status.textContent = '上次的关卡库缓存已失效，请重新读取文件。';
+      await this.applyStoredLibrary(result, true);
       await clearArrangementLibraryFile().catch(() => undefined);
+    } catch (error) {
+      status.textContent = `恢复失败：${error instanceof Error ? error.message : '请重新读取文件。'}`;
     } finally {
       openButton.disabled = false;
     }
   }
 
+  private async applyStoredLibrary(manifest: ArrangementLibraryManifest, restoreDraft: boolean): Promise<void> {
+    const levels = await loadArrangementIndices(manifest.id);
+    if (levels.length !== manifest.count) throw new Error('关卡库数据不完整，请重新导入。');
+    const draft = restoreDraft ? await loadArrangementDraft(manifest.id) : undefined;
+    this.saveDraft();
+    this.restoringDraft = true;
+    try {
+      this.libraryId = manifest.id;
+      this.previewEntry = undefined;
+      this.applyLibrary(levels, manifest.parameterHeaders, manifest.skippedRows, `已${restoreDraft ? '恢复' : '导入'} ${manifest.name}`);
+      if (draft) {
+        this.arrangementConfigurations = draft.configurations;
+        this.arrangementMode = draft.mode;
+        this.syncSelectedPoolFromCurrentGroups();
+        this.renderGroups();
+        this.renderLibrary();
+      }
+    } finally { this.restoringDraft = false; }
+    this.saveDraft();
+  }
+
+  private saveDraft(): void {
+    clearTimeout(this.draftSaveTimer);
+    if (!this.libraryId || this.restoringDraft) return;
+    const id = this.libraryId;
+    const draft = structuredClone({ mode: this.arrangementMode, configurations: this.arrangementConfigurations });
+    void saveArrangementDraft(id, draft).catch((error) => {
+      if (this.libraryId === id) this.query('#arranger-file-status').textContent = `自动保存失败，请复制配置备份：${error instanceof Error ? error.message : String(error)}`;
+    });
+  }
+
   private applyLibrary(
-    levels: ArrangementLibraryLevel[],
+    levels: ArrangementLibraryIndex[],
     parameterHeaders: string[],
     skippedRows: number,
     prefix: string,
@@ -232,6 +288,7 @@ export class LevelArrangementController {
     this.previewLevelId = this.families[0]?.representative.id;
     this.libraryParameterTarget = this.families.length > 0 ? { boardIndex: 0 } : undefined;
     this.page = 0;
+    this.listPages.clear();
     const pathCount = this.families.reduce((total, family) => total + family.paths.length, 0);
     this.query('#arranger-file-status').textContent = `${prefix}：${this.library.length} 条关卡数据、${this.families.length} 个棋盘、${pathCount} 条路径${skippedRows ? `，跳过 ${skippedRows} 行` : ''}`;
     this.query<HTMLInputElement>('#arranger-search').disabled = false;
@@ -259,9 +316,10 @@ export class LevelArrangementController {
 
   private addGroup(): void {
     if (this.groups.some((group) => group.levelIds.length === 0)) return;
-    const id = Math.max(0, ...this.groups.map((group) => group.id)) + 1;
+    const id = this.groups.reduce((max, group) => Math.max(max, group.id), 0) + 1;
     this.groups.push({ id, levelIds: [] });
     this.selectedGroupId = id;
+    this.listPages.set(`groups:${this.arrangementMode}`, Math.floor((this.groups.length - 1) / PAGE_SIZE));
     this.renderGroups();
     this.renderLibrary();
   }
@@ -276,6 +334,7 @@ export class LevelArrangementController {
   }
 
   private closeAutoArrangementDialog(): void {
+    this.generationToken += 1;
     const dialog = this.query<HTMLDialogElement>('#arranger-auto-dialog');
     if (dialog.open) dialog.close();
   }
@@ -366,8 +425,13 @@ export class LevelArrangementController {
       .join(',');
   }
 
-  private generateAutomaticArrangement(): void {
+  private async generateAutomaticArrangement(): Promise<void> {
     const status = this.query('#arranger-auto-status');
+    const button = this.query<HTMLButtonElement>('#arranger-auto-generate');
+    const libraryId = this.libraryId;
+    const mode = this.arrangementMode;
+    const token = ++this.generationToken;
+    button.disabled = true;
     try {
       const stages = [...this.autoStageList.children].map((child) => {
         const row = child as HTMLElement;
@@ -376,15 +440,21 @@ export class LevelArrangementController {
           difficultyIds: parseDifficultyIdRange(row.querySelector<HTMLInputElement>('[data-stage-difficulties]')?.value ?? ''),
         };
       });
-      const groups = generateAutoArrangement(this.families, {
+      const groups = await generateAutoArrangementAsync(this.families, {
         levelCount: Number(this.query<HTMLInputElement>('#arranger-auto-level-count').value),
         boardsPerLevel: Number(this.query<HTMLInputElement>('#arranger-auto-board-count').value),
         pathRepeatInterval: Number(this.query<HTMLInputElement>('#arranger-auto-path-gap').value),
+        shapeRepeatInterval: Number(this.query<HTMLInputElement>('#arranger-auto-shape-gap').value),
         occlusionPreference: this.query<HTMLSelectElement>('#arranger-auto-occlusion-preference').value as AutoArrangementOcclusionPreference,
-        rightEmptyPreference: this.query<HTMLSelectElement>('#arranger-auto-right-empty-preference').value as AutoArrangementOcclusionPreference,
-        lowerRightEmptyPreference: this.query<HTMLSelectElement>('#arranger-auto-lower-right-empty-preference').value as AutoArrangementOcclusionPreference,
+        straightPreference: this.query<HTMLSelectElement>('#arranger-auto-straight-preference').value as AutoArrangementOcclusionPreference,
+        crossingComplexityPreference: this.query<HTMLSelectElement>('#arranger-auto-crossing-complexity-preference').value as AutoArrangementOcclusionPreference,
+        laterHiddenNeighborPreference: this.query<HTMLSelectElement>('#arranger-auto-later-hidden-neighbor-preference').value as AutoArrangementOcclusionPreference,
         stages,
+      }, (completed) => {
+        if (token !== this.generationToken) throw new Error('排布已取消。');
+        status.textContent = `正在生成第 ${completed} 关…`;
       });
+      if (libraryId !== this.libraryId || mode !== this.arrangementMode) throw new Error('关卡库或配置模式已切换，请重新生成。');
       this.groups = groups;
       this.selectedGroupId = groups[0]?.id ?? 1;
       this.selectedLibraryLevelIds.clear();
@@ -396,7 +466,7 @@ export class LevelArrangementController {
     } catch (error) {
       status.textContent = error instanceof Error ? error.message : '自动排布失败。';
       status.classList.add('is-error');
-    }
+    } finally { button.disabled = false; }
   }
 
   private async copyGroups(): Promise<void> {
@@ -413,14 +483,28 @@ export class LevelArrangementController {
     }
   }
 
-  private exportLevelData(): void {
+  private async exportLevelData(): Promise<void> {
+    if (this.exporting) return;
     const configurations = Object.values(this.arrangementConfigurations)
       .map((configuration) => configuration.groups);
     if (!configurations.some((groups) => groups.some((group) => group.levelIds.length > 0))) return;
-    const text = combinedArrangementLevelDataJson(configurations, this.library);
-    const levelCount = Object.keys(JSON.parse(text) as Record<string, unknown>).length;
+    const libraryId = this.libraryId;
+    if (!libraryId) return;
+    const button = this.query<HTMLButtonElement>('#arranger-copy-level-data');
+    this.exporting = true;
+    button.disabled = true;
     try {
-      const blob = new Blob([text], { type: 'application/json;charset=utf-8' });
+      const selected = selectArrangementExportLevels(configurations.flat(), this.library);
+      const parts: BlobPart[] = ['{'];
+      for (let offset = 0; offset < selected.length; offset += DATABASE_BATCH_SIZE) {
+        const batch = selected.slice(offset, offset + DATABASE_BATCH_SIZE);
+        const details = await loadArrangementDetails(libraryId, batch.map((level) => level.id));
+        const text = batch.map((level, index) => `${JSON.stringify(level.id)}:${JSON.stringify(details[index].levelData)}`).join(',');
+        parts.push(new Blob([offset ? ',' : '', text]));
+        this.query('#arranger-file-status').textContent = `正在导出 ${Math.min(offset + batch.length, selected.length)} / ${selected.length} 条关卡…`;
+      }
+      parts.push('}');
+      const blob = new Blob(parts, { type: 'application/json;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = url;
@@ -428,10 +512,13 @@ export class LevelArrangementController {
       document.body.append(anchor);
       anchor.click();
       anchor.remove();
-      URL.revokeObjectURL(url);
-      this.query('#arranger-file-status').textContent = `已导出三种模式共用关卡库：${levelCount} 条关卡数据（所用路径的动态难度 1～10）`;
-    } catch {
-      this.query('#arranger-file-status').textContent = '导出失败，请重试。';
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      this.query('#arranger-file-status').textContent = `已导出三种模式共用关卡库：${selected.length} 条关卡数据（所用路径的动态难度 1～10）`;
+    } catch (error) {
+      this.query('#arranger-file-status').textContent = `导出失败：${error instanceof Error ? error.message : String(error)}`;
+    } finally {
+      this.exporting = false;
+      button.disabled = !Object.values(this.arrangementConfigurations).some((config) => config.groups.some((group) => group.levelIds.length));
     }
   }
 
@@ -439,7 +526,7 @@ export class LevelArrangementController {
     const additions: string[] = [];
     [...this.selectedLibraryLevelIds]
       .map((levelId) => this.libraryById.get(levelId))
-      .filter((level): level is ArrangementLibraryLevel => Boolean(level))
+      .filter((level): level is ArrangementLibraryIndex => Boolean(level))
       .sort((left, right) => left.sourceRow - right.sourceRow)
       .forEach((level) => {
         if (this.selectedPoolLevelIdSet.has(level.id)) return;
@@ -488,6 +575,7 @@ export class LevelArrangementController {
     this.page = Math.floor(location.boardIndex / PAGE_SIZE);
     this.activeBoardIndex = location.boardIndex;
     this.activePathIndex = location.pathIndex;
+    this.listPages.set(`paths:${this.families[location.boardIndex].key}`, Math.floor(location.pathIndex / PAGE_SIZE));
     this.activeDifficultyIndex = location.difficultyIndex;
     this.libraryParameterTarget = location;
     this.previewLevelId = levelId;
@@ -561,7 +649,7 @@ export class LevelArrangementController {
     board?: ArrangementBoardFamily;
     path?: ArrangementBoardFamily['paths'][number];
     difficulty?: ArrangementBoardFamily['paths'][number]['difficulties'][number];
-    variant?: ArrangementLibraryLevel;
+    variant?: ArrangementLibraryIndex;
   } {
     const board = this.families[target.boardIndex];
     const path = target.pathIndex === undefined ? undefined : board?.paths[target.pathIndex];
@@ -585,22 +673,22 @@ export class LevelArrangementController {
       || entry.sourceName.toLowerCase().includes(query)
       || entry.configId.toLowerCase().includes(query)
       || entry.shapeName.toLowerCase().includes(query)
-      || paths.some((path) => this.pathLevels(path).some((level) => (
+      || paths.some((path) => path.difficulties.some((difficulty) => difficulty.variants.some((level) => (
         level.sourceName.toLowerCase().includes(query)
         || level.configId.toLowerCase().includes(query)
-      )))
+      ))))
     ));
   }
 
-  private pathLevels(path: ArrangementBoardFamily['paths'][number]): ArrangementLibraryLevel[] {
+  private pathLevels(path: ArrangementBoardFamily['paths'][number]): ArrangementLibraryIndex[] {
     return path.difficulties.flatMap((difficulty) => difficulty.variants);
   }
 
-  private boardLevels(board: ArrangementBoardFamily): ArrangementLibraryLevel[] {
+  private boardLevels(board: ArrangementBoardFamily): ArrangementLibraryIndex[] {
     return board.paths.flatMap((path) => this.pathLevels(path));
   }
 
-  private selectionState(levels: ReadonlyArray<ArrangementLibraryLevel>): { checked: boolean; partial: boolean; disabled: boolean } {
+  private selectionState(levels: ReadonlyArray<ArrangementLibraryIndex>): { checked: boolean; partial: boolean; disabled: boolean } {
     const available = levels.filter((level) => !this.selectedPoolLevelIdSet.has(level.id));
     const selectedCount = available.filter((level) => this.selectedLibraryLevelIds.has(level.id)).length;
     return {
@@ -611,12 +699,16 @@ export class LevelArrangementController {
   }
 
   private renderGroups(): void {
+    if (!this.restoringDraft) {
+      clearTimeout(this.draftSaveTimer);
+      this.draftSaveTimer = setTimeout(() => this.saveDraft(), 200);
+    }
     this.queryAll<HTMLButtonElement>('[data-arrangement-mode]').forEach((button) => {
       const selected = button.dataset.arrangementMode === this.arrangementMode;
       button.setAttribute('aria-selected', String(selected));
       button.classList.toggle('is-active', selected);
     });
-    this.groupList.replaceChildren(...this.groups.map((group) => {
+    this.groupList.replaceChildren(...this.paginatedNodes(`groups:${this.arrangementMode}`, this.groups, (group) => {
       const card = document.createElement('article');
       card.className = `arranger-group${group.id === this.selectedGroupId ? ' is-selected' : ''}`;
       card.dataset.groupId = String(group.id);
@@ -627,23 +719,23 @@ export class LevelArrangementController {
       const levels = document.createElement('div');
       levels.className = 'arranger-group-levels';
       if (group.levelIds.length === 0) levels.innerHTML = '<small>从关卡库选择棋盘加入</small>';
-      group.levelIds.forEach((levelId) => {
+      levels.append(...this.paginatedNodes(`chips:${this.arrangementMode}:${group.id}`, group.levelIds, (levelId) => {
         const chip = document.createElement('button');
         chip.type = 'button';
         chip.className = 'arranger-group-level';
         chip.dataset.previewLevel = levelId;
         chip.innerHTML = `<span>${levelId}</span><i data-remove-level="${levelId}" data-group-id="${group.id}" title="移除">×</i>`;
-        levels.append(chip);
-      });
+        return chip;
+      }, () => this.renderGroups()));
       card.append(header, levels);
       return card;
-    }));
+    }, () => this.renderGroups()));
     const hasEmptyGroup = this.groups.some((group) => group.levelIds.length === 0);
     const hasAnyConfiguredLevel = Object.values(this.arrangementConfigurations)
       .some((configuration) => configuration.groups.some((group) => group.levelIds.length > 0));
     this.query<HTMLButtonElement>('#arranger-add-group').disabled = hasEmptyGroup;
     this.query<HTMLButtonElement>('#arranger-copy-groups').disabled = hasEmptyGroup;
-    this.query<HTMLButtonElement>('#arranger-copy-level-data').disabled = !hasAnyConfiguredLevel;
+    this.query<HTMLButtonElement>('#arranger-copy-level-data').disabled = this.exporting || !hasAnyConfiguredLevel;
   }
 
   private renderLibrary(): void {
@@ -668,7 +760,7 @@ export class LevelArrangementController {
           className: 'arranger-library-item arranger-library-item--board',
           boardIndex,
           entry: board.representative,
-          state: this.selectionState(this.boardLevels(board)),
+          state: { checked: false, partial: false, disabled: false },
           selectable: false,
           active: boardIndex === this.activeBoardIndex,
           title: board.representative.formationId === undefined
@@ -680,17 +772,17 @@ export class LevelArrangementController {
 
       const board = this.activeBoardIndex === undefined ? undefined : this.families[this.activeBoardIndex];
       if (board) {
-        columns.push(this.createLibraryColumn('路径', board.paths.map((path, pathIndex) => this.createLibraryNode({
+        columns.push(this.createLibraryColumn('路径', this.paginatedNodes(`paths:${board.key}`, board.paths, (path, pathIndex) => this.createLibraryNode({
           className: 'arranger-library-item arranger-library-item--path',
           boardIndex: this.activeBoardIndex!,
           pathIndex,
           entry: path.representative,
-          state: this.selectionState(this.pathLevels(path)),
+          state: { checked: false, partial: false, disabled: false },
           selectable: false,
           active: pathIndex === this.activePathIndex,
           title: `路径 ${path.representative.pathId ?? pathIndex + 1}`,
           badge: `${path.difficulties.length} ›`,
-        }))));
+        }), () => this.renderLibrary())));
       }
 
       const path = board && this.activePathIndex !== undefined ? board.paths[this.activePathIndex] : undefined;
@@ -736,7 +828,7 @@ export class LevelArrangementController {
     pathIndex?: number;
     difficultyIndex?: number;
     variantIndex?: number;
-    entry: ArrangementLibraryLevel;
+    entry: ArrangementLibraryIndex;
     state: { checked: boolean; partial: boolean; disabled: boolean };
     selectable: boolean;
     active?: boolean;
@@ -782,13 +874,15 @@ export class LevelArrangementController {
     return row;
   }
 
-  private pathParameterItems(level: ArrangementLibraryLevel): Array<{ label: string; value: string }> {
+  private pathParameterItems(level: ArrangementLibraryIndex): Array<{ label: string; value: string }> {
     const metrics = level.pathMetrics;
     const item = (label: string, value: number | string | undefined): { label: string; value: string } | undefined => (
       value === undefined || value === '' ? undefined : { label, value: String(value) }
     );
     return [
       item('实际路径交叉数量', metrics.crossings),
+      item('交叉密度', crossingDensity(level) === undefined ? undefined : `${(crossingDensity(level)! * 100).toFixed(2)}%`),
+      item('直行占比', straightRatio(level) === undefined ? undefined : `${(straightRatio(level)! * 100).toFixed(2)}%`),
       item('直角拐弯占比', metrics.rightAngleRatio),
       item('锐角拐弯占比', metrics.acuteAngleRatio),
       item('钝角拐弯占比', metrics.obtuseAngleRatio),
@@ -809,8 +903,8 @@ export class LevelArrangementController {
     ].filter((candidate): candidate is { label: string; value: string } => Boolean(candidate));
   }
 
-  private difficultyParameterItems(levels: ReadonlyArray<ArrangementLibraryLevel>): Array<{ label: string; value: string }> {
-    const average = (read: (metrics: ArrangementLibraryLevel['difficultyMetrics']) => number | undefined): number | undefined => {
+  private difficultyParameterItems(levels: ReadonlyArray<ArrangementLibraryIndex>): Array<{ label: string; value: string }> {
+    const average = (read: (metrics: ArrangementLibraryIndex['difficultyMetrics']) => number | undefined): number | undefined => {
       const values = levels.map((level) => read(level.difficultyMetrics)).filter((value): value is number => value !== undefined);
       return values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : undefined;
     };
@@ -821,6 +915,7 @@ export class LevelArrangementController {
     };
     return [
       { label: '隐藏结果数', value: String(levels.length) },
+      numberItem('多个更大隐藏数字数量', average((metrics) => metrics.laterHiddenNeighborCount)),
       numberItem('向右下空位数量', average((metrics) => metrics.lowerRightEmptyCount)),
       numberItem('向右空位数量', average((metrics) => metrics.rightEmptyCount)),
       numberItem('平均隐藏数', average((metrics) => metrics.hiddenCount)),
@@ -908,7 +1003,7 @@ export class LevelArrangementController {
     if (variant) {
       heading = `隐藏结果 ${target.variantIndex! + 1} 参数`;
       const basicItems = this.libraryParameterHeaders.flatMap((label, index) => {
-        const value = variant.parameterValues[index];
+        const value = this.previewEntry?.id === variant.id ? this.previewEntry.parameterValues[index] : undefined;
         return value ? [{ label, value }] : [];
       });
       groups = [
@@ -941,14 +1036,65 @@ export class LevelArrangementController {
   }
 
   private renderPreview(): void {
-    const entry = this.previewLevelId ? this.libraryById.get(this.previewLevelId) : undefined;
+    // Hovering across rows should not queue a database read for every pointer event.
+    clearTimeout(this.previewTimer);
+    ++this.previewRequest;
+    this.query<HTMLButtonElement>('#arranger-playtest-button').disabled = true;
+    this.previewTimer = setTimeout(() => void this.loadPreview(), 60);
+  }
+
+  private paginatedNodes<T>(key: string, items: readonly T[], render: (item: T, index: number) => HTMLElement, update: () => void): HTMLElement[] {
+    const count = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
+    const page = Math.min(this.listPages.get(key) ?? 0, count - 1);
+    const nodes = items.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
+      .map((item, index) => render(item, page * PAGE_SIZE + index));
+    if (count === 1) return nodes;
+    const pager = document.createElement('div');
+    pager.className = 'arranger-library-pagination arranger-inline-pagination';
+    const label = document.createElement('span');
+    label.textContent = `${page + 1} / ${count}（共 ${items.length} 项）`;
+    const previous = document.createElement('button');
+    const next = document.createElement('button');
+    previous.type = next.type = 'button';
+    previous.textContent = '上一页';
+    next.textContent = '下一页';
+    previous.disabled = page === 0;
+    next.disabled = page === count - 1;
+    for (const [button, offset] of [[previous, -1], [next, 1]] as const) {
+      button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        this.listPages.set(key, page + offset);
+        update();
+      });
+    }
+    pager.append(previous, label, next);
+    return [pager, ...nodes];
+  }
+
+  private async loadPreview(): Promise<void> {
+    const request = ++this.previewRequest;
+    const index = this.previewLevelId ? this.libraryById.get(this.previewLevelId) : undefined;
     const preview = this.query('#arranger-preview');
-    this.query<HTMLButtonElement>('#arranger-playtest-button').disabled = !entry;
-    if (!entry) {
+    this.query<HTMLButtonElement>('#arranger-playtest-button').disabled = true;
+    if (!index || !this.libraryId) {
       this.query('#arranger-preview-title').textContent = '未选择';
       preview.innerHTML = '<p class="arranger-empty-copy">从关卡库或左侧列表选择一个棋盘。</p>';
       return;
     }
+    let entry = this.previewEntry;
+    if (entry?.id !== index.id) {
+      preview.textContent = '正在读取棋盘…';
+      try {
+        const [detail] = await loadArrangementDetails(this.libraryId, [index.id]);
+        if (request !== this.previewRequest) return;
+        entry = { ...index, ...detail };
+        this.previewEntry = entry;
+      } catch (error) {
+        if (request === this.previewRequest) preview.textContent = `预览读取失败：${error instanceof Error ? error.message : String(error)}`;
+        return;
+      }
+    }
+    this.query<HTMLButtonElement>('#arranger-playtest-button').disabled = false;
     this.query('#arranger-preview-title').textContent = entry.id;
     const level = this.decodeLevel(entry);
     const data = entry.levelData.data;

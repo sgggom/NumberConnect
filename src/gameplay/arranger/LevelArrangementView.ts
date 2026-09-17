@@ -81,12 +81,19 @@ export const mountLevelArrangementView = (host: HTMLElement): void => {
           <label><span>生成关卡数</span><input id="arranger-auto-level-count" type="number" min="1" step="1" value="${DEFAULT_AUTO_ARRANGEMENT_FORM.levelCount}"></label>
           <label><span>每关棋盘数量</span><input id="arranger-auto-board-count" type="number" min="1" max="20" step="1" value="${DEFAULT_AUTO_ARRANGEMENT_FORM.boardsPerLevel}"></label>
           <label><span>相同路径重复出现间隔</span><input id="arranger-auto-path-gap" type="number" min="0" step="1" value="${DEFAULT_AUTO_ARRANGEMENT_FORM.pathRepeatInterval}"></label>
-          <label><span>向右下空位数量倾向</span><select id="arranger-auto-lower-right-empty-preference"><option value="large">大</option><option value="medium">中</option><option value="small" selected>小</option><option value="random">随机</option></select></label>
-          <label><span>向右空位数量倾向</span><select id="arranger-auto-right-empty-preference"><option value="large">大</option><option value="medium">中</option><option value="small" selected>小</option><option value="random">随机</option></select></label>
-          <label><span>连续遮挡计数倾向</span><select id="arranger-auto-occlusion-preference"><option value="large">大</option><option value="medium">中</option><option value="small" selected>小</option><option value="random">随机</option></select></label>
+          <label><span>相同造型出现间隔（仅带 n）</span><input id="arranger-auto-shape-gap" type="number" min="0" step="1" value="${DEFAULT_AUTO_ARRANGEMENT_FORM.shapeRepeatInterval}" aria-describedby="arranger-auto-shape-gap-help"></label>
+          <div class="arranger-auto-preferences">
+          <label><span>多个更大隐藏数字数量倾向（40%）</span><select id="arranger-auto-later-hidden-neighbor-preference"><option value="large">大</option><option value="medium">中</option><option value="small" selected>小</option><option value="random">随机</option></select></label>
+          <label><span>交叉复杂度倾向（25%）</span><select id="arranger-auto-crossing-complexity-preference"><option value="large">大</option><option value="medium">中</option><option value="small" selected>小</option><option value="random">随机</option></select></label>
+          <label><span>直行占比倾向（25%）</span><select id="arranger-auto-straight-preference"><option value="large">大</option><option value="medium">中</option><option value="small" selected>小</option><option value="random">随机</option></select></label>
+          <label><span>连续遮挡计数倾向（10%）</span><select id="arranger-auto-occlusion-preference"><option value="large">大</option><option value="medium">中</option><option value="small" selected>小</option><option value="random">随机</option></select></label>
+          </div>
         </div>
-        <p class="arranger-auto-preference-help">倾向优先级：向右下空位 → 向右空位 → 连续遮挡。同等候选随机选；随机表示跳过该项，中表示接近当前候选数量范围的中间值。空位指隐藏数字格。</p>
+        <p class="arranger-auto-preference-help">综合评分：多个更大隐藏数字数量 40%＋交叉复杂度 25%＋直行占比 25%＋连续遮挡 10%。各项在当前候选中归一化后加权，选总分最高者，同分随机；大/小分别倾向高值/低值，中倾向中间值。随机或候选数据不完整的指标不参与评分，剩余权重按比例分配。</p>
+        <p class="arranger-auto-preference-help">交叉复杂度＝交叉数量分×50%＋交叉密度分×50%，密度＝交叉次数÷（有效数字数−1）。直行占比＝不拐弯次数÷（有效数字数−2），首尾不参与转弯判断，少于 3 个数字时记为 0；由直角、锐角、钝角拐弯占比推导。路径与造型间隔仍严格执行。</p>
         <section class="arranger-auto-stages">
+          <p class="arranger-auto-preference-help">前期大小递进：各阶段独立使用自己的范围，按有效数字格数分档。第 1～5 关优先最小档；6～10 关从偏小档随机选；11～20 关放宽至中等档；21 关起取消大小偏好。间隔限制导致无合适尺寸时，选最近的可用档；选定尺寸后仍按综合评分选关卡。</p>
+          <p id="arranger-auto-shape-gap-help" class="arranger-auto-preference-help">造型间隔按关数计算，0 表示不限制。例如设为 3，n1 在第 1 关出现后最早可在第 4 关再次出现；同一造型的不同路径、难度及阶段共用间隔，非 n 造型不受此项限制。</p>
           <header><div><strong>棋盘阶段配置</strong><small>阶段数量随每关棋盘数量自动变化；支持 1-20,25 和造型区间混搭，如 44,[n1~n20],[n30~n40],55；每个造型区间算一个候选项，从中选一个棋盘</small></div></header>
           <div class="arranger-auto-stage-head"><span>棋盘阶段</span><span>可选阵型 ID 范围</span><span>难度范围</span></div>
           <div id="arranger-auto-stage-list" class="arranger-auto-stage-list"></div>

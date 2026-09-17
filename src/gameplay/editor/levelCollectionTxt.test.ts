@@ -77,7 +77,7 @@ describe('level collection TXT export', () => {
     const second = lines[1].split('\t');
 
     expect(lines).toHaveLength(2);
-    expect(first).toHaveLength(23);
+    expect(first).toHaveLength(26);
     expect(first.slice(0, 7)).toEqual([
       '1',
       '{"data":[[1,2,-3],[6,-5,4],[7,8,9]]}',
@@ -92,7 +92,12 @@ describe('level collection TXT export', () => {
       '{"data":[[1,2,-3,4],[8,7,6,-5],[9,10,11,12]]}',
       '长方形',
     ]);
-    expect(first.slice(-4).every((value) => Number.isFinite(Number(value)))).toBe(true);
+    expect(first.slice(-7, -3).every((value) => Number.isFinite(Number(value)))).toBe(true);
+    for (const row of [first, second]) {
+      const counts = row.slice(-3).map(Number);
+      expect(counts.every((count) => Number.isInteger(count) && count >= 0)).toBe(true);
+      expect(counts.reduce((sum, count) => sum + count, 0)).toBe(2);
+    }
     expect(progress).toHaveBeenNthCalledWith(1, 1, 2, 1);
     expect(progress).toHaveBeenNthCalledWith(2, 2, 2, 2);
   });

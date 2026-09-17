@@ -1,17 +1,30 @@
 /// <reference lib="webworker" />
 
 import { readArrangementWorkbookStream } from './streamArrangementWorkbook';
+import { commitArrangementLibrary, createArrangementIndexBuilder, writeArrangementBatch } from './arrangementDatabase';
 
 interface ArrangementLibraryWorkerRequest {
   buffer: ArrayBuffer;
+  file?: File;
+  libraryId?: string;
 }
 
 self.onmessage = async (event: MessageEvent<ArrangementLibraryWorkerRequest>): Promise<void> => {
   try {
-    const result = readArrangementWorkbookStream(event.data.buffer, (message) => {
+    const { file, libraryId } = event.data;
+    const buildIndex = createArrangementIndexBuilder();
+    let count = 0;
+    const result = await readArrangementWorkbookStream(file ? await file.arrayBuffer() : event.data.buffer, (message) => {
       self.postMessage({ type: 'progress', message });
-    });
-    self.postMessage({ type: 'complete', result });
+    }, libraryId ? async (levels) => {
+      await writeArrangementBatch(libraryId, levels, buildIndex);
+      count += levels.length;
+    } : undefined);
+    if (file && libraryId) {
+      const manifest = { id: libraryId, name: file.name, count, parameterHeaders: result.parameterHeaders, skippedRows: result.skippedRows };
+      await commitArrangementLibrary(manifest);
+      self.postMessage({ type: 'complete', manifest });
+    } else self.postMessage({ type: 'complete', result });
   } catch (error) {
     self.postMessage({
       type: 'error',

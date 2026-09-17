@@ -1,4 +1,5 @@
 import type { EditorLevelMetrics } from './levelMetrics';
+import type { HiddenDifficultyCounts } from './hiddenDifficultyCounts';
 
 export interface LevelBaseDataExport {
   levelId: number;
@@ -16,6 +17,7 @@ export interface LevelBaseDataExport {
   earlyAverageDifficultyScore: number;
   middleAverageDifficultyScore: number;
   lateAverageDifficultyScore: number;
+  hiddenDifficultyCounts: HiddenDifficultyCounts;
 }
 
 const roundedAverage = (value: number): number => Math.round(value * 100) / 100;
@@ -71,6 +73,7 @@ export const formatLevelBaseDataTsv = ({
   earlyAverageDifficultyScore,
   middleAverageDifficultyScore,
   lateAverageDifficultyScore,
+  hiddenDifficultyCounts,
 }: LevelBaseDataExport): string => {
   const hiddenPercent = Math.round(metrics.hiddenRatio * 1000) / 10;
   const directConnectPercent = Math.round(directConnectRatio * 1000) / 10;
@@ -98,6 +101,7 @@ export const formatLevelBaseDataTsv = ({
     roundedAverage(earlyAverageDifficultyScore),
     roundedAverage(middleAverageDifficultyScore),
     roundedAverage(lateAverageDifficultyScore),
+    ...hiddenDifficultyCounts,
   ];
 
   return values.join('\t');

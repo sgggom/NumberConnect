@@ -7,6 +7,7 @@ import {
   summarizeDifficultyScores,
 } from './levelBaseDataTsv';
 import { calculateEditorLevelMetrics } from './levelMetrics';
+import { calculateHiddenDifficultyCounts } from './hiddenDifficultyCounts';
 import {
   averageSimulatedPlayResults,
   simulateLevelPlay,
@@ -101,6 +102,9 @@ export const formatSimulatedLevelTsv = (
       simulation.steps.map((step) => step.distanceToNextVisibleNumber),
     ),
     ...difficultyScores,
+    hiddenDifficultyCounts: calculateHiddenDifficultyCounts({
+      path: level.solutionPath, hiddenCellKeys, shape,
+    }),
   });
 };
 

@@ -9,6 +9,7 @@ import type {
 } from './algorithms/types';
 import { calculateDirectionalHiddenCounts, calculateEditorLevelMetrics } from './levelMetrics';
 import { summarizeDifficultyScores } from './levelBaseDataTsv';
+import { calculateHiddenDifficultyCounts, HIDDEN_DIFFICULTY_COUNT_HEADERS } from './hiddenDifficultyCounts';
 import { areEditorCellsNeighbors } from './findEditorPath';
 import {
   averageSimulatedPlayResults,
@@ -78,6 +79,7 @@ export const BATCH_HIDDEN_RESULT_HEADERS = [
   '失败原因',
   '向右空位数量', '向右下空位数量',
   '向右/右下隐藏数字周围更大隐藏数字数量',
+  ...HIDDEN_DIFFICULTY_COUNT_HEADERS,
 ] as const;
 
 export const BATCH_PLAYTEST_RESULT_HEADERS = BATCH_HIDDEN_RESULT_HEADERS;
@@ -799,6 +801,9 @@ export const formatBatchPlaytestResultsTsv = (
       ];
     }
     const hiddenSimulation = simulation as BatchPlaytestSimulation;
+    const hiddenDifficultyCounts = calculateHiddenDifficultyCounts({
+      path: level.solutionPath, hiddenCellKeys, shape: config.shape,
+    });
     const difficulty = summarizeDifficultyScores(hiddenSimulation.steps.map((step) => step.difficultyScore));
     const pathJson = JSON.stringify(encodeCompactLevelCollection([{ ...level, hiddenCells: [] }])[0]);
     return [
@@ -829,6 +834,7 @@ export const formatBatchPlaytestResultsTsv = (
       '',
       emptyCounts.rightEmptyCount, emptyCounts.lowerRightEmptyCount,
       emptyCounts.laterHiddenNeighborCount,
+      ...hiddenDifficultyCounts,
     ];
   });
   return [...(includeHeader ? [headers] : []), ...rows]
