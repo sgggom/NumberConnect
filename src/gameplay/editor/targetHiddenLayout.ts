@@ -4,6 +4,7 @@ import { createProgressiveHiddenLayout, createProgressiveHiddenSegments, progres
 import type { EditorCell } from './types';
 
 export interface HiddenScoreTargets { one: number[]; two: number[] }
+export interface HiddenTargetSearch { seed: number; excludedLayouts?: string[] }
 const key = (cell: EditorCell): string => `${cell.x},${cell.y}`;
 
 /** Keep inherited totals; changing targets must have at least one new hidden cell. */
@@ -19,7 +20,7 @@ export const targetHiddenCounts = (length: number, baseCount: number, targets: H
 };
 
 /** Strict search: only a fully matched layout can leave this function. */
-export const createTargetHiddenLayout = (options: ProgressiveHiddenLayoutOptions & { targets: HiddenScoreTargets }): EditorCell[] => {
+export const createTargetHiddenLayout = (options: ProgressiveHiddenLayoutOptions & { targets: HiddenScoreTargets; search?: HiddenTargetSearch }): EditorCell[] => {
   const { path, targets, seed, difficulty, maxVisibleRun, shape = 'square' } = options;
   const checkDeadline = (): void => {
     if (options.deadlineAt !== undefined && Date.now() >= options.deadlineAt) {
@@ -58,6 +59,7 @@ export const createTargetHiddenLayout = (options: ProgressiveHiddenLayoutOptions
   };
   type Candidate = { hidden: number[]; error: number; counts: number[] };
   const cache = new Map<string, Candidate>();
+  const excluded = new Set(options.search?.excludedLayouts ?? []);
   let best: Candidate | undefined;
   let evaluations = 0, attempts = 0;
   const searchUntil = Date.now() + 1500;
@@ -66,6 +68,7 @@ export const createTargetHiddenLayout = (options: ProgressiveHiddenLayoutOptions
     checkDeadline();
     if (!valid(hidden)) return undefined;
     const ordered = [...hidden].sort((a, b) => a - b), signature = ordered.join(',');
+    if (excluded.has(ordered.map(i => key(path[i])).sort().join('|'))) return undefined;
     let result = cache.get(signature);
     if (!result) {
       const counts = calculateHiddenDifficultyCounts({ path, hiddenCellKeys: new Set(ordered.map(i => key(path[i]))), shape });
@@ -77,14 +80,17 @@ export const createTargetHiddenLayout = (options: ProgressiveHiddenLayoutOptions
   };
   let current: Candidate | undefined;
   try {
-    const baseline = createProgressiveHiddenLayout(options);
-    current = evaluate(new Set(baseline.map(cell => indexes.get(key(cell))!)));
+    if (!options.search) {
+      const baseline = createProgressiveHiddenLayout(options);
+      current = evaluate(new Set(baseline.map(cell => indexes.get(key(cell))!)));
+    }
   } catch (error) {
     if (error instanceof Error && error.name === 'ProgressiveHiddenTimeoutError') throw error;
     // Forced increments can exceed the legacy generator's expected total.
   }
   if (difficulty > 1 && added === 0) evaluate(locked);
-  const random = createRandom(seed ^ Math.imul(difficulty, 104729));
+  const random = createRandom((options.search?.seed ?? seed) ^ Math.imul(difficulty, 104729));
+  if (options.search) for (let i = domain.length - 1; i > 0; i--) { const j = Math.floor(random() * (i + 1)); [domain[i], domain[j]] = [domain[j], domain[i]]; }
   if (difficulty > 1 && added === 1) {
     for (const i of domain) {
       if (best?.error === 0 || !budget()) break;

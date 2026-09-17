@@ -10,7 +10,7 @@ import type {
 import { calculateDirectionalHiddenCounts, calculateEditorLevelMetrics } from './levelMetrics';
 import { summarizeDifficultyScores } from './levelBaseDataTsv';
 import { calculateHiddenDifficultyCounts, HIDDEN_DIFFICULTY_COUNT_HEADERS } from './hiddenDifficultyCounts';
-import { createTargetHiddenLayout, type HiddenScoreTargets } from './targetHiddenLayout';
+import { createTargetHiddenLayout, type HiddenScoreTargets, type HiddenTargetSearch } from './targetHiddenLayout';
 import { areEditorCellsNeighbors } from './findEditorPath';
 import {
   averageSimulatedPlayResults,
@@ -585,6 +585,7 @@ export const createProgressiveBatchHiddenResult = (
   previousHiddenCells?: ReadonlyArray<EditorCell>,
   attempt = 0,
   deadlineAt?: number,
+  search?: HiddenTargetSearch,
 ): EditorAlgorithmResult => {
   if (task.config.mode !== 'hidden' || !task.config.presetPath) {
     throw new Error('累进隐藏生成只支持带固定路径的隐藏任务。');
@@ -602,7 +603,7 @@ export const createProgressiveBatchHiddenResult = (
     previousHiddenCells,
   };
   const hiddenCells = task.config.hiddenScoreTargets
-    ? createTargetHiddenLayout({ ...options, targets: task.config.hiddenScoreTargets })
+    ? createTargetHiddenLayout({ ...options, targets: task.config.hiddenScoreTargets, search })
     : createProgressiveHiddenLayout(options);
   return {
     path,

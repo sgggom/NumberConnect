@@ -2404,19 +2404,17 @@ export class LevelEditorController {
           }
           this.batchPlaytestProgress.running += 1;
           reportProgress();
-          let generationRound = 1;
           const generationTask = startProgressiveHiddenChainGeneration(
             chain,
             (completed, total, difficulty) => {
               if (run !== this.batchPlaytestRun) return;
-              this.batchPlaytestDetail = `${chain[0].config.id} 第 ${chain[0].generationNumber} 组，第 ${generationRound} 轮：生成难度 ${difficulty}/10（${completed}/${total}）…`;
+              this.batchPlaytestDetail = `${chain[0].config.id} 第 ${chain[0].generationNumber} 组：当前难度 ${difficulty}/10，已完成 ${completed}/${total} 档…`;
               this.renderBatchPlaytestDialog();
             },
             BATCH_HIDDEN_CHAIN_TIMEOUT_MS,
             (round, reason) => {
               if (run !== this.batchPlaytestRun || abortController.signal.aborted) return;
-              generationRound = round;
-              this.batchPlaytestDetail = `${chain[0].config.id}：${reason} 正在第 ${round} 轮重新生成，直到10档全部达标（可手动取消）。`;
+              this.batchPlaytestDetail = `${chain[0].config.id} 第 ${round} 次搜索：${reason}（可手动取消）`;
               this.renderBatchPlaytestDialog();
             },
           );

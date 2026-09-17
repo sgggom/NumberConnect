@@ -23,6 +23,7 @@ const generateChain = (
   request: ProgressiveHiddenWorkerRequest,
 ): EditorAlgorithmResult[] => {
   const deadlineAt = Date.now() + request.timeoutMs;
+  if (request.search) return [createProgressiveBatchHiddenResult(request.tasks[0], request.search.previousHiddenCells, 0, deadlineAt, request.search)];
   let generationError = '';
   for (let attempt = 0; attempt < BATCH_HIDDEN_CHAIN_MAX_ATTEMPTS; attempt += 1) {
     const results: EditorAlgorithmResult[] = [];
