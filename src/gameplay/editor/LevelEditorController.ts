@@ -2251,7 +2251,6 @@ export class LevelEditorController {
     let completedResults: Array<BatchPlaytestResult | undefined> = [];
     try {
       const configs = await readBatchPlaytestConfigFile(file, mode);
-      const scoreTargetCount = configs.filter(config => config.hiddenScoreTargets).length;
       if (run !== this.batchPlaytestRun) return;
       const tasks = createBatchPlaytestTasks(configs);
       const taskChains = createBatchPlaytestTaskChains(tasks);
@@ -2259,7 +2258,7 @@ export class LevelEditorController {
       completedResults = new Array(tasks.length);
       this.batchPlaytestProgress.total = tasks.length;
       this.renderBatchPlaytestButton();
-      this.batchPlaytestDetail = `已读取 ${configs.length} 组配置${scoreTargetCount ? `，其中 ${scoreTargetCount} 组按评分目标严格匹配` : ''}，正在启动 ${tasks.length} 关…`;
+      this.batchPlaytestDetail = `已读取 ${configs.length} 组配置，正在启动 ${tasks.length} 关…`;
       this.renderBatchPlaytestDialog();
       this.setStatus(mode === 'path'
         ? `已读取 ${configs.length} 组路径配置，使用 ${Math.min(concurrency, tasks.length)} 个线程并行生成 ${tasks.length} 条路径。`
@@ -2408,15 +2407,10 @@ export class LevelEditorController {
             chain,
             (completed, total, difficulty) => {
               if (run !== this.batchPlaytestRun) return;
-              this.batchPlaytestDetail = `${chain[0].config.id} 第 ${chain[0].generationNumber} 组：当前难度 ${difficulty}/10，已完成 ${completed}/${total} 档…`;
+              this.batchPlaytestDetail = `${chain[0].config.id} 第 ${chain[0].generationNumber} 组：生成难度 ${difficulty}/10（${completed}/${total}）…`;
               this.renderBatchPlaytestDialog();
             },
             BATCH_HIDDEN_CHAIN_TIMEOUT_MS,
-            (round, reason) => {
-              if (run !== this.batchPlaytestRun || abortController.signal.aborted) return;
-              this.batchPlaytestDetail = `${chain[0].config.id} 第 ${round} 次搜索：${reason}（可手动取消）`;
-              this.renderBatchPlaytestDialog();
-            },
           );
           this.batchHiddenGenerationTasks.add(generationTask);
           let generatedLayouts;

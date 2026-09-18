@@ -11,7 +11,6 @@ import type {
   ProgressiveHiddenWorkerResponse,
 } from './progressiveHiddenWorkerProtocol';
 import type { EditorCell } from './types';
-import { searchHiddenChain } from './hiddenChainBacktracking';
 
 export interface ProgressiveHiddenGenerationTask {
   promise: Promise<EditorAlgorithmResult[]>;
@@ -19,7 +18,6 @@ export interface ProgressiveHiddenGenerationTask {
 }
 
 interface QueuedGenerationJob {
-  search?: ProgressiveHiddenWorkerRequest['search'];
   id: number;
   tasks: BatchPlaytestTask[];
   timeoutMs: number;
@@ -66,7 +64,6 @@ class ProgressiveHiddenWorkerPool {
     tasks: ReadonlyArray<BatchPlaytestTask>,
     timeoutMs: number,
     onProgress: (completed: number, total: number, difficulty: number) => void,
-    search?: ProgressiveHiddenWorkerRequest['search'],
   ): ProgressiveHiddenGenerationTask {
     let resolveJob: (results: EditorAlgorithmResult[]) => void = () => undefined;
     let rejectJob: (error: Error) => void = () => undefined;
@@ -75,7 +72,6 @@ class ProgressiveHiddenWorkerPool {
       rejectJob = reject;
     });
     const job: QueuedGenerationJob = {
-      search,
       id: this.nextJobId,
       tasks: tasks.map((task) => ({ ...task, config: { ...task.config } })),
       timeoutMs,
@@ -121,7 +117,6 @@ class ProgressiveHiddenWorkerPool {
         jobId: job.id,
         tasks: job.tasks,
         timeoutMs: job.timeoutMs,
-        search: job.search,
       };
       try {
         slot.worker.postMessage(request);
@@ -143,7 +138,6 @@ class ProgressiveHiddenWorkerPool {
         this.settleSlot(slot, () => job.resolve(response.results));
       } else {
         const error = new Error(response.message);
-        if (response.errorName) error.name = response.errorName;
         if (response.message.includes('超时')) error.name = 'ProgressiveHiddenTimeoutError';
         this.settleSlot(slot, () => job.reject(error));
       }
@@ -226,7 +220,6 @@ const startOnCurrentThread = (
   tasks: ReadonlyArray<BatchPlaytestTask>,
   timeoutMs: number,
   onProgress: (completed: number, total: number, difficulty: number) => void,
-  search?: ProgressiveHiddenWorkerRequest['search'],
 ): ProgressiveHiddenGenerationTask => {
   let canceled = false;
   const promise = new Promise<EditorAlgorithmResult[]>((resolve, reject) => {
@@ -235,11 +228,6 @@ const startOnCurrentThread = (
       const results: EditorAlgorithmResult[] = [];
       let previousHiddenCells: ReadonlyArray<EditorCell> | undefined;
       try {
-        if (search) {
-          if (canceled) throw canceledError();
-          resolve([createProgressiveBatchHiddenResult(tasks[0], search.previousHiddenCells, 0, deadlineAt, search)]);
-          return;
-        }
         let generationError = '';
         let succeeded = false;
         for (let attempt = 0; attempt < BATCH_HIDDEN_CHAIN_MAX_ATTEMPTS && !succeeded; attempt += 1) {
@@ -276,59 +264,18 @@ const startOnCurrentThread = (
   return { promise, cancel: () => { canceled = true; } };
 };
 
-const startGenerationRound = (
-  tasks: ReadonlyArray<BatchPlaytestTask>,
-  onProgress: (completed: number, total: number, difficulty: number) => void,
-  timeoutMs = BATCH_HIDDEN_CHAIN_TIMEOUT_MS,
-  search?: ProgressiveHiddenWorkerRequest['search'],
-): ProgressiveHiddenGenerationTask => {
-  if (typeof Worker === 'undefined') return startOnCurrentThread(tasks, timeoutMs, onProgress, search);
-  try {
-    sharedPool ??= new ProgressiveHiddenWorkerPool();
-    return sharedPool.start(tasks, timeoutMs, onProgress, search);
-  } catch {
-    return startOnCurrentThread(tasks, timeoutMs, onProgress, search);
-  }
-};
-
-let activeScoredChains = 0;
-
 export const startProgressiveHiddenChainGeneration = (
   tasks: ReadonlyArray<BatchPlaytestTask>,
   onProgress: (completed: number, total: number, difficulty: number) => void,
   timeoutMs = BATCH_HIDDEN_CHAIN_TIMEOUT_MS,
-  onRetry: (round: number, reason: string) => void = () => undefined,
 ): ProgressiveHiddenGenerationTask => {
-  if (!tasks.some(task => task.config.hiddenScoreTargets)) return startGenerationRound(tasks, onProgress, timeoutMs);
-  let canceled = false;
-  const active = new Set<ProgressiveHiddenGenerationTask>();
-  activeScoredChains++;
-  let rejectCanceled: (error: Error) => void = () => undefined;
-  const promise = new Promise<EditorAlgorithmResult[]>((resolve, reject) => {
-    rejectCanceled = reject;
-    void searchHiddenChain({
-      tasks,
-      canceled: () => canceled,
-      parallelism: () => Math.max(1, Math.ceil(batchPlaytestConcurrency() / Math.max(1, activeScoredChains))),
-      onProgress,
-      onRetry,
-      start: (task, search) => {
-        const job = startGenerationRound([task], () => undefined, timeoutMs, search);
-        active.add(job);
-        void job.promise.then(() => active.delete(job), () => active.delete(job));
-        return job;
-      },
-    }).then(results => { if (!canceled) resolve(results); }, reject)
-      .finally(() => { activeScoredChains--; });
-  });
-  return {
-    promise,
-    cancel: () => {
-      canceled = true;
-      active.forEach(job => job.cancel());
-      rejectCanceled(canceledError());
-    },
-  };
+  if (typeof Worker === 'undefined') return startOnCurrentThread(tasks, timeoutMs, onProgress);
+  try {
+    sharedPool ??= new ProgressiveHiddenWorkerPool();
+    return sharedPool.start(tasks, timeoutMs, onProgress);
+  } catch {
+    return startOnCurrentThread(tasks, timeoutMs, onProgress);
+  }
 };
 
 export const disposeProgressiveHiddenWorkerPool = (): void => {

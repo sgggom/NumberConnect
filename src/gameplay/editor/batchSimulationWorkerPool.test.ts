@@ -137,9 +137,9 @@ describe('batch simulation worker pool', () => {
       startBatchPlaytestSimulation(task, level, () => undefined).promise
     ));
 
-    expect(FakeBatchSimulationWorker.instances).toHaveLength(6);
+    expect(FakeBatchSimulationWorker.instances).toHaveLength(5);
     await expect(Promise.all(jobs)).resolves.toHaveLength(10);
-    expect(FakeBatchSimulationWorker.instances).toHaveLength(6);
+    expect(FakeBatchSimulationWorker.instances).toHaveLength(5);
     expect(FakeBatchSimulationWorker.instances.reduce(
       (sum, worker) => sum + worker.requests.length,
       0,

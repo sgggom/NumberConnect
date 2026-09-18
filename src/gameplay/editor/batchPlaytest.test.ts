@@ -40,11 +40,11 @@ const path5x5 = JSON.stringify({
 });
 
 describe('批量生成路径与隐藏', () => {
-  it('使用设备逻辑线程数并最多扩展到64线程', () => {
+  it('按设备逻辑线程数动态扩展并保留一个线程', () => {
     vi.stubGlobal('navigator', { hardwareConcurrency: 16 });
-    expect(batchPlaytestConcurrency()).toBe(16);
+    expect(batchPlaytestConcurrency()).toBe(15);
     vi.stubGlobal('navigator', { hardwareConcurrency: 64 });
-    expect(batchPlaytestConcurrency()).toBe(64);
+    expect(batchPlaytestConcurrency()).toBe(32);
     vi.unstubAllGlobals();
   });
 

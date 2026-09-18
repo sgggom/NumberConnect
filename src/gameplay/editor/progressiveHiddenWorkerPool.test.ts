@@ -14,7 +14,6 @@ type WorkerMessageListener = (event: MessageEvent<ProgressiveHiddenWorkerRespons
 class FakeProgressiveHiddenWorker {
   static instances: FakeProgressiveHiddenWorker[] = [];
   static shouldRespond = true;
-  static failuresRemaining = 0;
 
   private readonly listeners: WorkerMessageListener[] = [];
   public terminated = false;
@@ -33,11 +32,6 @@ class FakeProgressiveHiddenWorker {
     if (!FakeProgressiveHiddenWorker.shouldRespond) return;
     globalThis.setTimeout(() => {
       if (this.terminated) return;
-      if (FakeProgressiveHiddenWorker.failuresRemaining > 0) {
-        FakeProgressiveHiddenWorker.failuresRemaining--;
-        this.emit({ type: 'failed', jobId: request.jobId, message: '评分目标未匹配', errorName: 'HiddenCandidateRejected' });
-        return;
-      }
       this.emit({
         type: 'completed',
         jobId: request.jobId,
@@ -90,8 +84,6 @@ describe('progressive hidden worker pool', () => {
     vi.unstubAllGlobals();
     FakeProgressiveHiddenWorker.instances = [];
     FakeProgressiveHiddenWorker.shouldRespond = true;
-    FakeProgressiveHiddenWorker.failuresRemaining = 0;
-    vi.useRealTimers();
   });
 
   it('runs separate path chains in all available worker slots', async () => {
@@ -102,9 +94,9 @@ describe('progressive hidden worker pool', () => {
       startProgressiveHiddenChainGeneration([task], () => undefined).promise
     ));
 
-    expect(FakeProgressiveHiddenWorker.instances).toHaveLength(6);
+    expect(FakeProgressiveHiddenWorker.instances).toHaveLength(5);
     await expect(Promise.all(jobs)).resolves.toHaveLength(10);
-    expect(FakeProgressiveHiddenWorker.instances).toHaveLength(6);
+    expect(FakeProgressiveHiddenWorker.instances).toHaveLength(5);
   });
 
   it('terminates and replaces a worker when one path chain times out', async () => {
@@ -120,60 +112,5 @@ describe('progressive hidden worker pool', () => {
     await expect(startProgressiveHiddenChainGeneration([task], () => undefined).promise)
       .resolves.toHaveLength(1);
     expect(FakeProgressiveHiddenWorker.instances).toHaveLength(2);
-  });
-
-  const scoredTask = (): BatchPlaytestTask => ({ ...task, config: { ...task.config, hiddenScoreTargets: { one: Array(10).fill(0), two: Array(10).fill(0) } } });
-
-  it('checks distinct enumerated candidates until a complete result arrives', async () => {
-    vi.useFakeTimers(); vi.stubGlobal('Worker', FakeProgressiveHiddenWorker);
-    vi.stubGlobal('navigator', { hardwareConcurrency: 1 });
-    FakeProgressiveHiddenWorker.failuresRemaining = 2;
-    const onRetry = vi.fn();
-    const job = startProgressiveHiddenChainGeneration([scoredTask()], () => undefined, 1000, onRetry);
-    await vi.advanceTimersByTimeAsync(510);
-    await expect(job.promise).resolves.toHaveLength(1);
-    expect(onRetry.mock.calls.map(call => call[0])).toEqual([1,2,3]);
-    const candidates = FakeProgressiveHiddenWorker.instances.flatMap(w => w.requests.map(r => JSON.stringify(r.search?.candidateHiddenCells)));
-    expect(new Set(candidates).size).toBe(3);
-    expect(task.config.seed).toBe(1);
-  });
-
-  it('reports interruption on timeout instead of pretending a candidate was rejected', async () => {
-    vi.useFakeTimers(); vi.stubGlobal('Worker', FakeProgressiveHiddenWorker);
-    vi.stubGlobal('navigator', { hardwareConcurrency: 1 });
-    FakeProgressiveHiddenWorker.shouldRespond = false;
-    const job = startProgressiveHiddenChainGeneration([scoredTask()], () => undefined, 5);
-    const interrupted = expect(job.promise).rejects.toMatchObject({ name: 'HiddenEnumerationInterrupted' });
-    await vi.advanceTimersByTimeAsync(10);
-    await interrupted;
-    expect(FakeProgressiveHiddenWorker.instances[0].terminated).toBe(true);
-    expect(FakeProgressiveHiddenWorker.instances).toHaveLength(1);
-  });
-
-  it('can cancel between retries without starting another round', async () => {
-    vi.useFakeTimers(); vi.stubGlobal('Worker', FakeProgressiveHiddenWorker);
-    vi.stubGlobal('navigator', { hardwareConcurrency: 1 });
-    FakeProgressiveHiddenWorker.failuresRemaining = 100;
-    const job = startProgressiveHiddenChainGeneration([scoredTask()], () => undefined, 1000);
-    const canceled = expect(job.promise).rejects.toMatchObject({ name: 'AbortError' });
-    await vi.advanceTimersByTimeAsync(1);
-    const requestCount = FakeProgressiveHiddenWorker.instances.flatMap(w => w.requests).length;
-    job.cancel();
-    await canceled;
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(FakeProgressiveHiddenWorker.instances.flatMap(w => w.requests)).toHaveLength(requestCount);
-  });
-
-  it('uses idle workers for parallel candidates of the last remaining scored path', async () => {
-    vi.useFakeTimers(); vi.stubGlobal('Worker', FakeProgressiveHiddenWorker);
-    vi.stubGlobal('navigator', { hardwareConcurrency: 4 });
-    FakeProgressiveHiddenWorker.shouldRespond = false;
-    const job = startProgressiveHiddenChainGeneration([scoredTask()], () => undefined, 1000);
-    const canceled = expect(job.promise).rejects.toMatchObject({ name: 'AbortError' });
-    await vi.advanceTimersByTimeAsync(1);
-    expect(FakeProgressiveHiddenWorker.instances).toHaveLength(4);
-    const searches = FakeProgressiveHiddenWorker.instances.flatMap(w => w.requests.map(r => JSON.stringify(r.search?.candidateHiddenCells)));
-    expect(new Set(searches).size).toBe(4);
-    job.cancel(); await canceled;
   });
 });
