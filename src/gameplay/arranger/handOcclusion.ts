@@ -10,6 +10,7 @@ export interface OcclusionGeometry {
   viewportHeight: number;
   handSize?: number;
   leftHand?: boolean;
+  clipBoard?: DOMRect;
 }
 
 /** Samples the visible circle and central glyph area, not the image's bounding box. */
@@ -38,6 +39,7 @@ export class HandOcclusionSampler {
   constructor(readonly geometry: OcclusionGeometry) {
     this.thumb.setSize(geometry.handSize ?? 1);
     this.thumb.setLeftHand(geometry.leftHand ?? false);
+    this.thumb.setClipBounds(geometry.clipBoard ?? geometry.board);
     this.index.src = `${import.meta.env.BASE_URL}ui/tutorial-finger.png`;
   }
 
@@ -70,6 +72,10 @@ export class HandOcclusionSampler {
         const height = this.index.naturalHeight * width / this.index.naturalWidth;
         const context = this.canvas.getContext('2d')!;
         context.save();
+        if (this.geometry.leftHand) {
+          const clip = this.geometry.clipBoard ?? board;
+          context.beginPath(); context.rect(clip.x, clip.y, clip.width, clip.height); context.clip();
+        }
         context.translate(cursor.x, cursor.y);
         if (this.geometry.leftHand) context.scale(-1, 1);
         context.drawImage(this.index, -width * .045, -height * .006 - 20 * size, width, height);

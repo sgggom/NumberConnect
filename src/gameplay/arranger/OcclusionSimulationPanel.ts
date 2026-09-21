@@ -1,7 +1,7 @@
 import type { LevelData } from '../../game/types';
 import { findPathCompletionInWorker } from '../../game/pathCompletionWorker';
 import { HandOcclusionSampler, type OcclusionGeometry } from './handOcclusion';
-import { clearOcclusion, simulateOccludedPlay, stepOccludedPlay, PLAYER_OBSERVATION_RATES, type PlayerLevel, type NeighborhoodWeight, type CellOcclusion, type HandMode, type OcclusionRun } from './occlusionSimulation';
+import { clearOcclusion, simulateOccludedPlay, stepOccludedPlay, PLAYER_OBSERVATION_RATES, type WeightConfig, type PlayerLevel, type NeighborhoodWeight, type CellOcclusion, type HandMode, type OcclusionRun } from './occlusionSimulation';
 
 export interface OcclusionReplay {
   labels: Array<number | null>;
@@ -9,6 +9,7 @@ export interface OcclusionReplay {
   current: number;
   attempted?: number;
   neighborhood?: NeighborhoodWeight[];
+  observation?: { observed: boolean };
   occlusion: CellOcclusion[];
   mode: HandMode;
   message: string;
@@ -32,11 +33,12 @@ export class OcclusionSimulationPanel {
   private mode: HandMode = 'off';
   private position = 0;
   private geometry?: OcclusionGeometry;
-  private config?: { count: number; memory: number; playerLevel: PlayerLevel; randomness: string };
+  private config?: { count: number; memory: number; playerLevel: PlayerLevel; weights: WeightConfig; randomness: string };
 
   constructor(private readonly level: LevelData, private readonly options: {
     getMode: () => HandMode;
     getGeometry: () => OcclusionGeometry;
+    getWeights: () => WeightConfig;
     replay: (frame: OcclusionReplay | undefined) => void;
     lock: (locked: boolean) => void;
   }) {
@@ -113,7 +115,7 @@ export class OcclusionSimulationPanel {
         this.mode = this.options.getMode(); this.geometry = this.options.getGeometry();
         const sampler = new HandOcclusionSampler(this.geometry); this.sampler = sampler;
         this.abort = new AbortController();
-        session = stepOccludedPlay({ level: this.level, memorySteps: 0, playerLevel: this.playerLevel(),
+        session = stepOccludedPlay({ level: this.level, memorySteps: 0, playerLevel: this.playerLevel(), weights: this.options.getWeights(),
           observe: (current) => sampler.observe(this.mode, current), signal: this.abort.signal,
           findCompletion: (request) => findPathCompletionInWorker(this.level.solutionPath, this.level.boardShape, request) });
         this.live = session; this.options.lock(true);
@@ -153,7 +155,7 @@ export class OcclusionSimulationPanel {
   private async run(): Promise<void> {
     if (this.abort && !this.abort.signal.aborted) return;
     const status = this.query('[data-field="status"]');
-    const config = { count: 5, memory: 0, playerLevel: this.playerLevel(), randomness: 'maximum weight; fresh uniform random only among tied maxima' };
+    const config = { count: 5, memory: 0, playerLevel: this.playerLevel(), weights: this.options.getWeights(), randomness: 'maximum weight; fresh uniform random only among tied maxima' };
     this.pause(); this.options.replay(undefined);
     this.runs = []; this.baseline = []; this.position = 0;
     this.query('[data-field="replay"]').hidden = true;
@@ -171,7 +173,7 @@ export class OcclusionSimulationPanel {
       const sampler = new HandOcclusionSampler(this.geometry); this.sampler = sampler;
       for (let i = 0; i < config.count; i++) {
         status.textContent = `正在跑第 ${i + 1}/${config.count} 轮（${handLabel[this.mode]} + 无手指对照）…`;
-        const run = (mode: HandMode) => simulateOccludedPlay({ level: this.level, memorySteps: config.memory, playerLevel: config.playerLevel,
+        const run = (mode: HandMode) => simulateOccludedPlay({ level: this.level, memorySteps: config.memory, playerLevel: config.playerLevel, weights: config.weights,
           observe: (current) => sampler.observe(mode, current), signal: abort.signal,
           findCompletion: (request) => findPathCompletionInWorker(this.level.solutionPath, this.level.boardShape, request) });
         this.runs.push(await run(this.mode));
@@ -236,7 +238,7 @@ export class OcclusionSimulationPanel {
       return item;
     }));
     this.options.replay(frame ? { labels: frame.labels, edges: frame.edges, current: frame.current, attempted: frame.attempted,
-      occlusion: frame.occlusion, neighborhood: frame.neighborhood, mode: this.mode, message, errors: frame.errors, progress: frame.progress }
+      occlusion: frame.occlusion, neighborhood: frame.neighborhood, observation: frame.observation, mode: this.mode, message, errors: frame.errors, progress: frame.progress }
       : { labels: run.finalLabels, edges: run.finalEdges, current: run.frames.at(-1)?.attempted ?? 0,
         occlusion: clearOcclusion(this.level.solutionPath.length), mode: 'off', message, errors: run.errors,
         progress: run.finalEdges.length ? run.finalEdges.length + 1 : 0 });
@@ -251,7 +253,7 @@ export class OcclusionSimulationPanel {
   private export(): void {
     if (!this.runs.length) return;
     const report = { algorithm: 'arranger-alpha-occlusion-v7', mode: this.mode, config: this.config,
-      assumptions: { alphaThreshold: 128, glyphSamplesBlocked: '3/9', ballSamples: 49, policy: '3x3: (known next +1, hidden +0.5), glyph blocked x0.5, same previous successful direction +0.2, hidden closer to next displayed target +0.3 only if target currently readable (no memory-only bonus, no skipping blocked target); other visible and excluded cells always zero; select maximum weight; uniformly sample tied maxima only', decisionHandPosition: 'current connected cell; no hand-lift scan', observation: 'player level normal/after-error rates; forced when all weights are zero, or after error if no unblocked non-rejected eligible neighbor; clears hand occlusion for this decision only, never reveals hidden labels', scope: 'current board; model statistics, not calibrated human difficulty' },
+      assumptions: { alphaThreshold: 128, glyphSamplesBlocked: '3/9', ballSamples: 49, policy: '3x3: configurable bonuses and occlusion multiplier from config.weights; closer-target bonus only if target currently readable (no memory-only bonus, no skipping blocked target); other visible and excluded cells always zero; select maximum weight; uniformly sample tied maxima only', decisionHandPosition: 'current connected cell; no hand-lift scan', observation: 'player level normal/after-error rates; forced when all weights are zero, or after error if no unblocked non-rejected eligible neighbor; clears hand occlusion for this decision only, never reveals hidden labels', scope: 'current board; model statistics, not calibrated human difficulty' },
       geometry: this.geometry, level: this.level, runs: this.runs, noHandBaseline: this.baseline };
     const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' }));
     const anchor = document.createElement('a'); anchor.href = url; anchor.download = '手指遮挡模拟结果.json'; anchor.click();

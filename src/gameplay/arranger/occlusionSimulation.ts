@@ -4,6 +4,12 @@ import { areNeighborCells } from '../../game/topology';
 import { cellKey, type BoardShape, type Cell, type LevelData } from '../../game/types';
 
 export type HandMode = 'off' | 'index' | 'thumb';
+export interface WeightConfig {
+  nextNumber: number; hiddenNumber: number; occludedMultiplier: number; sameDirection: number; closerTarget: number;
+}
+export const DEFAULT_WEIGHT_CONFIG: Readonly<WeightConfig> = {
+  nextNumber: 1, hiddenNumber: .5, occludedMultiplier: .5, sameDirection: .2, closerTarget: .3,
+};
 export type PlayerLevel = 1 | 2 | 3 | 4 | 5;
 export const PLAYER_OBSERVATION_RATES = [
   { normal: 0, afterError: .5 }, { normal: .25, afterError: .75 },
@@ -86,8 +92,10 @@ export function choosePerceivedMove(input: {
   distanceCells?: readonly Cell[];
   nextDisplayed?: number;
   random: () => number;
+  weights?: Readonly<WeightConfig>;
 }): { selected?: number; candidates: number[]; direct: boolean; neighborhood: NeighborhoodWeight[] } {
   const { cells, shape, current, nextNumber, known, visited, rejected, random } = input;
+  const weights = input.weights ?? DEFAULT_WEIGHT_CONFIG;
   const center = input.center ?? cells[current];
   const distanceCells = input.distanceCells ?? cells;
   const targetIndex = input.nextDisplayed;
@@ -111,14 +119,14 @@ export function choosePerceivedMove(input: {
     else if (!hidden && !next) reason = '显示数字不是已确认的下一数字，权重为 0';
     else {
       const parts: string[] = [];
-      if (next) { weight += 1; parts.push('已确认下一数字 +1'); }
-      if (hidden) { weight += .5; parts.push('隐藏数字 +0.5'); }
-      if (input.occlusion?.[index]?.numberBlocked) { weight *= .5; parts.push('数字被遮挡 ×0.5'); }
+      if (next) { weight += weights.nextNumber; parts.push(`已确认下一数字 +${weights.nextNumber}`); }
+      if (hidden) { weight += weights.hiddenNumber; parts.push(`隐藏数字 +${weights.hiddenNumber}`); }
+      if (input.occlusion?.[index]?.numberBlocked) { weight *= weights.occludedMultiplier; parts.push(`数字被遮挡 ×${weights.occludedMultiplier}`); }
       if (input.previousDirection?.dx === dx && input.previousDirection?.dy === dy) {
-        weight += .2; parts.push('与上一次成功连接同方向 +0.2');
+        weight += weights.sameDirection; parts.push(`与上一次成功连接同方向 +${weights.sameDirection}`);
       }
       if (hidden && target && distanceSquared(distanceCells[index], target) < distanceSquared(center, target)) {
-        weight += .3; parts.push('更接近当前看得见的下一个显示数字 +0.3');
+        weight += weights.closerTarget; parts.push(`更接近当前看得见的下一个显示数字 +${weights.closerTarget}`);
       }
       reason = parts.join('；');
     }
@@ -140,6 +148,7 @@ export async function* stepOccludedPlay(input: {
   seed?: number;
   memorySteps: number;
   playerLevel?: PlayerLevel;
+  weights?: Readonly<WeightConfig>;
   observe: (current: number) => Promise<CellOcclusion[]>;
   findCompletion: (request: PathCompletionRequest) => Promise<number[] | null>;
   signal?: AbortSignal;
@@ -188,7 +197,7 @@ export async function* stepOccludedPlay(input: {
     });
     // Successfully connected cells stay known even if the hand covers them.
     visited.forEach((index) => known.set(index, connection.displayNumber(index)));
-    const choose = () => choosePerceivedMove({ cells, shape: level.boardShape, current, nextNumber, known, visited, rejected, occlusion: perceivedOcclusion, random,
+    const choose = () => choosePerceivedMove({ cells, shape: level.boardShape, current, nextNumber, known, visited, rejected, occlusion: perceivedOcclusion, random, weights: input.weights,
       hiddenIndices: new Set(renderedLabels.flatMap((value, index) => value === null ? [index] : [])), previousDirection,
       nextDisplayed: nextDisplayedIndex(renderedLabels, nextNumber) });
     let choice = choose();
