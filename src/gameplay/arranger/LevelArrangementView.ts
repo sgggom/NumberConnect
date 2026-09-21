@@ -65,7 +65,7 @@ export const mountLevelArrangementView = (host: HTMLElement): void => {
               <label><input id="arranger-show-trend" type="checkbox" checked><span>趋势</span></label>
               <label><input id="arranger-show-connection" type="checkbox"><span>连线</span></label>
             </div>
-            <button id="arranger-playtest-button" class="button button--primary button--small" type="button" disabled>试玩</button>
+            <button id="arranger-playtest-button" class="button button--primary button--small" type="button" aria-pressed="false" title="点击切换到试玩模式" disabled>预览模式</button>
           </div>
         </header>
         <div id="arranger-preview" class="arranger-preview"><p class="arranger-empty-copy">从关卡库或左侧列表选择一个棋盘。</p></div>
