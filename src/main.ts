@@ -653,7 +653,6 @@ class NumberConnectApp {
     });
     this.arranger = new LevelArrangementController(query<HTMLElement>('#arranger-screen'), {
       onBack: () => this.backToLobby(),
-      onPlaytest: (level) => void this.startEditorPlaytest(level, 'arranger'),
     });
     window.addEventListener('resize', () => requestAnimationFrame(() => {
       this.syncBeadCellSize();

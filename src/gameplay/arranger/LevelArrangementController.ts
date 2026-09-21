@@ -34,6 +34,8 @@ import {
 } from './arrangementDatabase';
 import './arranger.css';
 import { crossingDensity, straightRatio } from './arrangementScoring';
+import { hiddenIntroductionDifficulties } from './hiddenDifficulty';
+import { ArrangementPlaytest } from './ArrangementPlaytest';
 
 const PAGE_SIZE = 100;
 interface LibraryParameterGroup {
@@ -68,7 +70,6 @@ const createEmptyArrangementConfiguration = (): ArrangementConfiguration => ({
 
 export interface LevelArrangementControllerOptions {
   onBack: () => void;
-  onPlaytest: (level: LevelData) => void;
 }
 
 export class LevelArrangementController {
@@ -96,6 +97,10 @@ export class LevelArrangementController {
   private showConnection = false;
   private libraryId?: string;
   private previewEntry?: ArrangementLibraryLevel;
+  private previewHiddenDifficulties = new Map<string, number>();
+  private playtestMode = false;
+  private playtest?: ArrangementPlaytest;
+  private playtestLevelId?: string;
   private previewRequest = 0;
   private draftSaveTimer?: ReturnType<typeof setTimeout>;
   private restoringDraft = false;
@@ -113,7 +118,11 @@ export class LevelArrangementController {
   }
 
   public bind(): void {
-    this.query('#arranger-back-button').addEventListener('click', this.options.onBack);
+    this.query('#arranger-back-button').addEventListener('click', () => {
+      this.stopPlaytest();
+      this.playtestMode = false;
+      this.options.onBack();
+    });
     this.query('#arranger-open-file').addEventListener('click', () => this.fileInput.click());
     this.fileInput.addEventListener('change', () => void this.readSelectedFile());
     this.query('#arranger-add-group').addEventListener('click', () => this.addGroup());
@@ -148,7 +157,10 @@ export class LevelArrangementController {
     });
     this.query('#arranger-playtest-button').addEventListener('click', () => {
       const entry = this.previewEntry?.id === this.previewLevelId ? this.previewEntry : undefined;
-      if (entry) this.options.onPlaytest(this.decodeLevel(entry));
+      if (!entry) return;
+      this.playtestMode = !this.playtestMode;
+      this.stopPlaytest();
+      this.renderPreview();
     });
     this.groupList.addEventListener('click', (event) => this.handleGroupClick(event));
     this.groupList.addEventListener('pointerover', (event) => this.handleGroupHover(event));
@@ -239,6 +251,7 @@ export class LevelArrangementController {
     this.saveDraft();
     this.restoringDraft = true;
     try {
+      this.stopPlaytest();
       this.libraryId = manifest.id;
       this.previewEntry = undefined;
       this.applyLibrary(levels, manifest.parameterHeaders, manifest.skippedRows, `已${restoreDraft ? '恢复' : '导入'} ${manifest.name}`);
@@ -582,6 +595,7 @@ export class LevelArrangementController {
   }
 
   private handleGroupHover(event: Event): void {
+    if (this.playtestMode) return;
     const level = (event.target as HTMLElement).closest<HTMLElement>('[data-preview-level]');
     const levelId = level?.dataset.previewLevel;
     if (!levelId || levelId === this.previewLevelId) return;
@@ -590,6 +604,7 @@ export class LevelArrangementController {
   }
 
   private handleLibraryHover(event: Event): void {
+    if (this.playtestMode) return;
     const row = (event.target as HTMLElement).closest<HTMLElement>('[data-board-index]');
     if (!row) return;
     const target = this.libraryTargetFromRow(row);
@@ -1043,6 +1058,12 @@ export class LevelArrangementController {
     this.previewTimer = setTimeout(() => void this.loadPreview(), 60);
   }
 
+  private stopPlaytest(): void {
+    this.playtest?.dispose();
+    this.playtest = undefined;
+    this.playtestLevelId = undefined;
+  }
+
   private paginatedNodes<T>(key: string, items: readonly T[], render: (item: T, index: number) => HTMLElement, update: () => void): HTMLElement[] {
     const count = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
     const page = Math.min(this.listPages.get(key) ?? 0, count - 1);
@@ -1075,6 +1096,13 @@ export class LevelArrangementController {
     const request = ++this.previewRequest;
     const index = this.previewLevelId ? this.libraryById.get(this.previewLevelId) : undefined;
     const preview = this.query('#arranger-preview');
+    if (!this.playtestMode || this.playtestLevelId !== index?.id) this.stopPlaytest();
+    const modeButton = this.query<HTMLButtonElement>('#arranger-playtest-button');
+    modeButton.textContent = this.playtestMode ? '试玩模式' : '预览模式';
+    modeButton.setAttribute('aria-pressed', String(this.playtestMode));
+    modeButton.title = this.playtestMode ? '点击切换到预览模式' : '点击切换到试玩模式';
+    this.query<HTMLInputElement>('#arranger-show-trend').disabled = this.playtestMode;
+    this.query<HTMLInputElement>('#arranger-show-connection').disabled = this.playtestMode;
     this.query<HTMLButtonElement>('#arranger-playtest-button').disabled = true;
     if (!index || !this.libraryId) {
       this.query('#arranger-preview-title').textContent = '未选择';
@@ -1088,6 +1116,20 @@ export class LevelArrangementController {
         const [detail] = await loadArrangementDetails(this.libraryId, [index.id]);
         if (request !== this.previewRequest) return;
         entry = { ...index, ...detail };
+        const tier = index.difficultyId ?? index.difficulty;
+        const siblings = this.library.filter((candidate) =>
+          candidate.id !== index.id && candidate.boardKey === index.boardKey
+          && candidate.pathKey === index.pathKey && candidate.formationId === index.formationId
+          && candidate.pathId === index.pathId
+          && (candidate.difficultyId ?? candidate.difficulty ?? Infinity) <= (tier ?? 0));
+        const variants = [entry];
+        for (let offset = 0; offset < siblings.length; offset += DATABASE_BATCH_SIZE) {
+          const batch = siblings.slice(offset, offset + DATABASE_BATCH_SIZE);
+          const details = await loadArrangementDetails(this.libraryId, batch.map((candidate) => candidate.id));
+          if (request !== this.previewRequest) return;
+          variants.push(...batch.map((candidate, i) => ({ ...candidate, ...details[i] })));
+        }
+        this.previewHiddenDifficulties = hiddenIntroductionDifficulties(variants);
         this.previewEntry = entry;
       } catch (error) {
         if (request === this.previewRequest) preview.textContent = `预览读取失败：${error instanceof Error ? error.message : String(error)}`;
@@ -1097,6 +1139,13 @@ export class LevelArrangementController {
     this.query<HTMLButtonElement>('#arranger-playtest-button').disabled = false;
     this.query('#arranger-preview-title').textContent = entry.id;
     const level = this.decodeLevel(entry);
+    if (this.playtestMode) {
+      if (!this.playtest) {
+        this.playtest = new ArrangementPlaytest(preview, level);
+        this.playtestLevelId = entry.id;
+      }
+      return;
+    }
     const data = entry.levelData.data;
     const svgNamespace = 'http://www.w3.org/2000/svg';
     const board = document.createElementNS(svgNamespace, 'svg');
@@ -1190,7 +1239,15 @@ export class LevelArrangementController {
       const label = document.createElementNS(svgNamespace, 'text');
       label.setAttribute('x', String(x + 0.5));
       label.setAttribute('y', String(y + 0.51));
-      label.textContent = value < 0 ? '?' : String(value);
+      const introduction = this.previewHiddenDifficulties.get(`${x},${y}`);
+      label.textContent = value < 0 ? String(introduction ?? '?') : String(value);
+      if (value < 0) {
+        const title = document.createElementNS(svgNamespace, 'title');
+        title.textContent = introduction === undefined
+          ? '缺少完整难度数据，无法确定新增难度'
+          : `难度 ${introduction} 新增的隐藏位置`;
+        group.append(title);
+      }
       group.append(circle, label);
       board.append(group);
     }));
