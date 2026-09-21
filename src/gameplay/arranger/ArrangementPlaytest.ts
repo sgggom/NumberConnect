@@ -6,7 +6,7 @@ import { areNeighborCells } from '../../game/topology';
 import { cellKey, type LevelData } from '../../game/types';
 import { ThumbHand } from './ThumbHand';
 import { OcclusionSimulationPanel, type OcclusionReplay } from './OcclusionSimulationPanel';
-import { choosePerceivedMove, nextDisplayedIndex, type HandMode, type NeighborhoodWeight } from './occlusionSimulation';
+import { choosePerceivedMove, nextDisplayedIndex, DEFAULT_WEIGHT_CONFIG, type WeightConfig, type HandMode, type NeighborhoodWeight } from './occlusionSimulation';
 import { HandOcclusionSampler, type OcclusionGeometry } from './handOcclusion';
 
 const NS = 'http://www.w3.org/2000/svg';
@@ -34,6 +34,8 @@ export class ArrangementPlaytest {
   private readonly status = document.createElement('p');
   private readonly undo = document.createElement('button');
   private readonly restart = document.createElement('button');
+  private weights: WeightConfig = { ...DEFAULT_WEIGHT_CONFIG };
+  private readonly fingerLayer = document.createElement('div');
   private readonly finger = document.createElement('img');
   private readonly choiceOverlay = document.createElement('div');
   private readonly choiceToggle = document.createElement('input');
@@ -89,9 +91,12 @@ export class ArrangementPlaytest {
     const sizeLabel = document.createElement('label');
     sizeLabel.className = 'arranger-playtest-finger-size';
     this.fingerSize.type = 'range';
-    this.fingerSize.min = '0.5'; this.fingerSize.max = '1'; this.fingerSize.step = '0.01'; this.fingerSize.value = '1';
+    this.fingerSize.min = '0.5'; this.fingerSize.max = '1'; this.fingerSize.step = '0.01'; this.fingerSize.value = '0.8';
     this.fingerSize.setAttribute('aria-label', '手指大小');
-    const sizeValue = document.createElement('output'); sizeValue.textContent = '1.00×';
+    const sizeValue = document.createElement('output'); sizeValue.textContent = '0.80×';
+    this.thumbHand.setSize(this.fingerSize.valueAsNumber);
+    this.finger.style.width = `${720 * this.fingerSize.valueAsNumber}px`;
+    this.updateIndexTransform();
     sizeLabel.append(document.createTextNode('大小'), this.fingerSize, sizeValue);
     this.fingerSize.addEventListener('input', () => {
       const cursor = this.weightCursor;
@@ -109,7 +114,9 @@ export class ArrangementPlaytest {
     this.finger.draggable = false;
     this.finger.hidden = true;
     this.finger.setAttribute('aria-hidden', 'true');
-    document.body.append(this.finger);
+    this.fingerLayer.className = 'arranger-playtest-finger-layer';
+    this.fingerLayer.append(this.finger);
+    document.body.append(this.fingerLayer);
     this.cursorMarker.className = 'arranger-playtest-cursor-marker';
     this.cursorMarker.hidden = true;
     this.cursorMarker.setAttribute('aria-hidden', 'true');
@@ -174,6 +181,39 @@ export class ArrangementPlaytest {
     showLabel.append(this.showHand, document.createTextNode('显示手指'));
     this.showHand.addEventListener('change', () => this.refreshHandImage());
     sidebar.append(fingerLabel, sideLabel, showLabel, sizeLabel, choiceLabel);
+    const weightSettings = document.createElement('details');
+    weightSettings.className = 'arranger-weight-settings';
+    const weightSummary = document.createElement('summary'); weightSummary.textContent = '权重配置';
+    weightSettings.append(weightSummary);
+    const weightInputs: HTMLInputElement[] = [];
+    const refreshWeights = () => {
+      const cursor = this.currentFingerPosition();
+      this.simulationPanel?.invalidate();
+      if (cursor) this.moveFinger({ clientX: cursor.x, clientY: cursor.y, pointerType: 'mouse' });
+    };
+    const fields: Array<[keyof WeightConfig, string]> = [
+      ['nextNumber', '下一数字加分'], ['hiddenNumber', '隐藏数字加分'], ['occludedMultiplier', '被遮挡倍率'],
+      ['sameDirection', '同方向加分'], ['closerTarget', '靠近目标加分'],
+    ];
+    fields.forEach(([key, title]) => {
+      const label = document.createElement('label'); label.textContent = title;
+      const input = document.createElement('input'); input.type = 'number'; input.min = '0'; input.step = 'any';
+      if (key === 'occludedMultiplier') input.max = '1';
+      input.value = String(this.weights[key]); input.setAttribute('aria-label', title);
+      input.addEventListener('change', () => {
+        if (!input.checkValidity() || !Number.isFinite(input.valueAsNumber)) {
+          input.reportValidity(); input.value = String(this.weights[key]); return;
+        }
+        this.weights = { ...this.weights, [key]: input.valueAsNumber }; refreshWeights();
+      });
+      label.append(input); weightSettings.append(label); weightInputs.push(input);
+    });
+    const resetWeights = document.createElement('button'); resetWeights.type = 'button'; resetWeights.textContent = '恢复默认权重';
+    resetWeights.addEventListener('click', () => {
+      this.weights = { ...DEFAULT_WEIGHT_CONFIG };
+      fields.forEach(([key], i) => { weightInputs[i].value = String(this.weights[key]); }); refreshWeights();
+    });
+    weightSettings.append(resetWeights); sidebar.append(weightSettings);
     this.board.append(this.lines);
     level.solutionPath.forEach((cell, index) => {
       const group = svgElement('g', { class: 'arranger-preview-cell', role: 'button', tabindex: '0' });
@@ -192,6 +232,7 @@ export class ArrangementPlaytest {
       if (event.button !== 0 || this.pointer !== undefined) return;
       event.preventDefault();
       this.pointer = event.pointerId;
+      this.updateContactLabel();
       this.lastHit = undefined;
       this.board.setPointerCapture(event.pointerId);
       this.hit(event, false);
@@ -205,6 +246,7 @@ export class ArrangementPlaytest {
     const release = (event: PointerEvent) => {
       if (event.pointerId !== this.pointer) return;
       this.pointer = undefined;
+      this.updateContactLabel();
       this.lastHit = undefined;
     };
     this.board.addEventListener('pointerup', release);
@@ -214,11 +256,13 @@ export class ArrangementPlaytest {
     this.simulationPanel = new OcclusionSimulationPanel(level, {
       getMode: () => this.fingerToggle.value as HandMode,
       getGeometry: () => this.simulationGeometry(),
+      getWeights: () => ({ ...this.weights }),
       lock: (locked) => {
         this.simulationRunning = locked;
         this.fingerToggle.disabled = locked;
         this.fingerSize.disabled = locked;
         this.handSide.disabled = locked;
+        weightInputs.forEach((input) => { input.disabled = locked; }); resetWeights.disabled = locked;
         if (locked) hideCursor();
         this.paint();
       },
@@ -227,6 +271,7 @@ export class ArrangementPlaytest {
         this.paint();
         hideCursor();
         if (frame) {
+          this.updateHandClip();
           const geometry = this.simulationGeometry();
           const cursor = geometry.centers[frame.current];
           if (frame.neighborhood) this.showChoiceOverlay(cursor.x, cursor.y, frame.neighborhood, frame.attempted);
@@ -256,13 +301,28 @@ export class ArrangementPlaytest {
     this.weightCursor = undefined;
     this.listeners.abort();
     this.simulationPanel?.dispose();
-    this.finger.remove();
+    this.fingerLayer.remove();
     this.thumbHand.dispose();
     this.cursorMarker.remove();
     this.choiceOverlay.remove();
     if (this.pointer !== undefined && this.board.hasPointerCapture(this.pointer)) {
       this.board.releasePointerCapture(this.pointer);
     }
+  }
+
+  private boardClipBounds(): DOMRect {
+    const matrix = this.board.getScreenCTM();
+    if (!matrix) return this.board.getBoundingClientRect();
+    const topLeft = new DOMPoint(0, 0).matrixTransform(matrix);
+    const bottomRight = new DOMPoint(this.level.columns, this.level.rows).matrixTransform(matrix);
+    return new DOMRect(topLeft.x, topLeft.y, bottomRight.x - topLeft.x, bottomRight.y - topLeft.y);
+  }
+
+  private updateHandClip(): void {
+    const bounds = this.boardClipBounds();
+    this.thumbHand.setClipBounds(bounds);
+    this.fingerLayer.style.clipPath = this.handSide.value === 'left'
+      ? `inset(${bounds.top}px ${window.innerWidth - bounds.right}px ${window.innerHeight - bounds.bottom}px ${bounds.left}px)` : 'none';
   }
 
   private currentFingerPosition(): { x: number; y: number } | undefined {
@@ -275,6 +335,7 @@ export class ArrangementPlaytest {
   }
 
   private refreshHandImage(): void {
+    this.updateHandClip();
     const cursor = this.currentFingerPosition();
     const mode = this.replay?.mode ?? this.fingerToggle.value;
     this.finger.hidden = true; this.thumbHand.hide();
@@ -292,6 +353,7 @@ export class ArrangementPlaytest {
     const inside = event.clientX >= bounds.left && event.clientX <= bounds.right
       && event.clientY >= bounds.top && event.clientY <= bounds.bottom;
     if (!inside) return;
+    this.updateHandClip();
     const hidden = this.disposed || this.fingerToggle.value === 'off' || event.pointerType === 'touch';
     const thumb = this.fingerToggle.value === 'thumb';
     this.finger.hidden = hidden || thumb || !this.showHand.checked;
@@ -325,12 +387,24 @@ export class ArrangementPlaytest {
       item.className = `arranger-fingertip-cell${cell && cell.index !== undefined && cell.index === attempted ? ' is-chosen' : ''}${i === 4 ? ' is-center' : ''}${cell?.rejected ? ' is-error' : ''}`;
       item.style.setProperty('--probability', String(cell?.probability ?? 0));
       const label = document.createElement('span');
-      label.textContent = cell ? cell.weight > 0 ? String(Number(cell.weight.toFixed(2))) : i === 4 ? '指尖' : ''
+      label.textContent = i === 4 ? this.contactLabel() : cell ? cell.weight > 0 ? String(Number(cell.weight.toFixed(2))) : ''
         : `${dy < 0 ? '上' : dy > 0 ? '下' : ''}${dx < 0 ? '左' : dx > 0 ? '右' : ''}`;
       if (cell) item.title = `权重 ${Number(cell.weight.toFixed(2))}：${cell.reason}`;
       if (label.textContent) item.append(label);
       return item;
     }));
+  }
+
+  private contactLabel(): string {
+    const pressed = this.replay
+      ? this.replay.mode !== 'off' && !this.replay.observation?.observed
+      : this.pointer !== undefined;
+    return pressed ? '按住' : '松开';
+  }
+
+  private updateContactLabel(): void {
+    const label = this.choiceOverlay.querySelector('.is-center span');
+    if (label) label.textContent = this.contactLabel();
   }
 
   private async updatePointerWeights(): Promise<void> {
@@ -360,7 +434,7 @@ export class ArrangementPlaytest {
         dx: this.level.solutionPath[current].x - this.level.solutionPath[previous].x,
         dy: this.level.solutionPath[current].y - this.level.solutionPath[previous].y,
       } : undefined;
-      const choice = choosePerceivedMove({ cells, center: { x: 0, y: 0 }, shape: this.level.boardShape,
+      const choice = choosePerceivedMove({ weights: this.weights, cells, center: { x: 0, y: 0 }, shape: this.level.boardShape,
         distanceCells: geometry.centers.map((point) => ({ x: (point.x - cursor.x) / pitch, y: (point.y - cursor.y) / pitch })),
         current: current ?? 0, nextNumber: current === undefined ? 1 : this.connection.displayNumber(current) + 1,
         known, hiddenIndices: hidden, visited, rejected: this.rejectedPositions, occlusion, previousDirection, random: () => 0,
@@ -476,7 +550,7 @@ export class ArrangementPlaytest {
       }),
       radius: .38 * Math.hypot(matrix.a, matrix.b), board: this.board.getBoundingClientRect(),
       viewportWidth: window.innerWidth, viewportHeight: window.innerHeight,
-      handSize: this.fingerSize.valueAsNumber, leftHand: this.handSide.value === 'left',
+      handSize: this.fingerSize.valueAsNumber, leftHand: this.handSide.value === 'left', clipBoard: this.boardClipBounds(),
     };
   }
 }

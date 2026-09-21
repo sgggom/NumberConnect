@@ -207,3 +207,10 @@
 .arranger-fingertip-cell.is-chosen { outline: 3px solid #ff40bc; outline-offset: -3px; }
 .arranger-fingertip-cell.is-error, .arranger-choice-cell.is-error { background: rgba(239, 55, 65, .38); border-color: #ff555f; opacity: 1; }
 .arranger-fingertip-cell.is-error span { background: #761d29e6; color: #fff; }
+
+.arranger-playtest-finger-layer { position: fixed; inset: 0; pointer-events: none; z-index: 10000; }
+.arranger-weight-settings { flex-shrink: 0; font-size: .7rem; border-top: 1px solid var(--line); padding-top: 8px; }
+.arranger-weight-settings summary { cursor: pointer; font-weight: 800; }
+.arranger-weight-settings label { display: grid; gap: 5px; margin-top: 10px; }
+.arranger-weight-settings input { min-width: 0; width: 100%; padding: 6px; border: 1px solid #3b5067; border-radius: 5px; background: #172538; color: var(--ink); }
+.arranger-weight-settings button { width: 100%; margin-top: 10px; padding: 7px 4px; border-radius: 6px; color: var(--green); background: rgba(88,208,170,.13); }

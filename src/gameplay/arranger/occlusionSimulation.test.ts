@@ -27,6 +27,21 @@ describe('actual alpha occlusion', () => {
   });
 });
 describe('independent perceived-player simulator', () => {
+  it('uses all configured weights in order and keeps zero-weight cells excluded', () => {
+    const cells = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: 2, y: 0 }];
+    const occlusion = clearOcclusion(4); occlusion[1] = { coverage: 1, numberBlocked: true };
+    const input = { cells, shape: level.boardShape, current: 0, nextNumber: 2,
+      known: new Map([[1, 2], [3, 4]]), hiddenIndices: new Set([1]), visited: new Set([0]), rejected: new Set<number>(),
+      previousDirection: { dx: 1, dy: 0 }, nextDisplayed: 3, occlusion, random: () => 0 };
+    const configured = choosePerceivedMove({ ...input,
+      weights: { nextNumber: 2, hiddenNumber: 3, occludedMultiplier: .25, sameDirection: .4, closerTarget: .6 } });
+    expect(configured.neighborhood.find((cell) => cell.index === 1)?.weight).toBeCloseTo(2.25);
+    expect(configured.selected).toBe(1);
+    const zero = choosePerceivedMove({ ...input,
+      weights: { nextNumber: 0, hiddenNumber: 0, occludedMultiplier: 0, sameDirection: 0, closerTarget: 0 } });
+    expect(zero.selected).toBeUndefined();
+    expect(zero.neighborhood.every((cell) => cell.weight === 0)).toBe(true);
+  });
   it('adds the approach bonus only to hidden cells strictly closer to a readable target', () => {
     const cells = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: -1, y: 0 }, { x: 1, y: -1 }, { x: 2, y: 1 }];
     const choice = choosePerceivedMove({ cells, shape: level.boardShape, current: 0, nextNumber: 2,

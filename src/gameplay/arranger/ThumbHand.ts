@@ -10,6 +10,9 @@ export class ThumbHand {
   private disposed = false;
   private size = 1;
   private leftHand = false;
+  private clipBounds?: DOMRect;
+
+  setClipBounds(bounds: DOMRect): void { this.clipBounds = bounds; }
 
   setLeftHand(left: boolean): void { this.leftHand = left; this.schedule(); }
 
@@ -75,6 +78,11 @@ export class ThumbHand {
     const context = this.canvas.getContext('2d')!;
     context.setTransform(dpr, 0, 0, dpr, 0, 0);
     context.clearRect(0, 0, width, height);
+    context.save();
+    if (this.leftHand) {
+      const clip = this.clipBounds ?? this.bounds;
+      context.beginPath(); context.rect(clip.x, clip.y, clip.width, clip.height); context.clip();
+    }
     const columns = 28;
     const rows = 42;
     const vertices: Array<{ source: Point; destination: Point }> = [];
@@ -114,5 +122,6 @@ export class ThumbHand {
       triangle(a, a + 1, a + columns + 2);
       triangle(a, a + columns + 2, a + columns + 1);
     }
+    context.restore();
   }
 }
