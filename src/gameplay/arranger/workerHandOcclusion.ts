@@ -62,10 +62,16 @@ export class WorkerHandOcclusion {
       ctx.drawImage(texture, -imageWidth * .045, -imageHeight * .006 - 20 * size, imageWidth, imageHeight);
       ctx.restore();
     }
-    const pixels = ctx.getImageData(0, 0, this.canvas.width, this.canvas.height);
     const sx = this.canvas.width / width, sy = this.canvas.height / height;
+    // Read only the sampled board area, not a full viewport RGBA buffer for every pose.
+    const left = Math.max(0, Math.floor(Math.min(...geometry.centers.map((p) => p.x - geometry.radius)) * sx));
+    const top = Math.max(0, Math.floor(Math.min(...geometry.centers.map((p) => p.y - geometry.radius)) * sy));
+    const right = Math.min(this.canvas.width, Math.floor(Math.max(...geometry.centers.map((p) => p.x + geometry.radius)) * sx) + 1);
+    const bottom = Math.min(this.canvas.height, Math.floor(Math.max(...geometry.centers.map((p) => p.y + geometry.radius)) * sy) + 1);
+    if (right <= left || bottom <= top) return geometry.centers.map(() => ({ coverage: 0, numberBlocked: false }));
+    const pixels = ctx.getImageData(left, top, right - left, bottom - top);
     return geometry.centers.map((center) => sampleCellOcclusion(center, geometry.radius, (x, y) => {
-      const px = Math.floor(x * sx), py = Math.floor(y * sy);
+      const px = Math.floor(x * sx) - left, py = Math.floor(y * sy) - top;
       return px < 0 || py < 0 || px >= pixels.width || py >= pixels.height ? 0 : pixels.data[(py * pixels.width + px) * 4 + 3];
     }));
   }

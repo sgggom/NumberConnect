@@ -174,6 +174,7 @@ export async function* stepOccludedPlay(input: {
   signal?: AbortSignal;
   /** Workers are cancelled by termination and do not need UI timer yields. */
   yieldToUI?: boolean;
+  retainFrames?: boolean;
 }): AsyncGenerator<SimulationFrame, OcclusionRun, void> {
   const { level, observe, signal } = input;
   const check = () => { if (signal?.aborted) throw new DOMException('模拟已取消', 'AbortError'); };
@@ -182,6 +183,7 @@ export async function* stepOccludedPlay(input: {
   const visible = cells.flatMap((cell, index) => !hidden.has(cellKey(cell)) || index === 0 || index === cells.length - 1 ? [index] : []);
   const connection = new ConnectionProgress(cells.length, visible, [], new PathCompletionSolver(cells, level.boardShape));
   const frames: SimulationFrame[] = [];
+  let frameCount = 0;
   const remembered = new Map<number, { value: number; lastSeen: number }>();
   const visited = new Set<number>([0]);
   let rejected = new Set<number>();
@@ -273,20 +275,21 @@ export async function* stepOccludedPlay(input: {
       previousDirection = { dx: cells[choice.selected].x - cells[current].x, dy: cells[choice.selected].y - cells[current].y };
       visited.add(choice.selected); rejected = new Set();
     }
-    frames.push({ step: frames.length + 1, current, correctNext, attempted: choice.selected, outcome,
+    const frame: SimulationFrame = { step: ++frameCount, current, correctNext, attempted: choice.selected, outcome,
       reason: `九宫格内 ${choice.candidates.length} 个有效候选中优先选择最高权重（仅并列最高时随机），本次位置概率 ${((choice.neighborhood.find((cell) => cell.index === choice.selected)?.probability ?? 0) * 100).toFixed(1)}%`,
       candidates: choice.candidates, neighborhood: choice.neighborhood, knownNumbers: [...known], labels: renderedLabels, edges: beforeEdges,
       occlusion, observation, observationReasoning: { performed, noCandidates }, errors: previousErrors, progress: beforeProgress,
-      after: { labels: labels(), edges: connection.connectedNodePairs(), errors, progress: connection.progress, complete: connection.complete } });
-    yield frames[frames.length - 1];
+      after: { labels: labels(), edges: connection.connectedNodePairs(), errors, progress: connection.progress, complete: connection.complete } };
+    if (input.retainFrames !== false) frames.push(frame);
+    yield frame;
     // Yield even when geometry and authored next steps were cached.
     if (input.yieldToUI !== false && attempt % 8 === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }
   const complete = cells.length <= 1 || connection.complete;
   if (!complete && !stoppedReason) stoppedReason = '达到步数上限';
-  return { complete, stoppedReason, attempts: frames.length, errors, directChoices, coveredNextSteps,
-    meanCoverage: frames.length ? coverageSum / frames.length : 0,
-    ambiguity: frames.length ? ambiguity / frames.length : 0, frames, finalLabels: labels(), finalEdges: connection.connectedNodePairs() };
+  return { complete, stoppedReason, attempts: frameCount, errors, directChoices, coveredNextSteps,
+    meanCoverage: frameCount ? coverageSum / frameCount : 0,
+    ambiguity: frameCount ? ambiguity / frameCount : 0, frames, finalLabels: labels(), finalEdges: connection.connectedNodePairs() };
 }
 
 export async function simulateOccludedPlay(input: Parameters<typeof stepOccludedPlay>[0]): Promise<OcclusionRun> {
