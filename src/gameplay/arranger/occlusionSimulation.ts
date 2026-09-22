@@ -172,6 +172,8 @@ export async function* stepOccludedPlay(input: {
   observe: (current: number) => Promise<CellOcclusion[]>;
   findCompletion: (request: PathCompletionRequest) => Promise<number[] | null>;
   signal?: AbortSignal;
+  /** Workers are cancelled by termination and do not need UI timer yields. */
+  yieldToUI?: boolean;
 }): AsyncGenerator<SimulationFrame, OcclusionRun, void> {
   const { level, observe, signal } = input;
   const check = () => { if (signal?.aborted) throw new DOMException('模拟已取消', 'AbortError'); };
@@ -278,7 +280,7 @@ export async function* stepOccludedPlay(input: {
       after: { labels: labels(), edges: connection.connectedNodePairs(), errors, progress: connection.progress, complete: connection.complete } });
     yield frames[frames.length - 1];
     // Yield even when geometry and authored next steps were cached.
-    if (attempt % 8 === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    if (input.yieldToUI !== false && attempt % 8 === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }
   const complete = cells.length <= 1 || connection.complete;
   if (!complete && !stoppedReason) stoppedReason = '达到步数上限';

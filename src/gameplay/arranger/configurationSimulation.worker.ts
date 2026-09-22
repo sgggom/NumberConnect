@@ -13,9 +13,15 @@ scope.addEventListener('message', (event) => {
     const { jobId, level, geometry, mode, player, weights, seed, repetitions, assetBaseUrl } = event.data;
     try {
       const solver = new PathCompletionSolver(level.solutionPath, level.boardShape);
-      const result = await simulateRepeatedConfiguration({ level, memorySteps: 0, player, weights, seed,
+      let lastProgressAt = 0;
+      const result = await simulateRepeatedConfiguration({ level, memorySteps: 0, player, weights, seed, yieldToUI: false,
         observe: sampler.forGeometry(mode, geometry, assetBaseUrl), findCompletion: async (request) => solver.findCompletion(request) }, repetitions,
-        (progress) => scope.postMessage({ jobId, progress }));
+        (progress) => {
+          const now = performance.now();
+          if (progress === (repetitions ?? 1) || now - lastProgressAt >= 100) {
+            lastProgressAt = now; scope.postMessage({ jobId, progress });
+          }
+        });
       scope.postMessage({ jobId, result });
     } catch (error) { scope.postMessage({ jobId, error: error instanceof Error ? error.message : String(error) }); }
   })();

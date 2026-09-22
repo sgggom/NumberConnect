@@ -1,9 +1,12 @@
-import { batchPlaytestConcurrency } from '../editor/batchWorkerConcurrency';
 import type { ConfigurationSimulationInput, ConfigurationSimulationOutput, ConfigurationSimulationResponse } from './configurationSimulationProtocol';
 
 interface Job { id: number; input: ConfigurationSimulationInput; resolve: (result: ConfigurationSimulationOutput) => void; reject: (error: Error) => void; onProgress?: (completed: number) => void }
 interface Slot { worker: Worker; job?: Job }
-export const configurationSimulationConcurrency = () => Math.min(8, batchPlaytestConcurrency());
+export const configurationSimulationConcurrency = (requested = 0) => {
+  if (Number.isInteger(requested) && requested >= 1 && requested <= 128) return requested;
+  const cores = globalThis.navigator?.hardwareConcurrency ?? 4;
+  return Number.isFinite(cores) ? Math.max(1, Math.floor(cores) - 1) : 3;
+};
 
 export class ConfigurationSimulationPool {
   private slots: Slot[] = [];

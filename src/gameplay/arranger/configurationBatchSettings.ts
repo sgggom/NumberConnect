@@ -2,7 +2,7 @@ import { DEFAULT_PLAYER_CONFIG, DEFAULT_WEIGHT_CONFIG, type PlayerConfig, type W
 import { readPlaytestPreference } from './playtestPreferences';
 import type { LevelData } from '../../game/types';
 import type { OcclusionGeometry } from './handOcclusion';
-export type ConfigurationBatchSettings = ReturnType<typeof readConfigurationBatchSettings>;
+export type ConfigurationBatchSettings = ReturnType<typeof readConfigurationBatchSettings> & { workerCount?: number };
 
 export function readConfigurationBatchSettings() {
   const number = (key: string, fallback: number, min: number, max = Infinity) => {
