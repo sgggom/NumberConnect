@@ -15,7 +15,7 @@ class FakeWorker {
 }
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); FakeWorker.instances = []; });
 const input = {} as ConfigurationSimulationInput;
-const result = { metrics: { total: 2, hidden: 0, singleCertain: 0, singleMisleading: 0, twoGapOne: 0, twoGapTwo: 0, multiple: 0, bottlenecks: 0, errors: 0 }, status: '已通关' };
+const result = { metrics: { total: 2, hidden: 0, longConnections: 0, mediumConnections: 0, singleCertain: 0, singleMisleading: 0, twoGapOne: 0, twoGapTwo: 0, multiple: 0, bottlenecks: 0, errors: 0 }, status: '已通关' };
 describe('arranger simulation workers', () => {
   it('runs bounded concurrent jobs, reuses idle workers and ignores stale responses', async () => {
     vi.stubGlobal('Worker', FakeWorker);

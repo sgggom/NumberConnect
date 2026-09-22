@@ -1213,7 +1213,7 @@ export class LevelArrangementController {
       { label: 'id', value: resultLevel.id },
       { label: '状态', value: simulation?.status ?? '尚未计算' },
       ...(simulation ? [{ label: '来源（最近结果）', value: simulation.source }] : []),
-      ...(simulation?.metrics ? METRIC_COLUMNS.map(([key, label]) => ({ label, value: String(Number(simulation.metrics![key].toFixed(2))) })) : []),
+      ...(simulation?.metrics ? METRIC_COLUMNS.map(([key, label]) => ({ label, value: simulation.metrics![key] === undefined ? '未统计' : String(Number(simulation.metrics![key].toFixed(2))) })) : []),
     ] });
     title.textContent = heading;
     body.replaceChildren(...groups.filter(({ items }) => items.length > 0).map((group) => {
