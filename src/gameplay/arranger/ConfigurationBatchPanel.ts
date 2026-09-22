@@ -81,11 +81,11 @@ export class ConfigurationBatchPanel {
     if (this.abort) return;
     const abort = new AbortController(); this.abort = abort;
     this.onResult = onResult;
-    const settings = structuredClone(settingsOverride ?? readConfigurationBatchSettings());
+    const settings: ConfigurationBatchSettings = structuredClone(settingsOverride ?? readConfigurationBatchSettings());
     this.settingsInfo.textContent = describeBatchSettings(settings);
     const viewport = { width: window.innerWidth, height: window.innerHeight, pixelRatio: window.devicePixelRatio || 1 };
     const threaded = typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined' && typeof createImageBitmap !== 'undefined';
-    const concurrency = threaded ? Math.min(configurationSimulationConcurrency(), tasks.length) : 1;
+    const concurrency = threaded ? Math.min(configurationSimulationConcurrency(settings.workerCount), tasks.length) : 1;
     const pool = threaded ? new ConfigurationSimulationPool(concurrency) : undefined;
     const stopWorkers = () => pool?.dispose();
     abort.signal.addEventListener('abort', stopWorkers, { once: true });

@@ -49,8 +49,12 @@ describe('arranger simulation workers', () => {
     expect((await settled).every((entry) => entry.status === 'rejected' && entry.reason.message === 'load failed')).toBe(true);
     expect(pool.stopped).toBe(true);
   });
-  it('reserves a CPU core and caps canvas workers at eight', () => {
-    vi.stubGlobal('navigator', { hardwareConcurrency: 32 }); expect(configurationSimulationConcurrency()).toBe(8);
+  it('uses high-core-count devices without an eight-thread cap and accepts explicit concurrency', () => {
+    vi.stubGlobal('navigator', { hardwareConcurrency: 32 }); expect(configurationSimulationConcurrency()).toBe(31);
+    vi.stubGlobal('navigator', { hardwareConcurrency: 64 }); expect(configurationSimulationConcurrency()).toBe(63);
+    expect(configurationSimulationConcurrency(64)).toBe(64);
+    expect(configurationSimulationConcurrency(1)).toBe(1);
+    expect(configurationSimulationConcurrency(-1)).toBe(63);
     vi.stubGlobal('navigator', { hardwareConcurrency: 4 }); expect(configurationSimulationConcurrency()).toBe(3);
     vi.stubGlobal('navigator', { hardwareConcurrency: 1 }); expect(configurationSimulationConcurrency()).toBe(1);
   });

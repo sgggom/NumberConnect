@@ -60,5 +60,6 @@ export function describeBatchSettings(settings: ConfigurationBatchSettings): str
   const { player: p, weights: w } = settings;
   return `${settings.leftHand ? '左' : '右'}手 · ${settings.mode === 'thumb' ? '拇指' : '食指'} · 大小 ${settings.handSize}\n`
     + `推理：${{ low: '低（不预判）', medium: '中（2步）', high: '高（5步）' }[p.reasoning]}；平时观察 ${Math.round(p.normal * 100)}%；错误后观察 ${Math.round(p.afterError * 100)}%；观察推理 ${Math.round((p.reasoningObservation ?? 0) * 100)}%\n`
-    + `权重：下一数字 ${w.nextNumber}；隐藏数字 ${w.hiddenNumber}；遮挡≥50%倍率 ${w.occludedMultiplier}；同方向 ${w.sameDirection}；靠近目标 ${w.closerTarget}`;
+    + `权重：下一数字 ${w.nextNumber}；隐藏数字 ${w.hiddenNumber}；遮挡≥50%倍率 ${w.occludedMultiplier}；同方向 ${w.sameDirection}；靠近目标 ${w.closerTarget}\n`
+    + `线程数：${settings.workerCount === undefined ? '未记录（旧版配置）' : settings.workerCount || '自动（逻辑核心数减1）'}`;
 }

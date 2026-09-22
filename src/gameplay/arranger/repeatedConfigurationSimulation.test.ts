@@ -14,6 +14,11 @@ function input() {
     observe: async () => occlusion, findCompletion: async (request: Parameters<typeof solver.findCompletion>[0]) => solver.findCompletion(request) };
 }
 describe('repeated batch results', () => {
+  it('keeps identical results when worker simulations omit UI timer yields', async () => {
+    const normal = await simulateRepeatedConfiguration(input(), 3);
+    const worker = await simulateRepeatedConfiguration({ ...input(), yieldToUI: false }, 3);
+    expect(worker).toEqual(normal);
+  });
   it('averages independently reset runs and preserves static counts and progress', async () => {
     const progress: number[] = [];
     const result = await simulateRepeatedConfiguration(input(), 6, (count) => progress.push(count));

@@ -1,5 +1,6 @@
 import { readConfigurationBatchSettings, type ConfigurationBatchSettings } from './configurationBatchSettings';
 import type { WeightConfig } from './occlusionSimulation';
+import { configurationSimulationConcurrency } from './configurationSimulationPool';
 
 const WEIGHTS: Array<[keyof WeightConfig, string]> = [
   ['nextNumber', '下一数字加分'], ['hiddenNumber', '隐藏数字加分'], ['occludedMultiplier', '遮挡≥50%倍率'],
@@ -24,6 +25,9 @@ export class BatchSimulationSettingsFields {
       <fieldset><legend>7. 权重参数</legend><div class="arranger-batch-settings-grid">
       ${WEIGHTS.map(([key, label]) => `<label>${label}<input data-setting="weight-${key}" aria-label="${label}" type="number" min="0" ${key === 'occludedMultiplier' ? 'max="1"' : ''} step="any" required></label>`).join('')}
       </div><small>遮挡不足50%时仍保留75%的基础权重。</small></fieldset>
+      <fieldset><legend>8. 计算性能</legend>
+      <label>线程数（0=自动）<input data-setting="workerCount" aria-label="线程数" type="number" min="0" max="128" step="1" value="0" required></label>
+      <small>自动使用当前设备报告的逻辑核心数减1，当前为 ${configurationSimulationConcurrency()} 线程。可手动设置1～128；实际不超过关卡任务数。</small></fieldset>
       <button type="button" data-reload-settings>使用当前模拟配置</button>
       <small>打开时自动带入当前模拟配置；此处修改仅用于本次批量跑关。</small>`;
     this.reload();
@@ -37,6 +41,7 @@ export class BatchSimulationSettingsFields {
   private reload(): void {
     const settings = readConfigurationBatchSettings();
     this.control('mode').value = settings.mode;
+    this.control('workerCount').value = '0';
     this.control('side').value = settings.leftHand ? 'left' : 'right';
     this.control('handSize').value = String(settings.handSize);
     this.control('reasoning').value = settings.player.reasoning;
@@ -51,6 +56,7 @@ export class BatchSimulationSettingsFields {
     return {
       mode: this.control('mode').value as ConfigurationBatchSettings['mode'],
       leftHand: this.control('side').value === 'left', handSize: number('handSize'),
+      workerCount: number('workerCount'),
       player: { reasoning: this.control('reasoning').value as ConfigurationBatchSettings['player']['reasoning'],
         normal: number('normal') / 100, afterError: number('afterError') / 100, reasoningObservation: number('reasoningObservation') / 100 },
       weights: Object.fromEntries(WEIGHTS.map(([key]) => [key, number(`weight-${key}`)])) as unknown as WeightConfig,
