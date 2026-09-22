@@ -94,6 +94,7 @@ export class LevelArrangementController {
   private activePathIndex?: number;
   private activeDifficultyIndex?: number;
   private previewLevelId?: string;
+  private lockedPreviewLevelId?: string;
   private libraryParameterTarget?: LibraryParameterTarget;
   private page = 0;
   private cacheRestoreAttempted = false;
@@ -173,6 +174,7 @@ export class LevelArrangementController {
     });
     this.groupList.addEventListener('click', (event) => this.handleGroupClick(event));
     this.groupList.addEventListener('pointerover', (event) => this.handleGroupHover(event));
+    window.addEventListener('keydown', (event) => this.handleDifficultyKey(event));
     window.addEventListener('pagehide', () => this.saveDraft());
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') this.saveDraft();
@@ -307,6 +309,7 @@ export class LevelArrangementController {
     this.activeBoardIndex = this.families.length > 0 ? 0 : undefined;
     this.activePathIndex = undefined;
     this.activeDifficultyIndex = undefined;
+    this.lockedPreviewLevelId = undefined;
     this.previewLevelId = this.families[0]?.representative.id;
     this.libraryParameterTarget = this.families.length > 0 ? { boardIndex: 0 } : undefined;
     this.page = 0;
@@ -513,7 +516,10 @@ export class LevelArrangementController {
     try {
       const allTasks = Object.entries(this.arrangementConfigurations).flatMap(([configuration, value]) =>
         createConfigurationBatchTasks(value.groups, this.library).map((task) => ({ ...task, configuration })));
-      const selection = await chooseConfigurationBatchScope(this.host, allTasks, this.arrangementMode);
+      const selection = await chooseConfigurationBatchScope(this.host, allTasks, this.arrangementMode, async (entry) => {
+        this.batchPanel ??= new ConfigurationBatchPanel(this.host);
+        await this.batchPanel.showHistory(entry);
+      });
       if (!selection?.tasks.length) return;
       const { tasks, repetitions, settings } = selection;
       const modeLabel = [...new Set(tasks.map((task) => BATCH_CONFIGURATION_LABELS[task.configuration as ArrangementMode]))].join('＋');
@@ -537,7 +543,7 @@ export class LevelArrangementController {
           source: `${BATCH_CONFIGURATION_LABELS[result.configuration as ArrangementMode]} · 第${result.groupId}关 · 棋盘${result.stage} · 难度${result.difficulty ?? 0} · ${result.repetitions ?? 0}次平均`,
         });
         this.renderLibraryParameters();
-      }, repetitions, settings);
+      }, repetitions, settings, { libraryId, scope: selection.scope });
     } catch (error) {
       this.query('#arranger-file-status').textContent = `批量计算失败：${error instanceof Error ? error.message : String(error)}`;
     } finally {
@@ -620,7 +626,9 @@ export class LevelArrangementController {
     }
     const level = target.closest<HTMLElement>('[data-preview-level]');
     if (level?.dataset.previewLevel) {
+      this.togglePreviewLock(level.dataset.previewLevel);
       this.navigateToLibraryLevel(level.dataset.previewLevel);
+      this.renderPreview();
     }
     const group = target.closest<HTMLElement>('[data-group-id]');
     if (group) {
@@ -644,8 +652,42 @@ export class LevelArrangementController {
     this.previewLevelId = levelId;
   }
 
+  private togglePreviewLock(levelId: string): void {
+    this.lockedPreviewLevelId = this.lockedPreviewLevelId === levelId ? undefined : levelId;
+  }
+
+  private handleDifficultyKey(event: KeyboardEvent): void {
+    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+    if (event.defaultPrevented || event.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey
+      || !this.host.getClientRects().length || document.querySelector('dialog[open]')) return;
+    const target = event.target;
+    if (target instanceof Element && (target.closest('input, textarea, select, [role="textbox"]')
+      || (target instanceof HTMLElement && target.isContentEditable))) return;
+    const current = this.lockedPreviewLevelId ?? this.previewLevelId;
+    const location = current && findArrangementLevelLocation(this.families, current);
+    if (!location) return;
+    event.preventDefault();
+    const path = this.families[location.boardIndex].paths[location.pathIndex];
+    const difficulty = path.difficulties[location.difficultyIndex + (event.key === 'ArrowUp' ? -1 : 1)];
+    if (!difficulty) return;
+    this.lockedPreviewLevelId = difficulty.representative.id;
+    this.navigateToLibraryLevel(difficulty.representative.id);
+    this.renderLibrary();
+    this.renderPreview();
+  }
+
+  private renderPreviewLock(): void {
+    for (const row of this.queryAll<HTMLElement>('[data-preview-level], [data-library-level]')) {
+      const locked = (row.dataset.previewLevel ?? row.dataset.libraryLevel) === this.lockedPreviewLevelId;
+      row.classList.toggle('is-preview-locked', locked);
+      row.title = locked ? '已锁定预览，再次点击取消锁定' : '点击锁定此关卡预览';
+      if (row instanceof HTMLButtonElement) row.setAttribute('aria-pressed', String(locked));
+    }
+    this.query('#arranger-preview-lock-status').textContent = this.lockedPreviewLevelId ? '已锁定 · ↑↓切换难度 · 再点取消' : '悬停预览 · 点击锁定 · ↑↓切换难度';
+  }
+
   private handleGroupHover(event: Event): void {
-    if (this.playtestMode) return;
+    if (this.playtestMode || this.lockedPreviewLevelId) return;
     const level = (event.target as HTMLElement).closest<HTMLElement>('[data-preview-level]');
     const levelId = level?.dataset.previewLevel;
     if (!levelId || levelId === this.previewLevelId) return;
@@ -656,7 +698,7 @@ export class LevelArrangementController {
   }
 
   private handleLibraryHover(event: Event): void {
-    if (this.playtestMode) return;
+    if (this.playtestMode || this.lockedPreviewLevelId) return;
     const row = (event.target as HTMLElement).closest<HTMLElement>('[data-board-index]');
     if (!row) return;
     const target = this.libraryTargetFromRow(row);
@@ -673,13 +715,16 @@ export class LevelArrangementController {
     const row = (event.target as HTMLElement).closest<HTMLElement>('[data-board-index]');
     if (!row) return;
     const target = this.libraryTargetFromRow(row);
-    this.libraryParameterTarget = target;
+    const clickedCheckbox = (event.target as HTMLElement).closest<HTMLInputElement>('input[type="checkbox"]');
+    if (!clickedCheckbox) this.libraryParameterTarget = target;
     const { board, path, difficulty, variant } = this.resolveLibraryTarget(target);
     const levels = variant ? [variant] : difficulty?.variants ?? (path ? this.pathLevels(path) : board ? this.boardLevels(board) : []);
     const representative = variant ?? difficulty?.representative ?? path?.representative ?? board?.representative;
     if (!representative || levels.length === 0) return;
-    this.previewLevelId = representative.id;
-    const clickedCheckbox = (event.target as HTMLElement).closest<HTMLInputElement>('input[type="checkbox"]');
+    if (!clickedCheckbox) {
+      this.togglePreviewLock(representative.id);
+      this.previewLevelId = representative.id;
+    }
     if (clickedCheckbox && !clickedCheckbox.disabled) {
       const available = levels.filter((level) => !this.selectedPoolLevelIdSet.has(level.id));
       const shouldSelect = !available.every((level) => this.selectedLibraryLevelIds.has(level.id));
@@ -797,6 +842,7 @@ export class LevelArrangementController {
       card.append(header, levels);
       return card;
     }, () => this.renderGroups()));
+    this.renderPreviewLock();
     const hasEmptyGroup = this.groups.some((group) => group.levelIds.length === 0);
     const hasAnyConfiguredLevel = Object.values(this.arrangementConfigurations)
       .some((configuration) => configuration.groups.some((group) => group.levelIds.length > 0));
@@ -819,7 +865,7 @@ export class LevelArrangementController {
         this.activeBoardIndex = visibleBoardIndices[0];
         this.activePathIndex = undefined;
         this.activeDifficultyIndex = undefined;
-        this.libraryParameterTarget = { boardIndex: this.activeBoardIndex };
+        if (!this.lockedPreviewLevelId) this.libraryParameterTarget = { boardIndex: this.activeBoardIndex };
       }
       const columns: HTMLElement[] = [];
       columns.push(this.createLibraryColumn('棋盘', visible.map((board, visibleIndex) => {
@@ -870,6 +916,7 @@ export class LevelArrangementController {
       }
       this.libraryList.replaceChildren(...columns);
     }
+    this.renderPreviewLock();
     this.query('#arranger-library-count').textContent = `${filtered.length} 个棋盘`;
     this.query<HTMLButtonElement>('#arranger-add-selected').disabled = this.selectedLibraryLevelIds.size === 0;
     this.query<HTMLButtonElement>('#arranger-page-previous').disabled = this.page <= 0;
@@ -906,6 +953,7 @@ export class LevelArrangementController {
   }): HTMLElement {
     const row = document.createElement('div');
     row.className = `${options.className}${options.selectable && options.state.disabled ? ' is-used' : ''}${options.entry.id === this.previewLevelId ? ' is-previewing' : ''}${options.active ? ' is-active' : ''}`;
+    row.dataset.libraryLevel = options.entry.id;
     row.dataset.boardIndex = String(options.boardIndex);
     if (options.pathIndex !== undefined) row.dataset.pathIndex = String(options.pathIndex);
     if (options.difficultyIndex !== undefined) row.dataset.difficultyIndex = String(options.difficultyIndex);
@@ -1112,6 +1160,7 @@ export class LevelArrangementController {
   }
 
   private renderPreview(): void {
+    this.renderPreviewLock();
     // Hovering across rows should not queue a database read for every pointer event.
     clearTimeout(this.previewTimer);
     ++this.previewRequest;
