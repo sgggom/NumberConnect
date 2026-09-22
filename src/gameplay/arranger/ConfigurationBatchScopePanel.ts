@@ -5,7 +5,9 @@ import { deleteBatchHistory, describeBatchSettings, listBatchHistory, type Batch
 
 export const BATCH_CONFIGURATION_LABELS = { main: '主玩法', daily: '挑战', bead: '活动' } as const;
 
-export function chooseConfigurationBatchScope(host: HTMLElement, tasks: ConfigurationBatchTask[], current: string, onHistory: (entry: BatchHistoryEntry) => Promise<void>, onApplyHistory: (entry: BatchHistoryEntry) => Promise<void>): Promise<{ tasks: ConfigurationBatchTask[]; repetitions: number; settings: ConfigurationBatchSettings; scope: string } | undefined> {
+type BatchSelection = { tasks: ConfigurationBatchTask[]; repetitions: number; settings: ConfigurationBatchSettings; scope: string } | { resume: BatchHistoryEntry };
+
+export function chooseConfigurationBatchScope(host: HTMLElement, tasks: ConfigurationBatchTask[], current: string, onHistory: (entry: BatchHistoryEntry) => Promise<void>, onApplyHistory: (entry: BatchHistoryEntry) => Promise<void>): Promise<BatchSelection | undefined> {
   const dialog = document.createElement('dialog'); dialog.className = 'arranger-batch-dialog arranger-batch-scope';
   dialog.setAttribute('aria-label', '计算范围选择');
   const difficulties = [...new Set([0, 1, 2, 3, ...tasks.map((task) => task.difficulty ?? 0)])].sort((a, b) => a - b);
@@ -35,7 +37,8 @@ export function chooseConfigurationBatchScope(host: HTMLElement, tasks: Configur
   const history = document.createElement('section'); history.className = 'arranger-batch-history-column';
   const fields = [...dialog.children].filter((child) => child.tagName === 'FIELDSET' || child === simulationSettings.element);
   config.append(...fields); columns.append(config, history); dialog.insertBefore(columns, query('[data-summary]'));
-  history.innerHTML = '<h4>历史记录</h4><small>自动保存在当前浏览器。可将历史结果应用到当前列表，也可查看结果、导出 CSV；刷新中断的任务保留已完成结果。</small><p data-history-status role="status"></p><div data-history-list></div>';
+  history.innerHTML = '<h4>历史记录</h4><small>自动保存在当前浏览器。可将历史结果应用到当前列表，也可查看结果、导出 CSV；中断后点击“继续计算”补跑未保存的版本；单关未完成的模拟次数重新计算，沿用原参数和尺寸。删除历史会同时清理其 Excel 源数据。</small><p data-history-status role="status"></p><div data-history-list></div>';
+  let finishSelection: (result?: BatchSelection) => void;
   const historyStatus = query('[data-history-status]');
   const historyList = query('[data-history-list]');
   const renderHistory = async () => {
@@ -70,7 +73,13 @@ export function chooseConfigurationBatchScope(host: HTMLElement, tasks: Configur
           try { await deleteBatchHistory(entry.id); await renderHistory(); }
           catch (error) { historyStatus.textContent = `删除失败：${String(error)}`; remove.disabled = false; }
         });
-        actions.append(apply, view, remove); card.append(title, info, actions); historyList.append(card);
+        const resume = document.createElement('button'); resume.type = 'button'; resume.textContent = '继续计算';
+        resume.disabled = !entry.resumable || entry.saved >= entry.total;
+        resume.addEventListener('click', () => finishSelection({ resume: entry }));
+        if (!entry.resumable && entry.saved < entry.total) {
+          const note = document.createElement('small'); note.textContent = '旧版记录未保存待跑清单，无法自动续跑。'; info.append(document.createElement('br'), note);
+        }
+        actions.append(resume, apply, view, remove); card.append(title, info, actions); historyList.append(card);
       }
     } catch (error) { historyStatus.textContent = `历史读取失败：${String(error)}`; }
   };
@@ -117,7 +126,7 @@ export function chooseConfigurationBatchScope(host: HTMLElement, tasks: Configur
   dialog.addEventListener('change', refresh);
   host.append(dialog); refresh(); dialog.showModal();
   return new Promise((resolve) => {
-    const finish = (result?: { tasks: ConfigurationBatchTask[]; repetitions: number; settings: ConfigurationBatchSettings; scope: string }) => { dialog.close(); dialog.remove(); resolve(result); };
+    const finish = finishSelection = (result?: BatchSelection) => { dialog.close(); dialog.remove(); resolve(result); };
     query('[data-start]').addEventListener('click', () => { refresh(); if (!query<HTMLButtonElement>('[data-start]').disabled) finish({ tasks: selection, repetitions: repetitions.valueAsNumber, settings: simulationSettings.value(), scope: `${modeInputs.filter((input) => input.checked).map((input) => BATCH_CONFIGURATION_LABELS[input.dataset.configuration as keyof typeof BATCH_CONFIGURATION_LABELS]).join('＋')} · ${allRange.checked ? '全部关卡' : `level${from.value}～level${to.value}`} · 难度 ${difficultyInputs.filter((input) => input.checked).map((input) => input.dataset.difficulty).join('、')}` }); });
     query('[data-cancel]').addEventListener('click', () => finish());
     dialog.addEventListener('cancel', (event) => { event.preventDefault(); finish(); });
