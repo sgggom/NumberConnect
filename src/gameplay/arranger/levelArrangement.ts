@@ -223,9 +223,19 @@ const TRANSPOSED_DIRECTION_HEADERS: Record<string, string> = {
 export const createArrangementLibraryRowParser = (
   headerRow: ReadonlyArray<unknown>,
   onLevel?: (level: ArrangementLibraryLevel) => void,
+  minimalColumns = false,
 ): ArrangementLibraryRowParser => {
-  const headers = headerRow.map((value) => String(value ?? '').trim());
-  REQUIRED_HEADERS.forEach((header) => {
+  const headers = headerRow.map((value) => {
+    const header = String(value ?? '').trim();
+    if (!minimalColumns) return header;
+    const key = header.replace(/\s+/g, '').toLowerCase();
+    if (['id', '关卡id', 'levelid', '关卡名'].includes(key)) return '关卡名';
+    if (['关卡数据', '关卡json', 'leveldata', 'data'].includes(key)) return '关卡JSON';
+    if (['难度', '难度id', 'difficulty', 'difficultyid'].includes(key)) return '目标难度';
+    return header;
+  });
+  (minimalColumns ? ['关卡名', '关卡JSON'] : REQUIRED_HEADERS).forEach((header) => {
+    if (minimalColumns && !headers.includes(header)) throw new Error(`Excel 缺少“${header === '关卡名' ? '关卡ID' : '关卡数据'}”列。`);
     if (!headers.includes(header)) throw new Error(`跑关结果缺少“${header}”列。`);
   });
   const indexOf = (header: string): number => headers.indexOf(header);
@@ -252,8 +262,10 @@ export const createArrangementLibraryRowParser = (
   let levelCount = 0;
 
   const addRow = (row: ReadonlyArray<unknown>, sourceRow: number): void => {
-    const rawJson = String(row[indexOf('关卡JSON')] ?? '').trim();
-    const rawPathJson = String(row[indexOf('路径JSON')] ?? '').trim();
+    let rawJson = String(row[indexOf('关卡JSON')] ?? '').trim();
+    // Calculation-only Excel accepts the normal {data: grid} JSON or a bare grid.
+    if (minimalColumns && rawJson.startsWith('[')) rawJson = `{"data":${rawJson}}`;
+    const rawPathJson = String(row[indexOf('路径JSON')] ?? '').trim() || (minimalColumns ? rawJson : '');
     if (!rawJson || !rawPathJson) {
       skippedRows += 1;
       return;
@@ -272,6 +284,10 @@ export const createArrangementLibraryRowParser = (
         while (seenLevelIds.has(levelId)) levelId = `${sourceName}${suffix}_${collision++}`;
       }
       const structuredId = parseStructuredLevelId(sourceName);
+      if (minimalColumns) {
+        const explicitDifficulty = numericCell(row[indexOf('目标难度')]);
+        if (explicitDifficulty !== undefined) structuredId.difficultyId = explicitDifficulty;
+      }
       const configId = String(row[indexOf('配置ID')] ?? '').trim();
       const rawLevelGrid = normalizedPathGrid(rawJson);
       let configPathCache = pathCacheByConfig.get(configId);

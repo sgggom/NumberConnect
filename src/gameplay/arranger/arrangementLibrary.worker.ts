@@ -7,6 +7,7 @@ interface ArrangementLibraryWorkerRequest {
   buffer: ArrayBuffer;
   file?: File;
   libraryId?: string;
+  activate?: boolean;
 }
 
 self.onmessage = async (event: MessageEvent<ArrangementLibraryWorkerRequest>): Promise<void> => {
@@ -19,10 +20,10 @@ self.onmessage = async (event: MessageEvent<ArrangementLibraryWorkerRequest>): P
     }, libraryId ? async (levels) => {
       await writeArrangementBatch(libraryId, levels, buildIndex);
       count += levels.length;
-    } : undefined);
+    } : undefined, event.data.activate === false);
     if (file && libraryId) {
       const manifest = { id: libraryId, name: file.name, count, parameterHeaders: result.parameterHeaders, skippedRows: result.skippedRows };
-      await commitArrangementLibrary(manifest);
+      await commitArrangementLibrary(manifest, event.data.activate ?? true);
       self.postMessage({ type: 'complete', manifest });
     } else self.postMessage({ type: 'complete', result });
   } catch (error) {
