@@ -29,7 +29,7 @@ export const mountLevelArrangementView = (host: HTMLElement): void => {
               </div>
             </div>
           </div>
-          <div class="arranger-group-actions"><button id="arranger-auto-layout" type="button" disabled>自动排布</button><button id="arranger-copy-groups" type="button" disabled>复制当前配置</button><button id="arranger-copy-level-data" type="button" disabled>导出三模式关卡数据</button><button id="arranger-add-group" type="button">＋ 新增</button></div>
+          <div class="arranger-group-actions"><button id="arranger-auto-layout" type="button" disabled>自动排布</button><button id="arranger-copy-groups" type="button" disabled>复制当前配置</button><button id="arranger-batch-calculate" type="button" disabled>计算配置</button><button id="arranger-copy-level-data" type="button" disabled>导出三模式关卡数据</button><button id="arranger-add-group" type="button">＋ 新增</button></div>
         </header>
         <div id="arranger-group-list" class="arranger-group-list"></div>
       </aside>

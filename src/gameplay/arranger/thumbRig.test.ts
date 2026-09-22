@@ -1,5 +1,29 @@
 import { describe, expect, it } from 'vitest';
-import { createThumbPose, createReachingThumbPose, THUMB_ROOT, THUMB_TIP } from './thumbRig';
+import { createThumbPose, createReachingThumbPose, createScreenThumbPose, THUMB_ROOT, THUMB_TIP } from './thumbRig';
+
+describe('left-hand animation in an off-center board', () => {
+  const bounds = { left: 1000, right: 1400, top: 100, height: 600 };
+  it('mirrors every posed point for nearby, distant and raised targets at all supported sizes', () => {
+    for (const size of [.5, .8, 1]) for (const target of [{ x: 1350, y: 400 }, { x: 1010, y: 550 }, { x: 1270, y: 120 }]) {
+      const right = createScreenThumbPose(target, bounds, 1440, size, false);
+      const left = createScreenThumbPose({ x: bounds.left + bounds.right - target.x, y: target.y }, bounds, 1440, size, true);
+      for (const point of [THUMB_ROOT, THUMB_TIP, { x: 390, y: 441.5 }, { x: 800, y: 1000 }]) {
+        expect(left(point).x).toBeCloseTo(bounds.left + bounds.right - right(point).x, 8);
+        expect(left(point).y).toBeCloseTo(right(point).y, 8);
+      }
+    }
+  });
+  it('preserves changing joint shape when the left fingertip moves', () => {
+    const joint = { x: 390, y: 441.5 };
+    const near = createScreenThumbPose({ x: 1050, y: 400 }, bounds, 1440, .8, true);
+    const far = createScreenThumbPose({ x: 1390, y: 550 }, bounds, 1440, .8, true);
+    const bend = (pose: ReturnType<typeof createScreenThumbPose>) => {
+      const root = pose(THUMB_ROOT), tip = pose(THUMB_TIP), mid = pose(joint);
+      return Math.abs((tip.x - root.x) * (mid.y - root.y) - (tip.y - root.y) * (mid.x - root.x)) / Math.hypot(tip.x - root.x, tip.y - root.y);
+    };
+    expect(bend(near)).toBeGreaterThan(bend(far) + 1);
+  });
+});
 
 describe('grip movement beyond natural reach', () => {
   const dx = THUMB_TIP.x - THUMB_ROOT.x;

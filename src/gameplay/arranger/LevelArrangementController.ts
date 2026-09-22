@@ -36,6 +36,10 @@ import './arranger.css';
 import { crossingDensity, straightRatio } from './arrangementScoring';
 import { hiddenIntroductionDifficulties } from './hiddenDifficulty';
 import { ArrangementPlaytest } from './ArrangementPlaytest';
+import { ConfigurationBatchPanel } from './ConfigurationBatchPanel';
+import { createConfigurationBatchTasks } from './configurationBatchTasks';
+import { chooseConfigurationBatchScope, BATCH_CONFIGURATION_LABELS } from './ConfigurationBatchScopePanel';
+import { METRIC_COLUMNS, summarizeConfigurationRun, type ConfigurationMetrics } from './configurationBatchMetrics';
 
 const PAGE_SIZE = 100;
 interface LibraryParameterGroup {
@@ -109,6 +113,9 @@ export class LevelArrangementController {
   private searchTimer?: ReturnType<typeof setTimeout>;
   private exporting = false;
   private generationToken = 0;
+  private batchPanel?: ConfigurationBatchPanel;
+  private batchCalculating = false;
+  private simulationResults = new Map<string, { metrics?: ConfigurationMetrics; status: string; source: string }>();
 
   public constructor(
     private readonly host: HTMLElement,
@@ -119,6 +126,7 @@ export class LevelArrangementController {
 
   public bind(): void {
     this.query('#arranger-back-button').addEventListener('click', () => {
+      this.batchPanel?.cancel();
       this.stopPlaytest();
       this.playtestMode = false;
       this.options.onBack();
@@ -139,6 +147,7 @@ export class LevelArrangementController {
     });
     this.query('#arranger-copy-groups').addEventListener('click', () => void this.copyGroups());
     this.query('#arranger-copy-level-data').addEventListener('click', () => void this.exportLevelData());
+    this.query('#arranger-batch-calculate').addEventListener('click', () => void this.calculateCurrentConfiguration());
     this.query<HTMLInputElement>('#arranger-search').addEventListener('input', () => {
       this.page = 0;
       clearTimeout(this.searchTimer);
@@ -496,6 +505,47 @@ export class LevelArrangementController {
     }
   }
 
+  private async calculateCurrentConfiguration(): Promise<void> {
+    if (this.batchCalculating || !this.libraryId) return;
+    const libraryId = this.libraryId;
+    this.batchCalculating = true;
+    this.query<HTMLButtonElement>('#arranger-batch-calculate').disabled = true;
+    try {
+      const allTasks = Object.entries(this.arrangementConfigurations).flatMap(([configuration, value]) =>
+        createConfigurationBatchTasks(value.groups, this.library).map((task) => ({ ...task, configuration })));
+      const selection = await chooseConfigurationBatchScope(this.host, allTasks, this.arrangementMode);
+      if (!selection?.tasks.length) return;
+      const { tasks, repetitions, settings } = selection;
+      const modeLabel = [...new Set(tasks.map((task) => BATCH_CONFIGURATION_LABELS[task.configuration as ArrangementMode]))].join('＋');
+      if (!this.query('#arranger-preview').querySelector('svg')) {
+        this.previewLevelId = tasks[0].id;
+        await this.loadPreview();
+      }
+      const board = this.playtest?.prepareBatchCalculation()
+        ?? this.query('#arranger-preview').querySelector('svg')?.getBoundingClientRect();
+      if (!board || board.width <= 0 || board.height <= 0) throw new Error('请先选择一个棋盘，使预览区域可见。');
+      this.batchPanel ??= new ConfigurationBatchPanel(this.host);
+      await this.batchPanel.run(modeLabel, tasks, board, async (id) => {
+        const index = this.libraryById.get(id);
+        if (!index) throw new Error(`关卡库中找不到 ${id}`);
+        const [detail] = await loadArrangementDetails(libraryId, [id]);
+        if (!detail) throw new Error(`缺少 ${id} 的关卡数据`);
+        return this.decodeLevel({ ...index, ...detail });
+      }, (result) => {
+        this.simulationResults.set(`${libraryId}:${result.id}`, {
+          metrics: result.metrics, status: result.status,
+          source: `${BATCH_CONFIGURATION_LABELS[result.configuration as ArrangementMode]} · 第${result.groupId}关 · 棋盘${result.stage} · 难度${result.difficulty ?? 0} · ${result.repetitions ?? 0}次平均`,
+        });
+        this.renderLibraryParameters();
+      }, repetitions, settings);
+    } catch (error) {
+      this.query('#arranger-file-status').textContent = `批量计算失败：${error instanceof Error ? error.message : String(error)}`;
+    } finally {
+      this.batchCalculating = false;
+      this.query<HTMLButtonElement>('#arranger-batch-calculate').disabled = !Object.values(this.arrangementConfigurations).some((config) => config.groups.some((group) => group.levelIds.length));
+    }
+  }
+
   private async exportLevelData(): Promise<void> {
     if (this.exporting) return;
     const configurations = Object.values(this.arrangementConfigurations)
@@ -600,6 +650,8 @@ export class LevelArrangementController {
     const levelId = level?.dataset.previewLevel;
     if (!levelId || levelId === this.previewLevelId) return;
     this.previewLevelId = levelId;
+    const location = findArrangementLevelLocation(this.families, levelId);
+    if (location) { this.libraryParameterTarget = location; this.renderLibraryParameters(); }
     this.renderPreview();
   }
 
@@ -751,6 +803,7 @@ export class LevelArrangementController {
     this.query<HTMLButtonElement>('#arranger-add-group').disabled = hasEmptyGroup;
     this.query<HTMLButtonElement>('#arranger-copy-groups').disabled = hasEmptyGroup;
     this.query<HTMLButtonElement>('#arranger-copy-level-data').disabled = this.exporting || !hasAnyConfiguredLevel;
+    this.query<HTMLButtonElement>('#arranger-batch-calculate').disabled = this.batchCalculating || !hasAnyConfiguredLevel;
   }
 
   private renderLibrary(): void {
@@ -1027,6 +1080,14 @@ export class LevelArrangementController {
         { title: '难度参数', items: this.difficultyParameterItems([variant]) },
       ];
     }
+    const resultLevel = variant ?? difficulty?.representative ?? path?.representative ?? board.representative;
+    const simulation = this.simulationResults.get(`${this.libraryId}:${resultLevel.id}`);
+    groups.unshift({ title: '模拟跑关结果', items: [
+      { label: 'id', value: resultLevel.id },
+      { label: '状态', value: simulation?.status ?? '尚未计算' },
+      ...(simulation ? [{ label: '来源（最近结果）', value: simulation.source }] : []),
+      ...(simulation?.metrics ? METRIC_COLUMNS.map(([key, label]) => ({ label, value: String(Number(simulation.metrics![key].toFixed(2))) })) : []),
+    ] });
     title.textContent = heading;
     body.replaceChildren(...groups.filter(({ items }) => items.length > 0).map((group) => {
       const section = document.createElement('section');
@@ -1141,7 +1202,15 @@ export class LevelArrangementController {
     const level = this.decodeLevel(entry);
     if (this.playtestMode) {
       if (!this.playtest) {
-        this.playtest = new ArrangementPlaytest(preview, level);
+        const libraryId = this.libraryId, levelId = entry.id;
+        this.playtest = new ArrangementPlaytest(preview, level, (run) => {
+          this.simulationResults.set(`${libraryId}:${levelId}`, {
+            metrics: summarizeConfigurationRun(level, run),
+            status: run.complete ? '已通关' : `未通关：${run.stoppedReason}`,
+            source: '当前棋盘模拟',
+          });
+          this.renderLibraryParameters();
+        });
         this.playtestLevelId = entry.id;
       }
       return;

@@ -8,6 +8,8 @@ import { ThumbHand } from './ThumbHand';
 import { OcclusionSimulationPanel, type OcclusionReplay } from './OcclusionSimulationPanel';
 import { choosePerceivedMove, nextDisplayedIndex, DEFAULT_WEIGHT_CONFIG, type WeightConfig, type HandMode, type NeighborhoodWeight } from './occlusionSimulation';
 import { HandOcclusionSampler, type OcclusionGeometry } from './handOcclusion';
+import { persistPlaytestControl, savePlaytestPreference } from './playtestPreferences';
+import type { OcclusionRun } from './occlusionSimulation';
 
 const NS = 'http://www.w3.org/2000/svg';
 const svgElement = <K extends keyof SVGElementTagNameMap>(name: K, attributes: Record<string, string> = {}) => {
@@ -53,7 +55,7 @@ export class ArrangementPlaytest {
   private weightCursor?: { x: number; y: number };
   private samplingWeights = false;
 
-  constructor(host: HTMLElement, private readonly level: LevelData) {
+  constructor(host: HTMLElement, private readonly level: LevelData, onSimulationResult?: (run: OcclusionRun) => void) {
     this.board.setAttribute('viewBox', `0 0 ${level.columns} ${level.rows}`);
     this.reset();
     const wrapper = document.createElement('div');
@@ -86,6 +88,7 @@ export class ArrangementPlaytest {
       this.fingerToggle.append(option);
     }
     this.fingerToggle.setAttribute('aria-label', '手指类型');
+    persistPlaytestControl('hand.type', this.fingerToggle);
     this.board.classList.add('has-finger');
     fingerLabel.append(document.createTextNode('手指'), this.fingerToggle);
     const sizeLabel = document.createElement('label');
@@ -93,7 +96,8 @@ export class ArrangementPlaytest {
     this.fingerSize.type = 'range';
     this.fingerSize.min = '0.5'; this.fingerSize.max = '1'; this.fingerSize.step = '0.01'; this.fingerSize.value = '0.8';
     this.fingerSize.setAttribute('aria-label', '手指大小');
-    const sizeValue = document.createElement('output'); sizeValue.textContent = '0.80×';
+    persistPlaytestControl('hand.size', this.fingerSize);
+    const sizeValue = document.createElement('output'); sizeValue.textContent = `${this.fingerSize.valueAsNumber.toFixed(2)}×`;
     this.thumbHand.setSize(this.fingerSize.valueAsNumber);
     this.finger.style.width = `${720 * this.fingerSize.valueAsNumber}px`;
     this.updateIndexTransform();
@@ -126,6 +130,7 @@ export class ArrangementPlaytest {
     this.choiceOverlay.setAttribute('aria-label', '指尖九宫格');
     document.body.append(this.choiceOverlay);
     this.choiceToggle.type = 'checkbox'; this.choiceToggle.checked = true;
+    persistPlaytestControl('hand.grid', this.choiceToggle);
     const choiceLabel = document.createElement('label');
     choiceLabel.append(this.choiceToggle, document.createTextNode('指尖九宫格'));
     this.choiceToggle.addEventListener('change', () => {
@@ -168,6 +173,8 @@ export class ArrangementPlaytest {
     for (const [value, text] of [['right', '右手'], ['left', '左手']]) {
       const option = document.createElement('option'); option.value = value; option.textContent = text; this.handSide.append(option);
     }
+    persistPlaytestControl('hand.side', this.handSide);
+    this.thumbHand.setLeftHand(this.handSide.value === 'left'); this.updateIndexTransform();
     sideLabel.append(document.createTextNode('左右手'), this.handSide);
     this.handSide.addEventListener('change', () => {
       const cursor = this.currentFingerPosition();
@@ -177,6 +184,7 @@ export class ArrangementPlaytest {
     });
     const showLabel = document.createElement('label');
     this.showHand.type = 'checkbox'; this.showHand.checked = true;
+    persistPlaytestControl('hand.visible', this.showHand);
     this.showHand.setAttribute('aria-label', '显示手指');
     showLabel.append(this.showHand, document.createTextNode('显示手指'));
     this.showHand.addEventListener('change', () => this.refreshHandImage());
@@ -192,7 +200,7 @@ export class ArrangementPlaytest {
       if (cursor) this.moveFinger({ clientX: cursor.x, clientY: cursor.y, pointerType: 'mouse' });
     };
     const fields: Array<[keyof WeightConfig, string]> = [
-      ['nextNumber', '下一数字加分'], ['hiddenNumber', '隐藏数字加分'], ['occludedMultiplier', '被遮挡倍率'],
+      ['nextNumber', '下一数字加分'], ['hiddenNumber', '隐藏数字加分'], ['occludedMultiplier', '遮挡≥50%倍率'],
       ['sameDirection', '同方向加分'], ['closerTarget', '靠近目标加分'],
     ];
     fields.forEach(([key, title]) => {
@@ -200,6 +208,8 @@ export class ArrangementPlaytest {
       const input = document.createElement('input'); input.type = 'number'; input.min = '0'; input.step = 'any';
       if (key === 'occludedMultiplier') input.max = '1';
       input.value = String(this.weights[key]); input.setAttribute('aria-label', title);
+      persistPlaytestControl(`weight.${key}`, input);
+      this.weights[key] = input.valueAsNumber;
       input.addEventListener('change', () => {
         if (!input.checkValidity() || !Number.isFinite(input.valueAsNumber)) {
           input.reportValidity(); input.value = String(this.weights[key]); return;
@@ -211,7 +221,10 @@ export class ArrangementPlaytest {
     const resetWeights = document.createElement('button'); resetWeights.type = 'button'; resetWeights.textContent = '恢复默认权重';
     resetWeights.addEventListener('click', () => {
       this.weights = { ...DEFAULT_WEIGHT_CONFIG };
-      fields.forEach(([key], i) => { weightInputs[i].value = String(this.weights[key]); }); refreshWeights();
+      fields.forEach(([key], i) => {
+        weightInputs[i].value = String(this.weights[key]);
+        savePlaytestPreference(`weight.${key}`, weightInputs[i].value);
+      }); refreshWeights();
     });
     weightSettings.append(resetWeights); sidebar.append(weightSettings);
     this.board.append(this.lines);
@@ -257,6 +270,7 @@ export class ArrangementPlaytest {
       getMode: () => this.fingerToggle.value as HandMode,
       getGeometry: () => this.simulationGeometry(),
       getWeights: () => ({ ...this.weights }),
+      onResult: onSimulationResult,
       lock: (locked) => {
         this.simulationRunning = locked;
         this.fingerToggle.disabled = locked;
@@ -538,6 +552,11 @@ export class ArrangementPlaytest {
       : `${this.message} 进度 ${this.connection.progress}/${this.nodes.length} · 错误 ${this.errors} 次`;
     this.undo.disabled = this.busy || this.simulationRunning || !!this.replay || !this.connection.canUndoStep;
     this.restart.disabled = this.busy || this.simulationRunning || !!this.replay;
+  }
+
+  prepareBatchCalculation(): DOMRect {
+    this.simulationPanel?.invalidate();
+    return this.board.getBoundingClientRect();
   }
 
   private simulationGeometry(): OcclusionGeometry {

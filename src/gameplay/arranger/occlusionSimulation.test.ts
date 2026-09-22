@@ -27,6 +27,14 @@ describe('actual alpha occlusion', () => {
   });
 });
 describe('independent perceived-player simulator', () => {
+  it.each([[.49, true, .375], [.5, true, .25], [1, true, .25], [.3, false, .5]])(
+    'scales hidden weight with coverage %s and blocked status %s', (coverage, numberBlocked, expected) => {
+      const occlusion = clearOcclusion(4); occlusion[1] = { coverage, numberBlocked };
+      const choice = choosePerceivedMove({ cells: level.solutionPath, shape: level.boardShape,
+        current: 0, nextNumber: 2, known: new Map(), hiddenIndices: new Set([1]),
+        visited: new Set([0]), rejected: new Set(), occlusion, random: () => 0 });
+      expect(choice.neighborhood.find((cell) => cell.index === 1)?.weight).toBe(expected);
+    });
   it('uses all configured weights in order and keeps zero-weight cells excluded', () => {
     const cells = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: 2, y: 0 }];
     const occlusion = clearOcclusion(4); occlusion[1] = { coverage: 1, numberBlocked: true };
@@ -121,14 +129,14 @@ describe('independent perceived-player simulator', () => {
     expect(result.stoppedReason).toBe('移开手指观察后，仍没有可尝试的相邻位置');
     expect(observe).toHaveBeenCalledTimes(1);
   });
-  it('applies additive weights, binary occlusion and the previous direction in order', () => {
+  it('applies additive weights, partial occlusion and the previous direction in order', () => {
     const choice = choosePerceivedMove({ cells: level.solutionPath, shape: level.boardShape, current: 0, nextNumber: 2,
       known: new Map([[1, 2], [3, 4]]), hiddenIndices: new Set([2]), visited: new Set([0]), rejected: new Set(),
       previousDirection: { dx: 1, dy: 1 }, random: () => .9,
       occlusion: [{ coverage: 0, numberBlocked: false }, { coverage: .4, numberBlocked: true },
         { coverage: .4, numberBlocked: true }, { coverage: 0, numberBlocked: false }] });
-    expect(choice.neighborhood.find((cell) => cell.index === 1)?.weight).toBe(.5);
-    expect(choice.neighborhood.find((cell) => cell.index === 2)?.weight).toBe(.45);
+    expect(choice.neighborhood.find((cell) => cell.index === 1)?.weight).toBe(.75);
+    expect(choice.neighborhood.find((cell) => cell.index === 2)?.weight).toBeCloseTo(.575);
     expect(choice.neighborhood.find((cell) => cell.index === 3)?.weight).toBe(0);
     expect(choice.neighborhood[4].weight).toBe(0);
   });
@@ -193,6 +201,30 @@ describe('independent perceived-player simulator', () => {
 
 
 describe('incremental simulation', () => {
+  it('performs optional medium reasoning before observation and rescans when its sole candidate fails', async () => {
+    const cells = [{ x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }, { x: 3, y: 1 },
+      { x: 2, y: 1 }, { x: 1, y: 1 }, { x: 0, y: 1 }];
+    const testLevel = { ...level, columns: 4, activeCells: cells, solutionPath: cells, hiddenCells: [cells[5]] };
+    const solver = new PathCompletionSolver(cells, level.boardShape);
+    const occlusion = clearOcclusion(cells.length); occlusion[1] = { coverage: 1, numberBlocked: true };
+    const input = { level: testLevel, seed: 9, memorySteps: 0, observe: async () => occlusion,
+      findCompletion: async (request: Parameters<typeof solver.findCompletion>[0]) => solver.findCompletion(request) };
+    const player = { reasoning: 'low' as const, normal: 0, afterError: 0 };
+    const without = await stepOccludedPlay({ ...input, player: { ...player, reasoningObservation: 0 } }).next();
+    expect(without.value).toMatchObject({ attempted: 5, observation: { observed: false },
+      observationReasoning: { performed: false } });
+    const withReasoning = await stepOccludedPlay({ ...input, player: { ...player, reasoningObservation: 1 } }).next();
+    expect(withReasoning.value).toMatchObject({ attempted: 1, outcome: 'connected',
+      observation: { observed: true, forced: true }, observationReasoning: { performed: true, noCandidates: true } });
+  });
+  it('does not force observation when medium pre-reasoning finds a candidate', async () => {
+    const solver = new PathCompletionSolver(level.solutionPath, level.boardShape);
+    const first = await stepOccludedPlay({ level, memorySteps: 0,
+      player: { reasoning: 'low', normal: 0, afterError: 0, reasoningObservation: 1 },
+      observe: async () => clearOcclusion(4), findCompletion: async (request) => solver.findCompletion(request) }).next();
+    expect(first.value).toMatchObject({ observation: { observed: false },
+      observationReasoning: { performed: true, noCandidates: false } });
+  });
   it('implements all five normal and after-error observation rates', () => {
     const rates = [[0, .5], [.25, .75], [.5, 1], [.75, 1], [1, 1]];
     rates.forEach((pair, i) => pair.forEach((probability, afterError) => {

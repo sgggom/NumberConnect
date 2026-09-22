@@ -9,6 +9,22 @@ const normal = { x: -axis.y, y: axis.x };
 export const THUMB_REVERSE_LIMIT_DEGREES = 15;
 const smooth = (v: number) => { const t = Math.max(0, Math.min(1, v)); return t * t * (3 - 2 * t); };
 
+/** Mirror the complete animated right-hand pose around the board, not the browser window. */
+export function createScreenThumbPose(target: Point, bounds: { left: number; right: number; top: number; height: number },
+  viewportWidth: number, size: number, leftHand: boolean): (point: Point) => Point {
+  const scale = 720 / 1024 * size;
+  const mirrorAxisSum = bounds.left + bounds.right;
+  const anchor = { x: viewportWidth + 85 * size, y: bounds.top + bounds.height * .62 };
+  const offset = { x: anchor.x - THUMB_ROOT.x * scale, y: anchor.y - THUMB_ROOT.y * scale };
+  const targetX = leftHand ? mirrorAxisSum - target.x : target.x;
+  const pose = createReachingThumbPose({ x: (targetX - offset.x) / scale, y: (target.y - offset.y) / scale });
+  return (point) => {
+    const warped = pose(point);
+    const screenX = offset.x + warped.x * scale + 20 * size;
+    return { x: leftHand ? mirrorAxisSum - screenX : screenX, y: offset.y + warped.y * scale + 20 * size };
+  };
+}
+
 /** Reach beyond the natural thumb length by moving the whole grip, with at most 4% shared stretch. */
 export function createReachingThumbPose(target: Point): (point: Point) => Point {
   const tx = target.x - THUMB_ROOT.x;
