@@ -2,6 +2,10 @@ import { ConnectionProgress } from '../../game/connectionProgress';
 import { PathCompletionSolver, type PathCompletionRequest } from '../../game/pathCompletionSolver';
 import { areNeighborCells } from '../../game/topology';
 import { cellKey, type BoardShape, type Cell, type LevelData } from '../../game/types';
+import { reasoningCandidates, type ReasoningStrength } from './perceivedReasoning';
+
+export interface PlayerConfig { reasoning: ReasoningStrength; normal: number; afterError: number; reasoningObservation?: number }
+export const DEFAULT_PLAYER_CONFIG: Readonly<PlayerConfig> = { reasoning: 'low', normal: 0, afterError: .5, reasoningObservation: 0 };
 
 export type HandMode = 'off' | 'index' | 'thumb';
 export interface WeightConfig {
@@ -16,8 +20,8 @@ export const PLAYER_OBSERVATION_RATES = [
   { normal: .5, afterError: 1 }, { normal: .75, afterError: 1 }, { normal: 1, afterError: 1 },
 ] as const;
 
-export function decideHandObservation(level: PlayerLevel, afterError: boolean, hasUnblockedCandidate: boolean, random: () => number) {
-  const rates = PLAYER_OBSERVATION_RATES[level - 1];
+export function decideHandObservation(level: PlayerLevel | PlayerConfig, afterError: boolean, hasUnblockedCandidate: boolean, random: () => number) {
+  const rates = typeof level === 'number' ? PLAYER_OBSERVATION_RATES[level - 1] : level;
   const probability = afterError ? rates.afterError : rates.normal;
   const forced = afterError && !hasUnblockedCandidate;
   return { observed: forced || probability === 1 || (probability > 0 && random() < probability), forced, probability: forced ? 1 : probability };
@@ -28,6 +32,8 @@ export interface NeighborhoodWeight {
   rejected: boolean;
 }
 export interface SimulationFrame {
+  /** Referee-only metric; never supplied to candidate selection. */
+  correctNext?: number;
   step: number;
   current: number;
   attempted: number;
@@ -40,6 +46,7 @@ export interface SimulationFrame {
   edges: Array<readonly [number, number]>;
   occlusion: CellOcclusion[];
   observation: ReturnType<typeof decideHandObservation>;
+  observationReasoning?: { performed: boolean; noCandidates: boolean };
   errors: number;
   progress: number;
   after: {
@@ -93,6 +100,7 @@ export function choosePerceivedMove(input: {
   nextDisplayed?: number;
   random: () => number;
   weights?: Readonly<WeightConfig>;
+  reasoning?: ReasoningStrength;
 }): { selected?: number; candidates: number[]; direct: boolean; neighborhood: NeighborhoodWeight[] } {
   const { cells, shape, current, nextNumber, known, visited, rejected, random } = input;
   const weights = input.weights ?? DEFAULT_WEIGHT_CONFIG;
@@ -121,7 +129,11 @@ export function choosePerceivedMove(input: {
       const parts: string[] = [];
       if (next) { weight += weights.nextNumber; parts.push(`已确认下一数字 +${weights.nextNumber}`); }
       if (hidden) { weight += weights.hiddenNumber; parts.push(`隐藏数字 +${weights.hiddenNumber}`); }
-      if (input.occlusion?.[index]?.numberBlocked) { weight *= weights.occludedMultiplier; parts.push(`数字被遮挡 ×${weights.occludedMultiplier}`); }
+      if (input.occlusion?.[index]?.numberBlocked) {
+        const multiplier = coverage < .5 ? .75 : weights.occludedMultiplier;
+        weight *= multiplier;
+        parts.push(`数字被遮挡${coverage < .5 ? '不足50%' : '至少50%'} ×${multiplier}`);
+      }
       if (input.previousDirection?.dx === dx && input.previousDirection?.dy === dy) {
         weight += weights.sameDirection; parts.push(`与上一次成功连接同方向 +${weights.sameDirection}`);
       }
@@ -133,6 +145,13 @@ export function choosePerceivedMove(input: {
     neighborhood.push({ dx, dy, index: index < 0 ? undefined : index, coverage, reason, weight, probability: 0,
       rejected: index >= 0 && rejected.has(index) });
   }
+  const eligible = neighborhood.filter((cell) => cell.weight > 0).map((cell) => cell.index!);
+  const safe = reasoningCandidates({ cells, shape, visited, known, nextNumber, candidates: eligible, strength: input.reasoning ?? 'low' });
+  neighborhood.forEach((cell) => {
+    if (cell.weight > 0 && !safe.has(cell.index!)) {
+      cell.weight = 0; cell.reason += '；推理排除：预判无法继续';
+    }
+  });
   const candidates = neighborhood.filter((cell) => cell.weight > 0).map((cell) => cell.index!);
   const maximum = Math.max(...neighborhood.map((cell) => cell.weight));
   if (maximum <= 0) return { candidates, direct: false, neighborhood };
@@ -148,6 +167,7 @@ export async function* stepOccludedPlay(input: {
   seed?: number;
   memorySteps: number;
   playerLevel?: PlayerLevel;
+  player?: PlayerConfig;
   weights?: Readonly<WeightConfig>;
   observe: (current: number) => Promise<CellOcclusion[]>;
   findCompletion: (request: PathCompletionRequest) => Promise<number[] | null>;
@@ -185,7 +205,28 @@ export async function* stepOccludedPlay(input: {
     const hasUnblockedCandidate = cells.some((cell, index) => index !== current && !visited.has(index)
       && !rejected.has(index) && areNeighborCells(cells[current], cell, level.boardShape)
       && !occlusion[index].numberBlocked && (renderedLabels[index] === null || renderedLabels[index] === nextNumber));
-    let observation = decideHandObservation(input.playerLevel ?? 1, rejected.size > 0, hasUnblockedCandidate, random);
+    const reasoningProbability = input.player?.reasoningObservation ?? 0;
+    const performed = reasoningProbability === 1 || (reasoningProbability > 0 && random() < reasoningProbability);
+    let noCandidates = false;
+    if (performed) {
+      // Pre-observation reasoning cannot read covered labels or hidden answers.
+      const beforeKnown = new Map<number, number>();
+      remembered.forEach(({ value, lastSeen }, index) => {
+        if (attempt - lastSeen <= input.memorySteps) beforeKnown.set(index, value);
+      });
+      renderedLabels.forEach((value, index) => {
+        if (value !== null && !occlusion[index].numberBlocked) beforeKnown.set(index, value);
+      });
+      visited.forEach((index) => beforeKnown.set(index, connection.displayNumber(index)));
+      const beforeChoice = choosePerceivedMove({ cells, shape: level.boardShape, current, nextNumber,
+        known: beforeKnown, visited, rejected, occlusion, random: () => 0, weights: input.weights,
+        hiddenIndices: new Set(renderedLabels.flatMap((value, index) => value === null ? [index] : [])),
+        previousDirection, nextDisplayed: nextDisplayedIndex(renderedLabels, nextNumber) });
+      noCandidates = reasoningCandidates({ cells, shape: level.boardShape, visited, known: beforeKnown,
+        nextNumber, candidates: beforeChoice.candidates, strength: 'medium', fallback: false }).size === 0;
+    }
+    let observation = noCandidates ? { observed: true, forced: true, probability: 1 }
+      : decideHandObservation(input.player ?? input.playerLevel ?? DEFAULT_PLAYER_CONFIG, rejected.size > 0, hasUnblockedCandidate, random);
     // Observation removes only the hand's obstruction, never a level's hidden-number mask.
     let perceivedOcclusion = observation.observed ? clearOcclusion(cells.length) : occlusion;
     renderedLabels.forEach((value, index) => {
@@ -197,7 +238,7 @@ export async function* stepOccludedPlay(input: {
     });
     // Successfully connected cells stay known even if the hand covers them.
     visited.forEach((index) => known.set(index, connection.displayNumber(index)));
-    const choose = () => choosePerceivedMove({ cells, shape: level.boardShape, current, nextNumber, known, visited, rejected, occlusion: perceivedOcclusion, random, weights: input.weights,
+    const choose = () => choosePerceivedMove({ cells, shape: level.boardShape, current, nextNumber, known, visited, rejected, occlusion: perceivedOcclusion, random, weights: input.weights, reasoning: input.player?.reasoning,
       hiddenIndices: new Set(renderedLabels.flatMap((value, index) => value === null ? [index] : [])), previousDirection,
       nextDisplayed: nextDisplayedIndex(renderedLabels, nextNumber) });
     let choice = choose();
@@ -230,10 +271,10 @@ export async function* stepOccludedPlay(input: {
       previousDirection = { dx: cells[choice.selected].x - cells[current].x, dy: cells[choice.selected].y - cells[current].y };
       visited.add(choice.selected); rejected = new Set();
     }
-    frames.push({ step: frames.length + 1, current, attempted: choice.selected, outcome,
+    frames.push({ step: frames.length + 1, current, correctNext, attempted: choice.selected, outcome,
       reason: `九宫格内 ${choice.candidates.length} 个有效候选中优先选择最高权重（仅并列最高时随机），本次位置概率 ${((choice.neighborhood.find((cell) => cell.index === choice.selected)?.probability ?? 0) * 100).toFixed(1)}%`,
       candidates: choice.candidates, neighborhood: choice.neighborhood, knownNumbers: [...known], labels: renderedLabels, edges: beforeEdges,
-      occlusion, observation, errors: previousErrors, progress: beforeProgress,
+      occlusion, observation, observationReasoning: { performed, noCandidates }, errors: previousErrors, progress: beforeProgress,
       after: { labels: labels(), edges: connection.connectedNodePairs(), errors, progress: connection.progress, complete: connection.complete } });
     yield frames[frames.length - 1];
     // Yield even when geometry and authored next steps were cached.

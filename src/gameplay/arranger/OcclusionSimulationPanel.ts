@@ -1,7 +1,8 @@
 import type { LevelData } from '../../game/types';
 import { findPathCompletionInWorker } from '../../game/pathCompletionWorker';
 import { HandOcclusionSampler, type OcclusionGeometry } from './handOcclusion';
-import { clearOcclusion, simulateOccludedPlay, stepOccludedPlay, PLAYER_OBSERVATION_RATES, type WeightConfig, type PlayerLevel, type NeighborhoodWeight, type CellOcclusion, type HandMode, type OcclusionRun } from './occlusionSimulation';
+import { persistPlaytestControl } from './playtestPreferences';
+import { clearOcclusion, simulateOccludedPlay, stepOccludedPlay, type PlayerConfig, type WeightConfig, type NeighborhoodWeight, type CellOcclusion, type HandMode, type OcclusionRun } from './occlusionSimulation';
 
 export interface OcclusionReplay {
   labels: Array<number | null>;
@@ -33,19 +34,22 @@ export class OcclusionSimulationPanel {
   private mode: HandMode = 'off';
   private position = 0;
   private geometry?: OcclusionGeometry;
-  private config?: { count: number; memory: number; playerLevel: PlayerLevel; weights: WeightConfig; randomness: string };
+  private config?: { count: number; memory: number; player: PlayerConfig; weights: WeightConfig; randomness: string };
 
   constructor(private readonly level: LevelData, private readonly options: {
     getMode: () => HandMode;
     getGeometry: () => OcclusionGeometry;
     getWeights: () => WeightConfig;
+    onResult?: (run: OcclusionRun) => void;
     replay: (frame: OcclusionReplay | undefined) => void;
     lock: (locked: boolean) => void;
   }) {
     this.element.className = 'arranger-occlusion-simulation';
     this.element.innerHTML = `<summary>真实手指遮挡模拟</summary>
-      <label>玩家水平<select data-field="player-level" aria-label="玩家水平">${PLAYER_OBSERVATION_RATES.map((rate, i) => `<option value="${i + 1}">${i + 1}档 · ${rate.normal * 100}% / ${rate.afterError * 100}%</option>`).join('')}</select></label>
-      <p>观察概率：常规 / 错误后</p>
+      <label>推理强度<select data-player data-field="reasoning" aria-label="推理强度"><option value="low">低 · 不预判</option><option value="medium">中 · 预判2步</option><option value="high">高 · 预判5步</option></select></label>
+      <label>平时观察概率（%）<input data-player data-field="normal" aria-label="平时观察概率" type="number" min="0" max="100" step="1" value="0"></label>
+      <label>错误后观察概率（%）<input data-player data-field="afterError" aria-label="错误后观察概率" type="number" min="0" max="100" step="1" value="50"></label>
+      <label>观察推理概率（%）<input data-player data-field="reasoningObservation" aria-label="观察推理概率" type="number" min="0" max="100" step="1" value="0"></label>
       <div class="arranger-playtest-controls"><button data-action="auto" type="button">自动</button><button data-action="advance" type="button">手动下一步</button><button data-action="stop-live" type="button">结束逐步模拟</button></div>
       <div class="arranger-playtest-controls"><button data-action="run" type="button">批量统计（5轮）</button><button data-action="cancel" type="button" disabled>取消</button><button data-action="export" type="button" disabled>导出结果</button></div>
       <p data-field="status" role="status">优先选择最高权重，仅在最高权重并列时随机选择。</p>
@@ -55,7 +59,16 @@ export class OcclusionSimulationPanel {
         <p data-field="step"></p>
         <div class="arranger-choice-grid" data-field="weights" aria-label="九宫格选择权重"></div>
       </div>`;
-    this.query('[data-field="player-level"]').addEventListener('change', () => this.invalidate());
+    this.element.querySelectorAll<HTMLInputElement | HTMLSelectElement>('[data-player]').forEach((control) => {
+      persistPlaytestControl(`player.${control.dataset.field}`, control);
+      let previous = control.value;
+      control.addEventListener('change', () => {
+        if (!control.checkValidity() || (control instanceof HTMLInputElement && !Number.isFinite(control.valueAsNumber))) {
+          control.reportValidity(); control.value = previous; return;
+        }
+        previous = control.value; this.invalidate();
+      });
+    });
     this.query('[data-action="advance"]').addEventListener('click', () => { this.pauseLive(); void this.advance(); });
     this.query('[data-action="auto"]').addEventListener('click', () => {
       if (this.automatic) { this.pauseLive(); return; }
@@ -96,11 +109,21 @@ export class OcclusionSimulationPanel {
     this.automatic = false; clearTimeout(this.liveTimer);
     this.query('[data-action="auto"]').textContent = '自动';
   }
-  private playerLevel(): PlayerLevel { return Number(this.query<HTMLSelectElement>('[data-field="player-level"]').value) as PlayerLevel; }
+  private playerConfig(): PlayerConfig {
+    return {
+      reasoning: this.query<HTMLSelectElement>('[data-field="reasoning"]').value as PlayerConfig['reasoning'],
+      normal: this.query<HTMLInputElement>('[data-field="normal"]').valueAsNumber / 100,
+      afterError: this.query<HTMLInputElement>('[data-field="afterError"]').valueAsNumber / 100,
+      reasoningObservation: this.query<HTMLInputElement>('[data-field="reasoningObservation"]').valueAsNumber / 100,
+    };
+  }
+  private lockPlayer(locked: boolean): void {
+    this.element.querySelectorAll<HTMLInputElement | HTMLSelectElement>('[data-player]').forEach((control) => { control.disabled = locked; });
+  }
   private cancel(): void {
     this.pauseLive(); this.live = undefined;
     this.abort?.abort(); this.sampler?.dispose(); this.pause(); this.options.lock(false);
-    this.query<HTMLSelectElement>('[data-field="player-level"]').disabled = false;
+    this.lockPlayer(false);
     this.query<HTMLButtonElement>('[data-action="run"]').disabled = false;
   }
   private async advance(): Promise<void> {
@@ -115,17 +138,18 @@ export class OcclusionSimulationPanel {
         this.mode = this.options.getMode(); this.geometry = this.options.getGeometry();
         const sampler = new HandOcclusionSampler(this.geometry); this.sampler = sampler;
         this.abort = new AbortController();
-        session = stepOccludedPlay({ level: this.level, memorySteps: 0, playerLevel: this.playerLevel(), weights: this.options.getWeights(),
+        session = stepOccludedPlay({ level: this.level, memorySteps: 0, player: this.playerConfig(), weights: this.options.getWeights(),
           observe: (current) => sampler.observe(this.mode, current), signal: this.abort.signal,
           findCompletion: (request) => findPathCompletionInWorker(this.level.solutionPath, this.level.boardShape, request) });
         this.live = session; this.options.lock(true);
-        this.query<HTMLSelectElement>('[data-field="player-level"]').disabled = true;
+        this.lockPlayer(true);
         this.query<HTMLButtonElement>('[data-action="run"]').disabled = true;
       }
       const result = await session.next();
       if (this.disposed || this.live !== session) return;
       if (result.done) {
         const run = result.value;
+        this.options.onResult?.(run);
         const message = run.complete ? `已通关，尝试 ${run.attempts} 次，错误 ${run.errors} 次。` : `模拟停止：${run.stoppedReason}`;
         this.query('[data-field="status"]').textContent = message;
         this.options.replay({ labels: run.finalLabels, edges: run.finalEdges, current: run.frames.at(-1)?.attempted ?? 0,
@@ -133,7 +157,7 @@ export class OcclusionSimulationPanel {
         this.cancel();
       } else {
         const frame = result.value;
-        const message = `第 ${frame.step} 步：${frame.observation.observed ? frame.observation.forced ? '无可用候选，已强制观察' : '已移开手指观察' : '未移开手指观察'}。下一步更新本次连线结果。`;
+        const message = `第 ${frame.step} 步：${frame.observationReasoning?.performed ? frame.observationReasoning.noCandidates ? '中等推理无候选；' : '中等推理有候选；' : ''}${frame.observation.observed ? frame.observation.forced ? '已强制观察' : '已移开手指观察' : '未移开手指观察'}。下一步更新本次连线结果。`;
         this.query('[data-field="status"]').textContent = message;
         // Keep weights, visible numbers and edges at the same pre-connection instant.
         // Advancing publishes this decision's result, including the final connection.
@@ -155,14 +179,14 @@ export class OcclusionSimulationPanel {
   private async run(): Promise<void> {
     if (this.abort && !this.abort.signal.aborted) return;
     const status = this.query('[data-field="status"]');
-    const config = { count: 5, memory: 0, playerLevel: this.playerLevel(), weights: this.options.getWeights(), randomness: 'maximum weight; fresh uniform random only among tied maxima' };
+    const config = { count: 5, memory: 0, player: this.playerConfig(), weights: this.options.getWeights(), randomness: 'maximum weight; fresh uniform random only among tied maxima' };
     this.pause(); this.options.replay(undefined);
     this.runs = []; this.baseline = []; this.position = 0;
     this.query('[data-field="replay"]').hidden = true;
     this.query<HTMLButtonElement>('[data-action="export"]').disabled = true;
     const abort = new AbortController(); this.abort = abort;
     this.options.lock(true);
-    this.query<HTMLSelectElement>('[data-field="player-level"]').disabled = true;
+    this.lockPlayer(true);
     this.query<HTMLButtonElement>('[data-action="run"]').disabled = true;
     this.query<HTMLButtonElement>('[data-action="cancel"]').disabled = false;
     this.query<HTMLButtonElement>('[data-action="auto"]').disabled = true;
@@ -173,10 +197,11 @@ export class OcclusionSimulationPanel {
       const sampler = new HandOcclusionSampler(this.geometry); this.sampler = sampler;
       for (let i = 0; i < config.count; i++) {
         status.textContent = `正在跑第 ${i + 1}/${config.count} 轮（${handLabel[this.mode]} + 无手指对照）…`;
-        const run = (mode: HandMode) => simulateOccludedPlay({ level: this.level, memorySteps: config.memory, playerLevel: config.playerLevel, weights: config.weights,
+        const run = (mode: HandMode) => simulateOccludedPlay({ level: this.level, memorySteps: config.memory, player: config.player, weights: config.weights,
           observe: (current) => sampler.observe(mode, current), signal: abort.signal,
           findCompletion: (request) => findPathCompletionInWorker(this.level.solutionPath, this.level.boardShape, request) });
         this.runs.push(await run(this.mode));
+        this.options.onResult?.(this.runs[this.runs.length - 1]);
         this.baseline.push(this.mode === 'off' ? this.runs[i] : await run('off'));
       }
       if (abort.signal.aborted || this.disposed) return;
@@ -202,7 +227,7 @@ export class OcclusionSimulationPanel {
       this.sampler?.dispose(); this.sampler = undefined; this.abort = undefined;
       if (!this.disposed) {
         this.options.lock(false);
-        this.query<HTMLSelectElement>('[data-field="player-level"]').disabled = false;
+        this.lockPlayer(false);
         this.query<HTMLButtonElement>('[data-action="run"]').disabled = false;
         this.query<HTMLButtonElement>('[data-action="cancel"]').disabled = true;
         this.query<HTMLButtonElement>('[data-action="auto"]').disabled = false;
@@ -252,8 +277,8 @@ export class OcclusionSimulationPanel {
   }
   private export(): void {
     if (!this.runs.length) return;
-    const report = { algorithm: 'arranger-alpha-occlusion-v7', mode: this.mode, config: this.config,
-      assumptions: { alphaThreshold: 128, glyphSamplesBlocked: '3/9', ballSamples: 49, policy: '3x3: configurable bonuses and occlusion multiplier from config.weights; closer-target bonus only if target currently readable (no memory-only bonus, no skipping blocked target); other visible and excluded cells always zero; select maximum weight; uniformly sample tied maxima only', decisionHandPosition: 'current connected cell; no hand-lift scan', observation: 'player level normal/after-error rates; forced when all weights are zero, or after error if no unblocked non-rejected eligible neighbor; clears hand occlusion for this decision only, never reveals hidden labels', scope: 'current board; model statistics, not calibrated human difficulty' },
+    const report = { algorithm: 'arranger-alpha-occlusion-v8', mode: this.mode, config: this.config,
+      assumptions: { alphaThreshold: 128, glyphSamplesBlocked: '3/9', ballSamples: 49, policy: '3x3: configurable bonuses from config.weights; blocked digits with coverage below 0.5 use multiplier 0.75, otherwise config.weights.occludedMultiplier; closer-target bonus only if target currently readable (no memory-only bonus, no skipping blocked target); other visible and excluded cells always zero; perceived-label lookahead from config.player.reasoning filters candidates before maximum-weight selection; uniformly sample tied maxima only', decisionHandPosition: 'current connected cell; no hand-lift scan', observation: 'optional pre-observation medium reasoning with forced observation when all candidates fail; independent normal/after-error observation probabilities; forced when all weights are zero, or after error if no unblocked non-rejected eligible neighbor; clears hand occlusion for this decision only, never reveals hidden labels', scope: 'current board; model statistics, not calibrated human difficulty' },
       geometry: this.geometry, level: this.level, runs: this.runs, noHandBaseline: this.baseline };
     const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' }));
     const anchor = document.createElement('a'); anchor.href = url; anchor.download = '手指遮挡模拟结果.json'; anchor.click();
