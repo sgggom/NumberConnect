@@ -23,7 +23,7 @@ beforeEach(() => {
   vi.stubGlobal('window', { innerWidth: 1200, innerHeight: 900, devicePixelRatio: 1, addEventListener() {}, removeEventListener() {} });
   vi.stubGlobal('Worker', undefined);
   vi.mocked(simulateRepeatedConfiguration).mockReset().mockImplementation(async (_, repetitions) => ({
-    repetitions, completedRuns: repetitions, status: '已通关', metrics: { total: 2, hidden: 1, singleCertain: 0, singleMisleading: 0, twoGapOne: 0, twoGapTwo: 0, multiple: 0, bottlenecks: 0, errors: 0 },
+    repetitions, completedRuns: repetitions, status: '已通关', metrics: { total: 2, hidden: 1, longConnections: 0, mediumConnections: 0, singleCertain: 0, singleMisleading: 0, twoGapOne: 0, twoGapTwo: 0, multiple: 0, bottlenecks: 0, errors: 0 },
   }));
 });
 afterEach(() => vi.unstubAllGlobals());

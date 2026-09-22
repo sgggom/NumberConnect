@@ -43,7 +43,7 @@ export class ConfigurationBatchPanel {
     this.dialog.setAttribute('aria-label', '当前配置批量计算');
     const title = document.createElement('h3'); title.textContent = '当前配置批量计算';
     const help = document.createElement('p');
-    help.textContent = '按所选配置、关号和难度计算，每个版本运行指定次数。局面数量、卡点和错误次数取平均，保留两位小数；总数字数和隐藏数不变。同一轮内重试不重复计局面，多空位为至少3个未遮挡隐藏格，间隔按下一个显示数字计算，卡点为触发强制观察的位置数。';
+    help.textContent = '按所选配置、关号和难度计算，每个版本运行指定次数。局面数量、卡点和错误次数取平均，保留两位小数；总数字数和隐藏数不变。同一轮内重试不重复计局面，多空位为至少3个未遮挡隐藏格，间隔按下一个显示数字计算，卡点为触发强制观察的位置数。长连接为连续≥7步，中连接为连续4～6步；每步须为空1必中，或下一数字显示且相邻无未连接隐藏空位。按最长连续段计一次，不重叠；旧历史未统计的列留空。';
     const table = document.createElement('table'), head = document.createElement('thead'), tr = document.createElement('tr');
     this.headers.forEach((label) => { const th = document.createElement('th'); th.textContent = label; tr.append(th); });
     head.append(tr); table.append(head, this.rows);
@@ -205,7 +205,7 @@ export class ConfigurationBatchPanel {
   }
 
   private values(result: Result): Array<string | number> {
-    return [BATCH_CONFIGURATION_LABELS[result.configuration as keyof typeof BATCH_CONFIGURATION_LABELS] ?? result.configuration ?? '', result.groupId, result.stage, result.configuredId, result.id, result.difficulty ?? 0, result.repetitions ?? '', result.completedRuns ?? '', ...METRIC_COLUMNS.map(([key]) => result.metrics ? Number(result.metrics[key].toFixed(2)) : ''), result.status];
+    return [BATCH_CONFIGURATION_LABELS[result.configuration as keyof typeof BATCH_CONFIGURATION_LABELS] ?? result.configuration ?? '', result.groupId, result.stage, result.configuredId, result.id, result.difficulty ?? 0, result.repetitions ?? '', result.completedRuns ?? '', ...METRIC_COLUMNS.map(([key]) => result.metrics?.[key] !== undefined ? Number(result.metrics[key].toFixed(2)) : ''), result.status];
   }
   private append(result: Result): void {
     if (!this.results[result.order]) this.resultCount++;

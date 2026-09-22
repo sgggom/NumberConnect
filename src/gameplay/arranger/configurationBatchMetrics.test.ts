@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BoardShape, type LevelData } from '../../game/types';
 import { clearOcclusion, type SimulationFrame, type OcclusionRun } from './occlusionSimulation';
-import { classifyConfigurationFrame, summarizeConfigurationRun, csvCell } from './configurationBatchMetrics';
+import { classifyConfigurationFrame, createConfigurationMetricsAccumulator, isUnambiguousConnection, summarizeConfigurationRun, csvCell } from './configurationBatchMetrics';
 
 const cells = [{ x: 1, y: 1 }, { x: 2, y: 1 }, { x: 2, y: 2 }, { x: 1, y: 2 }, { x: 0, y: 2 }];
 const level: LevelData = { levelId: 1, rows: 3, columns: 3, boardShape: BoardShape.Square,
@@ -45,5 +45,63 @@ describe('configuration batch metric definitions', () => {
   it('quotes CSV IDs and prevents spreadsheet formula interpretation', () => {
     expect(csvCell('level,"1"')).toBe('"level,""1"""');
     expect(csvCell('=1+1')).toBe('"\'=1+1"');
+  });
+});
+
+function straightRun(length: number, hiddenIndices: number[] = []) {
+  const path = Array.from({ length: length + 1 }, (_, x) => ({ x, y: 0 }));
+  const level: LevelData = { levelId: 1, rows: 2, columns: length + 1, boardShape: BoardShape.Square,
+    activeCells: path, solutionPath: path, hiddenCells: hiddenIndices.map((i) => path[i]) };
+  const frames = Array.from({ length }, (_, current) => {
+    const labels = path.map((_, i) => hiddenIndices.includes(i) && i > current ? null : i + 1);
+    const edges = Array.from({ length: current }, (_, i) => [i, i + 1] as const);
+    return frame(labels, { current, correctNext: current + 1, attempted: current + 1,
+      progress: current + 1, edges, occlusion: clearOcclusion(path.length),
+      after: { labels, edges: [...edges, [current, current + 1]], errors: 0, progress: current + 2, complete: current === length - 1 } });
+  });
+  return { level, frames };
+}
+function countConnections(input: ReturnType<typeof straightRun>) {
+  const accumulator = createConfigurationMetricsAccumulator(input.level);
+  input.frames.forEach(accumulator.add);
+  return accumulator.finish();
+}
+describe('maximal non-overlapping connection segments', () => {
+  it.each([[3, 0, 0], [4, 0, 1], [6, 0, 1], [7, 1, 0], [8, 1, 0], [14, 1, 0]])(
+    'counts %i consecutive edges as %i long and %i medium segments', (length, longConnections, mediumConnections) => {
+      expect(countConnections(straightRun(length))).toMatchObject({ longConnections, mediumConnections });
+    });
+  it('allows a segment mixing certain hidden steps and direct displayed steps', () => {
+    expect(countConnections(straightRun(7, [1, 3, 4, 6]))).toMatchObject({ longConnections: 1, mediumConnections: 0 });
+  });
+  it('splits on hidden distractions, including covered ones, and counts both end segments', () => {
+    const input = straightRun(14);
+    input.level.solutionPath.push({ x: 5, y: 1 });
+    input.frames.forEach((frame) => {
+      frame.labels.push(null);
+      frame.occlusion.push({ coverage: 1, numberBlocked: true });
+    });
+    expect(countConnections(input)).toMatchObject({ longConnections: 1, mediumConnections: 1 });
+  });
+  it('excludes connected empty slots from interference and rejects multiple hidden choices', () => {
+    const input = frame([1, null, 3, null, 5]);
+    expect(isUnambiguousConnection(level, input)).toBe(false);
+    expect(isUnambiguousConnection(level, { ...input, edges: [[0, 3]] })).toBe(true);
+    expect(isUnambiguousConnection(level, frame([1, 2, 3, null, 5]))).toBe(false);
+    expect(isUnambiguousConnection(level, frame([1, 2, 3, 4, 5]))).toBe(true);
+  });
+  it('does not count retries as extra edges or mutate counts when finish is read repeatedly', () => {
+    const input = straightRun(6, [1, 2, 3, 4, 5]);
+    const error = { ...input.frames[2], outcome: 'error' as const };
+    input.frames.splice(2, 0, error, error);
+    const accumulator = createConfigurationMetricsAccumulator(input.level);
+    input.frames.forEach(accumulator.add);
+    expect(accumulator.finish()).toMatchObject({ longConnections: 0, mediumConnections: 1 });
+    expect(accumulator.finish()).toEqual(accumulator.finish());
+  });
+  it('counts only successfully connected edges when the run stops before its next move', () => {
+    const input = straightRun(7);
+    input.frames[6].outcome = 'error';
+    expect(countConnections(input)).toMatchObject({ longConnections: 0, mediumConnections: 1 });
   });
 });
