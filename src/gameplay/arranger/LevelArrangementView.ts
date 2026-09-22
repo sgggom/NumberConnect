@@ -59,7 +59,7 @@ export const mountLevelArrangementView = (host: HTMLElement): void => {
       </section>
       <aside class="arranger-panel arranger-preview-panel" aria-labelledby="arranger-preview-title">
         <header>
-          <div><small>棋盘预览</small><h3 id="arranger-preview-title">未选择</h3></div>
+          <div><small>棋盘预览 <span id="arranger-preview-lock-status">悬停预览 · 点击关卡锁定</span></small><h3 id="arranger-preview-title">未选择</h3></div>
           <div class="arranger-preview-actions">
             <div class="arranger-preview-toggles" aria-label="预览显示选项">
               <label><input id="arranger-show-trend" type="checkbox" checked><span>趋势</span></label>

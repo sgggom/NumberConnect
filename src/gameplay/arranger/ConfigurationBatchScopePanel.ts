@@ -1,10 +1,11 @@
 import { filterConfigurationBatchTasks, type ConfigurationBatchTask } from './configurationBatchTasks';
 import { BatchSimulationSettingsFields } from './BatchSimulationSettingsFields';
 import type { ConfigurationBatchSettings } from './configurationBatchSettings';
+import { deleteBatchHistory, describeBatchSettings, listBatchHistory, type BatchHistoryEntry } from './configurationBatchHistory';
 
 export const BATCH_CONFIGURATION_LABELS = { main: '主玩法', daily: '挑战', bead: '活动' } as const;
 
-export function chooseConfigurationBatchScope(host: HTMLElement, tasks: ConfigurationBatchTask[], current: string): Promise<{ tasks: ConfigurationBatchTask[]; repetitions: number; settings: ConfigurationBatchSettings } | undefined> {
+export function chooseConfigurationBatchScope(host: HTMLElement, tasks: ConfigurationBatchTask[], current: string, onHistory: (entry: BatchHistoryEntry) => Promise<void>): Promise<{ tasks: ConfigurationBatchTask[]; repetitions: number; settings: ConfigurationBatchSettings; scope: string } | undefined> {
   const dialog = document.createElement('dialog'); dialog.className = 'arranger-batch-dialog arranger-batch-scope';
   dialog.setAttribute('aria-label', '计算范围选择');
   const difficulties = [...new Set([0, 1, 2, 3, ...tasks.map((task) => task.difficulty ?? 0)])].sort((a, b) => a - b);
@@ -29,6 +30,42 @@ export function chooseConfigurationBatchScope(host: HTMLElement, tasks: Configur
   const query = <T extends HTMLElement>(selector: string) => dialog.querySelector<T>(selector)!;
   const simulationSettings = new BatchSimulationSettingsFields();
   dialog.insertBefore(simulationSettings.element, query('[data-summary]'));
+  const columns = document.createElement('div'); columns.className = 'arranger-batch-columns';
+  const config = document.createElement('section'); config.className = 'arranger-batch-config-column';
+  const history = document.createElement('section'); history.className = 'arranger-batch-history-column';
+  const fields = [...dialog.children].filter((child) => child.tagName === 'FIELDSET' || child === simulationSettings.element);
+  config.append(...fields); columns.append(config, history); dialog.insertBefore(columns, query('[data-summary]'));
+  history.innerHTML = '<h4>历史记录</h4><small>自动保存在当前浏览器。选择记录可查看结果、导出 CSV；刷新中断的任务保留已完成结果。</small><p data-history-status role="status"></p><div data-history-list></div>';
+  const historyStatus = query('[data-history-status]');
+  const historyList = query('[data-history-list]');
+  const renderHistory = async () => {
+    historyStatus.textContent = '正在读取历史…';
+    try {
+      const entries = await listBatchHistory(); historyList.replaceChildren();
+      historyStatus.textContent = entries.length ? `共 ${entries.length} 条记录` : '暂无历史记录';
+      for (const entry of entries) {
+        const card = document.createElement('article'); card.className = 'arranger-batch-history-card';
+        const title = document.createElement('strong'); title.textContent = `${new Date(entry.createdAt).toLocaleString()} · ${entry.name}`;
+        const info = document.createElement('p');
+        info.textContent = `${entry.scope}\n每版本 ${entry.repetitions} 次；结果 ${entry.saved}/${entry.total} 个版本；${entry.status}\n${describeBatchSettings(entry.settings)}\n棋盘 ${Math.round(entry.geometry.boardWidth)}×${Math.round(entry.geometry.boardHeight)}；视窗 ${entry.geometry.viewportWidth}×${entry.geometry.viewportHeight}；像素比 ${entry.geometry.pixelRatio}\n关卡库：${entry.libraryId}`;
+        const actions = document.createElement('div'); actions.className = 'arranger-group-actions';
+        const view = document.createElement('button'); view.type = 'button'; view.textContent = '查看结果';
+        const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = '删除';
+        view.addEventListener('click', async () => {
+          view.disabled = true;
+          try { await onHistory(entry); } catch (error) { historyStatus.textContent = `读取失败：${String(error)}`; }
+          finally { view.disabled = false; }
+        });
+        remove.addEventListener('click', async () => {
+          remove.disabled = true;
+          try { await deleteBatchHistory(entry.id); await renderHistory(); }
+          catch (error) { historyStatus.textContent = `删除失败：${String(error)}`; remove.disabled = false; }
+        });
+        actions.append(view, remove); card.append(title, info, actions); historyList.append(card);
+      }
+    } catch (error) { historyStatus.textContent = `历史读取失败：${String(error)}`; }
+  };
+  void renderHistory();
   const modeInputs = [...dialog.querySelectorAll<HTMLInputElement>('[data-configuration]')];
   const difficultyInputs = [...dialog.querySelectorAll<HTMLInputElement>('[data-difficulty]')];
   modeInputs.forEach((input) => { input.checked = input.dataset.configuration === current; });
@@ -71,8 +108,8 @@ export function chooseConfigurationBatchScope(host: HTMLElement, tasks: Configur
   dialog.addEventListener('change', refresh);
   host.append(dialog); refresh(); dialog.showModal();
   return new Promise((resolve) => {
-    const finish = (result?: { tasks: ConfigurationBatchTask[]; repetitions: number; settings: ConfigurationBatchSettings }) => { dialog.close(); dialog.remove(); resolve(result); };
-    query('[data-start]').addEventListener('click', () => { refresh(); if (!query<HTMLButtonElement>('[data-start]').disabled) finish({ tasks: selection, repetitions: repetitions.valueAsNumber, settings: simulationSettings.value() }); });
+    const finish = (result?: { tasks: ConfigurationBatchTask[]; repetitions: number; settings: ConfigurationBatchSettings; scope: string }) => { dialog.close(); dialog.remove(); resolve(result); };
+    query('[data-start]').addEventListener('click', () => { refresh(); if (!query<HTMLButtonElement>('[data-start]').disabled) finish({ tasks: selection, repetitions: repetitions.valueAsNumber, settings: simulationSettings.value(), scope: `${modeInputs.filter((input) => input.checked).map((input) => BATCH_CONFIGURATION_LABELS[input.dataset.configuration as keyof typeof BATCH_CONFIGURATION_LABELS]).join('＋')} · ${allRange.checked ? '全部关卡' : `level${from.value}～level${to.value}`} · 难度 ${difficultyInputs.filter((input) => input.checked).map((input) => input.dataset.difficulty).join('、')}` }); });
     query('[data-cancel]').addEventListener('click', () => finish());
     dialog.addEventListener('cancel', (event) => { event.preventDefault(); finish(); });
   });

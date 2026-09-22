@@ -8,6 +8,7 @@ import { METRIC_COLUMNS, csvCell, type ConfigurationMetrics } from './configurat
 
 import type { ConfigurationBatchTask } from './configurationBatchTasks';
 import { BATCH_CONFIGURATION_LABELS } from './ConfigurationBatchScopePanel';
+import { describeBatchSettings, loadBatchHistoryResults, saveBatchHistory, type BatchHistoryEntry } from './configurationBatchHistory';
 export interface ConfigurationBatchResult extends ConfigurationBatchTask { metrics?: ConfigurationMetrics; status: string; repetitions?: number; completedRuns?: number }
 type Result = ConfigurationBatchResult & { order: number };
 
@@ -22,6 +23,10 @@ export class ConfigurationBatchPanel {
   private abort?: AbortController;
   private results: Result[] = [];
   private name = '';
+  private history?: BatchHistoryEntry;
+  private historyWrites: Promise<void> = Promise.resolve();
+  private historyError = '';
+  private readonly persistenceStatus = document.createElement('p');
   private onResult?: (result: ConfigurationBatchResult) => void;
   private headers = ['配置表', '配置关号', '棋盘序号', '配置棋盘ID', 'id', '难度', '模拟次数', '通关次数', ...METRIC_COLUMNS.map(([, title]) => title), '状态'];
 
@@ -39,22 +44,45 @@ export class ConfigurationBatchPanel {
     this.exportButton.textContent = '导出 CSV'; this.cancelButton.textContent = '取消计算'; this.closeButton.textContent = '关闭';
     for (const button of [this.exportButton, this.cancelButton, this.closeButton]) button.type = 'button';
     actions.append(this.exportButton, this.cancelButton, this.closeButton);
-    this.dialog.append(title, help, this.settingsInfo, this.status, scroll, actions); host.append(this.dialog);
+    this.dialog.append(title, help, this.settingsInfo, this.status, this.persistenceStatus, scroll, actions); host.append(this.dialog);
     this.cancelButton.addEventListener('click', () => { this.abort?.abort(); this.status.textContent = '正在取消，已完成结果会保留…'; });
     this.closeButton.addEventListener('click', () => { this.abort?.abort(); this.dialog.close(); });
     this.dialog.addEventListener('cancel', () => this.abort?.abort());
     this.exportButton.addEventListener('click', () => this.export());
   }
 
+  async showHistory(entry: BatchHistoryEntry): Promise<void> {
+    if (this.abort) return;
+    const results = await loadBatchHistoryResults(entry.id);
+    this.history = undefined; this.onResult = undefined;
+    this.name = `${entry.name}-${new Date(entry.createdAt).toISOString().slice(0, 10)}`;
+    this.results = []; this.rows.replaceChildren();
+    this.settingsInfo.textContent = `${entry.scope} · 每版本 ${entry.repetitions} 次\n${describeBatchSettings(entry.settings)}`;
+    this.status.textContent = `历史记录：${new Date(entry.createdAt).toLocaleString()} · ${entry.status} · 已保存 ${results.length}/${entry.total} 个版本`;
+    this.persistenceStatus.textContent = '';
+    results.forEach((result) => this.append(result));
+    this.cancelButton.disabled = true; this.exportButton.disabled = !results.length;
+    this.dialog.showModal();
+  }
+
+  private persistHistory(result?: Result): void {
+    if (!this.history) return;
+    const snapshot = structuredClone(this.history);
+    this.historyWrites = this.historyWrites.then(() => saveBatchHistory(snapshot, result)).catch((error) => {
+      this.historyError = `历史保存失败：${String(error)}。请导出 CSV 保留本次结果。`;
+      this.persistenceStatus.textContent = this.historyError;
+    });
+  }
+
   cancel(): void { this.abort?.abort(); }
 
   async run(name: string, tasks: ConfigurationBatchTask[], board: DOMRect, load: (id: string) => Promise<LevelData>,
-    onResult?: (result: ConfigurationBatchResult) => void, repetitions = 1, settingsOverride?: ConfigurationBatchSettings): Promise<void> {
+    onResult?: (result: ConfigurationBatchResult) => void, repetitions = 1, settingsOverride?: ConfigurationBatchSettings, historyContext?: { libraryId: string; scope: string }): Promise<void> {
     if (this.abort) return;
     const abort = new AbortController(); this.abort = abort;
     this.onResult = onResult;
     const settings = structuredClone(settingsOverride ?? readConfigurationBatchSettings());
-    this.settingsInfo.textContent = `${settings.leftHand ? '左手' : '右手'}${settings.mode === 'thumb' ? '拇指' : '食指'} · 大小 ${settings.handSize} · 推理 ${{ low: '低', medium: '中', high: '高' }[settings.player.reasoning]} · 观察概率 ${Math.round(settings.player.normal * 100)}% / 错误后 ${Math.round(settings.player.afterError * 100)}% / 观察推理 ${Math.round((settings.player.reasoningObservation ?? 0) * 100)}% · 权重 ${Object.values(settings.weights).join(' / ')}`;
+    this.settingsInfo.textContent = describeBatchSettings(settings);
     const viewport = { width: window.innerWidth, height: window.innerHeight, pixelRatio: window.devicePixelRatio || 1 };
     const threaded = typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined' && typeof createImageBitmap !== 'undefined';
     const concurrency = threaded ? Math.min(configurationSimulationConcurrency(), tasks.length) : 1;
@@ -62,6 +90,12 @@ export class ConfigurationBatchPanel {
     const stopWorkers = () => pool?.dispose();
     abort.signal.addEventListener('abort', stopWorkers, { once: true });
     const started = performance.now();
+    this.historyError = ''; this.persistenceStatus.textContent = '正在保存历史记录…';
+    this.history = { id: crypto.randomUUID(), createdAt: Date.now(), name, libraryId: historyContext?.libraryId ?? '',
+      scope: historyContext?.scope ?? name, settings, repetitions, total: tasks.length, saved: 0,
+      status: '未完成（运行中或页面刷新中断）', geometry: { boardWidth: board.width, boardHeight: board.height,
+        viewportWidth: viewport.width, viewportHeight: viewport.height, pixelRatio: viewport.pixelRatio } };
+    this.persistHistory();
     const resize = () => { abort.abort(); };
     window.addEventListener('resize', resize);
     this.name = name; this.results = []; this.rows.replaceChildren();
@@ -107,6 +141,13 @@ export class ConfigurationBatchPanel {
     } finally {
       pool?.dispose(); abort.signal.removeEventListener('abort', stopWorkers);
       window.removeEventListener('resize', resize); this.abort = undefined;
+      if (this.history) {
+        this.history.status = fatal ? `线程失败：${fatal}` : abort.signal.aborted ? '已取消（保留已完成结果）' : '计算完成';
+        this.persistHistory();
+      }
+      await this.historyWrites;
+      this.persistenceStatus.textContent = this.historyError || '历史记录已保存，可在“计算配置”中查看。';
+      this.history = undefined;
       this.cancelButton.disabled = true; this.exportButton.disabled = !this.results.length;
     }
   }
@@ -118,6 +159,7 @@ export class ConfigurationBatchPanel {
     const index = this.results.findIndex((existing) => existing.order > result.order);
     const insertion = index < 0 ? this.results.length : index;
     this.results.splice(insertion, 0, result);
+    if (this.history) { this.history.saved = this.results.length; this.persistHistory(result); }
     this.onResult?.(result);
     const tr = document.createElement('tr');
     this.values(result).forEach((value) => { const td = document.createElement('td'); td.textContent = String(value); tr.append(td); });
