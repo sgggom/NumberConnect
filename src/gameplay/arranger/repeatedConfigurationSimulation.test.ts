@@ -14,6 +14,13 @@ function input() {
     observe: async () => occlusion, findCompletion: async (request: Parameters<typeof solver.findCompletion>[0]) => solver.findCompletion(request) };
 }
 describe('repeated batch results', () => {
+  it('does not retain replay frames in batch mode while preserving run counters and final state', async () => {
+    const replay = await simulateOccludedPlay(input());
+    const compact = await simulateOccludedPlay({ ...input(), retainFrames: false });
+    expect(replay.frames.length).toBeGreaterThan(0);
+    expect(compact.frames).toEqual([]);
+    expect(compact).toEqual({ ...replay, frames: [] });
+  });
   it('keeps identical results when worker simulations omit UI timer yields', async () => {
     const normal = await simulateRepeatedConfiguration(input(), 3);
     const worker = await simulateRepeatedConfiguration({ ...input(), yieldToUI: false }, 3);

@@ -30,23 +30,29 @@ export function classifyConfigurationFrame(level: LevelData, frame: SimulationFr
   };
 }
 
-export function summarizeConfigurationRun(level: LevelData, run: OcclusionRun): ConfigurationMetrics {
+export function createConfigurationMetricsAccumulator(level: LevelData) {
   const hiddenKeys = new Set((level.hiddenCells ?? []).map(cellKey));
   const result: ConfigurationMetrics = {
     total: level.solutionPath.length,
     hidden: level.solutionPath.filter((cell, i) => i > 0 && i < level.solutionPath.length - 1 && hiddenKeys.has(cellKey(cell))).length,
-    singleCertain: 0, singleMisleading: 0, twoGapOne: 0, twoGapTwo: 0, multiple: 0, bottlenecks: 0, errors: run.errors,
+    singleCertain: 0, singleMisleading: 0, twoGapOne: 0, twoGapTwo: 0, multiple: 0, bottlenecks: 0, errors: 0,
   };
   const positions = new Set<number>(), bottlenecks = new Set<number>();
-  for (const frame of run.frames) {
+  const add = (frame: SimulationFrame) => {
+    result.errors = frame.after.errors;
     if (frame.observation.forced) bottlenecks.add(frame.current);
-    if (positions.has(frame.current)) continue;
+    if (positions.has(frame.current)) return;
     positions.add(frame.current);
     const counts = classifyConfigurationFrame(level, frame);
     for (const key of Object.keys(counts) as Array<keyof typeof counts>) result[key] += counts[key];
   }
-  result.bottlenecks = bottlenecks.size;
-  return result;
+  return { add, finish: (errors = result.errors): ConfigurationMetrics => ({ ...result, errors, bottlenecks: bottlenecks.size }) };
+}
+
+export function summarizeConfigurationRun(level: LevelData, run: OcclusionRun): ConfigurationMetrics {
+  const accumulator = createConfigurationMetricsAccumulator(level);
+  run.frames.forEach(accumulator.add);
+  return accumulator.finish(run.errors);
 }
 
 export function csvCell(value: string | number): string {

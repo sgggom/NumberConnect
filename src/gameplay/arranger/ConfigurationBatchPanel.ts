@@ -22,6 +22,14 @@ export class ConfigurationBatchPanel {
   private readonly closeButton = document.createElement('button');
   private abort?: AbortController;
   private results: Result[] = [];
+  private resultCount = 0;
+  private page = 0;
+  private readonly tableArea = document.createElement('div');
+  private readonly pager = document.createElement('div');
+  private readonly viewResults = document.createElement('button');
+  private readonly pageLabel = document.createElement('span');
+  private readonly previousPage = document.createElement('button');
+  private readonly nextPage = document.createElement('button');
   private name = '';
   private history?: BatchHistoryEntry;
   private historyWrites: Promise<void> = Promise.resolve();
@@ -39,12 +47,20 @@ export class ConfigurationBatchPanel {
     const table = document.createElement('table'), head = document.createElement('thead'), tr = document.createElement('tr');
     this.headers.forEach((label) => { const th = document.createElement('th'); th.textContent = label; tr.append(th); });
     head.append(tr); table.append(head, this.rows);
-    const scroll = document.createElement('div'); scroll.className = 'arranger-batch-table'; scroll.append(table);
+    const scroll = this.tableArea; scroll.className = 'arranger-batch-table'; scroll.append(table);
+    const pager = this.pager; pager.className = 'arranger-group-actions';
+    this.previousPage.type = this.nextPage.type = 'button';
+    this.previousPage.textContent = '上一页结果'; this.nextPage.textContent = '下一页结果';
+    this.previousPage.addEventListener('click', () => { this.page--; this.renderRows(); });
+    this.nextPage.addEventListener('click', () => { this.page++; this.renderRows(); });
+    pager.append(this.previousPage, this.pageLabel, this.nextPage);
     const actions = document.createElement('div'); actions.className = 'arranger-group-actions';
     this.exportButton.textContent = '导出 CSV'; this.cancelButton.textContent = '取消计算'; this.closeButton.textContent = '关闭';
     for (const button of [this.exportButton, this.cancelButton, this.closeButton]) button.type = 'button';
-    actions.append(this.exportButton, this.cancelButton, this.closeButton);
-    this.dialog.append(title, help, this.settingsInfo, this.status, this.persistenceStatus, scroll, actions); host.append(this.dialog);
+    this.viewResults.type = 'button'; this.viewResults.textContent = '查看结果表';
+    this.viewResults.addEventListener('click', () => this.showResultTable());
+    actions.append(this.exportButton, this.viewResults, this.cancelButton, this.closeButton);
+    this.dialog.append(title, help, this.settingsInfo, this.status, this.persistenceStatus, scroll, pager, actions); host.append(this.dialog);
     this.cancelButton.addEventListener('click', () => { this.abort?.abort(); this.status.textContent = '正在取消，已完成结果会保留…'; });
     this.closeButton.addEventListener('click', () => { this.abort?.abort(); this.dialog.close(); });
     this.dialog.addEventListener('cancel', () => this.abort?.abort());
@@ -56,11 +72,13 @@ export class ConfigurationBatchPanel {
     const results = await loadBatchHistoryResults(entry.id);
     this.history = undefined; this.onResult = undefined;
     this.name = `${entry.name}-${new Date(entry.createdAt).toISOString().slice(0, 10)}`;
-    this.results = []; this.rows.replaceChildren();
+    this.results = []; this.resultCount = 0; this.page = 0; this.rows.replaceChildren();
     this.settingsInfo.textContent = `${entry.scope} · 每版本 ${entry.repetitions} 次\n${describeBatchSettings(entry.settings)}`;
     this.status.textContent = `历史记录：${new Date(entry.createdAt).toLocaleString()} · ${entry.status} · 已保存 ${results.length}/${entry.total} 个版本`;
     this.persistenceStatus.textContent = '';
     results.forEach((result) => this.append(result));
+    this.showResultTable();
+    this.viewResults.disabled = !results.length;
     this.cancelButton.disabled = true; this.exportButton.disabled = !results.length;
     this.dialog.showModal();
   }
@@ -98,12 +116,16 @@ export class ConfigurationBatchPanel {
     this.persistHistory();
     const resize = () => { abort.abort(); };
     window.addEventListener('resize', resize);
-    this.name = name; this.results = []; this.rows.replaceChildren();
+    this.name = name; this.results = []; this.resultCount = 0; this.page = 0; this.rows.replaceChildren();
     this.exportButton.disabled = true; this.cancelButton.disabled = false;
+    this.viewResults.disabled = true; this.tableArea.hidden = this.pager.hidden = true;
     this.dialog.showModal();
     let failed = 0, next = 0, running = 0, fatal = '', completedSimulations = 0;
+    let lastProgressAt = -Infinity;
     const updateProgress = () => {
-      this.status.textContent = `${name}：${this.results.length}/${tasks.length}个版本，模拟 ${completedSimulations}/${tasks.length * repetitions}次，${threaded ? `${concurrency}线程` : '兼容单线程'}，运行 ${running}，失败 ${failed}，耗时 ${((performance.now() - started) / 1000).toFixed(1)}秒`;
+      if (performance.now() - lastProgressAt < 100) return;
+      lastProgressAt = performance.now();
+      this.status.textContent = `${name}：${this.resultCount}/${tasks.length}个版本，模拟 ${completedSimulations}/${tasks.length * repetitions}次，${threaded ? `${concurrency}线程` : '兼容单线程'}，运行 ${running}，失败 ${failed}，耗时 ${((performance.now() - started) / 1000).toFixed(1)}秒`;
     };
     const lane = async () => {
       while (!abort.signal.aborted && next < tasks.length) {
@@ -132,12 +154,14 @@ export class ConfigurationBatchPanel {
           this.append({ ...task, order, status: `失败：${message}` });
           if (pool?.stopped) { fatal = message; abort.abort(); }
         } finally { sampler?.dispose(); running--; updateProgress(); }
+        // Bound queued history writes to at most one result per running lane.
+        await this.historyWrites;
         if (!pool) await new Promise<void>((resolve) => setTimeout(resolve, 0));
       }
     };
     try {
       await Promise.all(Array.from({ length: concurrency }, () => lane()));
-      this.status.textContent = `${name}：${fatal ? `线程失败：${fatal}` : abort.signal.aborted ? '已取消（取消或窗口尺寸变化）' : '计算完成'}，${this.results.length}/${tasks.length} 个棋盘，失败 ${failed} 个，${threaded ? `${concurrency}线程` : '兼容单线程'}，耗时 ${((performance.now() - started) / 1000).toFixed(1)}秒。`;
+      this.status.textContent = `${name}：${fatal ? `线程失败：${fatal}` : abort.signal.aborted ? '已取消（取消或窗口尺寸变化）' : '计算完成'}，${this.resultCount}/${tasks.length} 个棋盘，失败 ${failed} 个，${threaded ? `${concurrency}线程` : '兼容单线程'}，耗时 ${((performance.now() - started) / 1000).toFixed(1)}秒。`;
     } finally {
       pool?.dispose(); abort.signal.removeEventListener('abort', stopWorkers);
       window.removeEventListener('resize', resize); this.abort = undefined;
@@ -146,9 +170,10 @@ export class ConfigurationBatchPanel {
         this.persistHistory();
       }
       await this.historyWrites;
+      this.viewResults.disabled = !this.resultCount;
       this.persistenceStatus.textContent = this.historyError || '历史记录已保存，可在“计算配置”中查看。';
       this.history = undefined;
-      this.cancelButton.disabled = true; this.exportButton.disabled = !this.results.length;
+      this.cancelButton.disabled = true; this.exportButton.disabled = !this.resultCount;
     }
   }
 
@@ -156,17 +181,38 @@ export class ConfigurationBatchPanel {
     return [BATCH_CONFIGURATION_LABELS[result.configuration as keyof typeof BATCH_CONFIGURATION_LABELS] ?? result.configuration ?? '', result.groupId, result.stage, result.configuredId, result.id, result.difficulty ?? 0, result.repetitions ?? '', result.completedRuns ?? '', ...METRIC_COLUMNS.map(([key]) => result.metrics ? Number(result.metrics[key].toFixed(2)) : ''), result.status];
   }
   private append(result: Result): void {
-    const index = this.results.findIndex((existing) => existing.order > result.order);
-    const insertion = index < 0 ? this.results.length : index;
-    this.results.splice(insertion, 0, result);
-    if (this.history) { this.history.saved = this.results.length; this.persistHistory(result); }
+    if (!this.results[result.order]) this.resultCount++;
+    this.results[result.order] = result;
+    if (this.history) { this.history.saved = this.resultCount; this.persistHistory(result); }
     this.onResult?.(result);
-    const tr = document.createElement('tr');
-    this.values(result).forEach((value) => { const td = document.createElement('td'); td.textContent = String(value); tr.append(td); });
-    this.rows.insertBefore(tr, this.rows.children[insertion] ?? null); this.exportButton.disabled = false;
+    this.exportButton.disabled = false;
+  }
+  private showResultTable(): void {
+    this.tableArea.hidden = this.pager.hidden = false;
+    this.renderRows();
+  }
+  private renderRows(): void {
+    const count = Math.max(1, Math.ceil(this.resultCount / 100));
+    this.page = Math.max(0, Math.min(this.page, count - 1));
+    const first = this.page * 100, last = first + 100;
+    let index = 0;
+    const fragment = document.createDocumentFragment();
+    // Sparse slots keep original task order without an O(n) insertion per completed job.
+    for (const result of this.results) {
+      if (!result) continue;
+      if (index >= last) break;
+      if (index++ < first) continue;
+      const tr = document.createElement('tr');
+      this.values(result).forEach((value) => { const td = document.createElement('td'); td.textContent = String(value); tr.append(td); });
+      fragment.append(tr);
+    }
+    this.rows.replaceChildren(fragment);
+    this.pageLabel.textContent = `${this.page + 1}/${count} 页 · 共 ${this.resultCount} 条 · 每页100条（导出包含全部结果）`;
+    this.previousPage.disabled = this.page === 0;
+    this.nextPage.disabled = this.page >= count - 1;
   }
   private export(): void {
-    const text = [this.headers, ...this.results.map((result) => this.values(result))].map((row) => row.map(csvCell).join(',')).join('\r\n');
+    const text = [this.headers, ...this.results.filter(Boolean).map((result) => this.values(result))].map((row) => row.map(csvCell).join(',')).join('\r\n');
     const url = URL.createObjectURL(new Blob(['\uFEFF', text], { type: 'text/csv;charset=utf-8' }));
     const anchor = document.createElement('a'); anchor.href = url; anchor.download = `${this.name}-批量计算.csv`;
     anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 60_000);

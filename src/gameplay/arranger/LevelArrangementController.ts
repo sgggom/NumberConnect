@@ -598,8 +598,8 @@ export class LevelArrangementController {
           metrics: result.metrics, status: result.status,
           source: `${BATCH_CONFIGURATION_LABELS[result.configuration as ArrangementMode]} · 第${result.groupId}关 · 棋盘${result.stage} · 难度${result.difficulty ?? 0} · ${result.repetitions ?? 0}次平均`,
         });
-        this.renderLibraryParameters();
       }, repetitions, settings, { libraryId, scope: selection.scope });
+      this.renderLibraryParameters();
     } catch (error) {
       this.query('#arranger-file-status').textContent = `批量计算失败：${error instanceof Error ? error.message : String(error)}`;
     } finally {
