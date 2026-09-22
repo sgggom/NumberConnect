@@ -40,7 +40,7 @@ import { ConfigurationBatchPanel } from './ConfigurationBatchPanel';
 import { createConfigurationBatchTasks } from './configurationBatchTasks';
 import { chooseConfigurationBatchScope, BATCH_CONFIGURATION_LABELS } from './ConfigurationBatchScopePanel';
 import { METRIC_COLUMNS, summarizeConfigurationRun, type ConfigurationMetrics } from './configurationBatchMetrics';
-import { loadBatchHistoryResults } from './configurationBatchHistory';
+import { loadBatchHistoryResults, loadBatchResumePlan, listBatchHistory } from './configurationBatchHistory';
 import { chooseExcelBatchSettings } from './ExcelBatchSettingsPanel';
 import { createExcelBatchTasks } from './excelBatchTasks';
 
@@ -538,13 +538,17 @@ export class LevelArrangementController {
         const [detail] = await loadArrangementDetails(manifest.id, [id]);
         return this.decodeLevel({ ...indices.get(id)!, ...detail });
       }, undefined, selection.repetitions, selection.settings, {
-        libraryId: manifest.id, scope: `Excel：${file.name} · 全部 ${levels.length} 个版本 · 全部难度 · 原表行号见配置关号${manifest.skippedRows ? ` · 跳过${manifest.skippedRows}行无效数据` : ''}`,
+        libraryId: manifest.id, ownedLibrary: true, scope: `Excel：${file.name} · 全部 ${levels.length} 个版本 · 全部难度 · 原表行号见配置关号${manifest.skippedRows ? ` · 跳过${manifest.skippedRows}行无效数据` : ''}`,
       });
       status.textContent = `Excel 计算已结束：${file.name}。结果可在“计算配置”的历史记录中查看或应用。`;
     } catch (error) {
       status.textContent = `Excel 计算失败：${error instanceof Error ? error.message : String(error)}`;
     } finally {
-      if (temporaryLibrary) await deleteArrangementLibrary(temporaryLibrary).catch(() => undefined);
+      if (temporaryLibrary) {
+        // Keep imported Excel data while its history owns it, including after refresh/cancel.
+        const retained = await listBatchHistory().then((entries) => entries.some((entry) => entry.ownedLibrary && entry.libraryId === temporaryLibrary)).catch(() => true);
+        if (!retained) await deleteArrangementLibrary(temporaryLibrary).catch(() => undefined);
+      }
       this.batchCalculating = false; this.renderGroups();
     }
   }
@@ -576,7 +580,25 @@ export class LevelArrangementController {
         this.renderLibraryParameters();
         this.query('#arranger-file-status').textContent = `已应用历史结果：${applied.size} 个关卡，列表和关卡库中的“模拟跑关结果”已更新${results.length > matched.length ? `；跳过 ${results.length - matched.length} 条无统计或未匹配结果` : ''}。`;
       });
-      if (!selection?.tasks.length) return;
+      if (!selection) return;
+      if ('resume' in selection) {
+        const entry = selection.resume;
+        const plan = await loadBatchResumePlan(entry.id);
+        if (!plan) throw new Error('此历史没有保存续跑清单。');
+        const levels = await loadArrangementIndices(entry.libraryId);
+        if (!levels.length) throw new Error('原关卡库已不存在，无法继续计算。');
+        const indices = new Map(levels.map((level) => [level.id, level]));
+        this.batchPanel ??= new ConfigurationBatchPanel(this.host);
+        await this.batchPanel.run(entry.name, plan.tasks, new DOMRect(plan.board.x, plan.board.y, plan.board.width, plan.board.height), async (id) => {
+          const index = indices.get(id);
+          if (!index) throw new Error(`原关卡库中找不到 ${id}`);
+          const [detail] = await loadArrangementDetails(entry.libraryId, [id]);
+          if (!detail) throw new Error(`缺少 ${id} 的关卡数据`);
+          return this.decodeLevel({ ...index, ...detail });
+        }, undefined, entry.repetitions, entry.settings, undefined, entry);
+        return;
+      }
+      if (!selection.tasks.length) return;
       const { tasks, repetitions, settings } = selection;
       const modeLabel = [...new Set(tasks.map((task) => BATCH_CONFIGURATION_LABELS[task.configuration as ArrangementMode]))].join('＋');
       if (!this.query('#arranger-preview').querySelector('svg')) {

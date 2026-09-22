@@ -8,7 +8,7 @@ import { METRIC_COLUMNS, csvCell, type ConfigurationMetrics } from './configurat
 
 import type { ConfigurationBatchTask } from './configurationBatchTasks';
 import { BATCH_CONFIGURATION_LABELS } from './ConfigurationBatchScopePanel';
-import { describeBatchSettings, loadBatchHistoryResults, saveBatchHistory, type BatchHistoryEntry } from './configurationBatchHistory';
+import { describeBatchSettings, loadBatchHistoryResults, saveBatchHistory, saveBatchResumePlan, loadBatchResumePlan, listBatchHistory, pendingBatchOrders, withBatchHistoryLock, type BatchHistoryEntry } from './configurationBatchHistory';
 export interface ConfigurationBatchResult extends ConfigurationBatchTask { metrics?: ConfigurationMetrics; status: string; repetitions?: number; completedRuns?: number }
 type Result = ConfigurationBatchResult & { order: number };
 
@@ -95,13 +95,31 @@ export class ConfigurationBatchPanel {
   cancel(): void { this.abort?.abort(); }
 
   async run(name: string, tasks: ConfigurationBatchTask[], board: DOMRect, load: (id: string) => Promise<LevelData>,
-    onResult?: (result: ConfigurationBatchResult) => void, repetitions = 1, settingsOverride?: ConfigurationBatchSettings, historyContext?: { libraryId: string; scope: string }): Promise<void> {
+    onResult?: (result: ConfigurationBatchResult) => void, repetitions = 1, settingsOverride?: ConfigurationBatchSettings, historyContext?: { libraryId: string; scope: string; ownedLibrary?: boolean }, resumeEntry?: BatchHistoryEntry): Promise<void> {
+    if (this.abort) return;
+    const id = resumeEntry?.id ?? crypto.randomUUID();
+    await withBatchHistoryLock(id, () => this.execute(id, name, tasks, board, load, onResult, repetitions, settingsOverride, historyContext, resumeEntry));
+  }
+
+  private async execute(id: string, name: string, tasks: ConfigurationBatchTask[], board: DOMRect, load: (id: string) => Promise<LevelData>,
+    onResult?: (result: ConfigurationBatchResult) => void, repetitions = 1, settingsOverride?: ConfigurationBatchSettings,
+    historyContext?: { libraryId: string; scope: string; ownedLibrary?: boolean }, resumeEntry?: BatchHistoryEntry): Promise<void> {
+    let previous: Result[] = [];
+    if (resumeEntry) {
+      const entry = (await listBatchHistory()).find((item) => item.id === id);
+      const plan = await loadBatchResumePlan(id);
+      if (!entry || !plan) throw new Error('此记录没有续跑清单，无法继续计算。');
+      resumeEntry = entry;
+      tasks = plan.tasks; name = entry.name; settingsOverride = entry.settings; repetitions = entry.repetitions;
+      board = new DOMRect(plan.board.x, plan.board.y, plan.board.width, plan.board.height);
+      previous = await loadBatchHistoryResults(id);
+    }
     if (this.abort) return;
     const abort = new AbortController(); this.abort = abort;
     this.onResult = onResult;
     const settings: ConfigurationBatchSettings = structuredClone(settingsOverride ?? readConfigurationBatchSettings());
     this.settingsInfo.textContent = describeBatchSettings(settings);
-    const viewport = { width: window.innerWidth, height: window.innerHeight, pixelRatio: window.devicePixelRatio || 1 };
+    const viewport = resumeEntry ? { width: resumeEntry.geometry.viewportWidth, height: resumeEntry.geometry.viewportHeight, pixelRatio: resumeEntry.geometry.pixelRatio } : { width: window.innerWidth, height: window.innerHeight, pixelRatio: window.devicePixelRatio || 1 };
     const threaded = typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined' && typeof createImageBitmap !== 'undefined';
     const concurrency = threaded ? Math.min(configurationSimulationConcurrency(settings.workerCount), tasks.length) : 1;
     const pool = threaded ? new ConfigurationSimulationPool(concurrency) : undefined;
@@ -109,18 +127,27 @@ export class ConfigurationBatchPanel {
     abort.signal.addEventListener('abort', stopWorkers, { once: true });
     const started = performance.now();
     this.historyError = ''; this.persistenceStatus.textContent = '正在保存历史记录…';
-    this.history = { id: crypto.randomUUID(), createdAt: Date.now(), name, libraryId: historyContext?.libraryId ?? '',
-      scope: historyContext?.scope ?? name, settings, repetitions, total: tasks.length, saved: 0,
+    this.history = resumeEntry ? { ...resumeEntry, status: '未完成（续跑中或页面刷新中断）' } : { id, createdAt: Date.now(), name, libraryId: historyContext?.libraryId ?? '',
+      scope: historyContext?.scope ?? name, settings, repetitions, total: tasks.length, saved: 0, resumable: true, ownedLibrary: historyContext?.ownedLibrary,
       status: '未完成（运行中或页面刷新中断）', geometry: { boardWidth: board.width, boardHeight: board.height,
         viewportWidth: viewport.width, viewportHeight: viewport.height, pixelRatio: viewport.pixelRatio } };
-    this.persistHistory();
+    try {
+      if (!resumeEntry) await saveBatchResumePlan(this.history, { id, tasks, board: { x: board.x, y: board.y, width: board.width, height: board.height } });
+      else await saveBatchHistory(this.history);
+    } catch (error) {
+      pool?.dispose(); this.abort = undefined; this.history = undefined;
+      throw new Error(`无法保存续跑记录：${String(error)}`);
+    }
     const resize = () => { abort.abort(); };
     window.addEventListener('resize', resize);
     this.name = name; this.results = []; this.resultCount = 0; this.page = 0; this.rows.replaceChildren();
-    this.exportButton.disabled = true; this.cancelButton.disabled = false;
+    previous.forEach((result) => { this.results[result.order] = result; this.onResult?.(result); });
+    this.resultCount = previous.length;
+    const pending = pendingBatchOrders(tasks, previous);
+    this.exportButton.disabled = !this.resultCount; this.cancelButton.disabled = false;
     this.viewResults.disabled = true; this.tableArea.hidden = this.pager.hidden = true;
     this.dialog.showModal();
-    let failed = 0, next = 0, running = 0, fatal = '', completedSimulations = 0;
+    let failed = previous.filter((row) => row.status.startsWith('失败')).length, next = 0, running = 0, fatal = '', completedSimulations = previous.reduce((sum, row) => sum + (row.repetitions ?? 0), 0);
     let lastProgressAt = -Infinity;
     const updateProgress = () => {
       if (performance.now() - lastProgressAt < 100) return;
@@ -128,8 +155,8 @@ export class ConfigurationBatchPanel {
       this.status.textContent = `${name}：${this.resultCount}/${tasks.length}个版本，模拟 ${completedSimulations}/${tasks.length * repetitions}次，${threaded ? `${concurrency}线程` : '兼容单线程'}，运行 ${running}，失败 ${failed}，耗时 ${((performance.now() - started) / 1000).toFixed(1)}秒`;
     };
     const lane = async () => {
-      while (!abort.signal.aborted && next < tasks.length) {
-        const order = next++, task = tasks[order]; running++; updateProgress();
+      while (!abort.signal.aborted && next < pending.length) {
+        const order = pending[next++], task = tasks[order]; running++; updateProgress();
         let sampler: HandOcclusionSampler | undefined;
         let previousProgress = 0;
         const progress = (completed: number) => { completedSimulations += completed - previousProgress; previousProgress = completed; updateProgress(); };
@@ -171,7 +198,7 @@ export class ConfigurationBatchPanel {
       }
       await this.historyWrites;
       this.viewResults.disabled = !this.resultCount;
-      this.persistenceStatus.textContent = this.historyError || '历史记录已保存，可在“计算配置”中查看。';
+      this.persistenceStatus.textContent = this.historyError || '历史记录已保存，可在“计算配置”中查看或继续计算。';
       this.history = undefined;
       this.cancelButton.disabled = true; this.exportButton.disabled = !this.resultCount;
     }
