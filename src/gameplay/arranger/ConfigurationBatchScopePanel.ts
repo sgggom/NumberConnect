@@ -5,7 +5,7 @@ import { deleteBatchHistory, describeBatchSettings, listBatchHistory, type Batch
 
 export const BATCH_CONFIGURATION_LABELS = { main: '主玩法', daily: '挑战', bead: '活动' } as const;
 
-export function chooseConfigurationBatchScope(host: HTMLElement, tasks: ConfigurationBatchTask[], current: string, onHistory: (entry: BatchHistoryEntry) => Promise<void>): Promise<{ tasks: ConfigurationBatchTask[]; repetitions: number; settings: ConfigurationBatchSettings; scope: string } | undefined> {
+export function chooseConfigurationBatchScope(host: HTMLElement, tasks: ConfigurationBatchTask[], current: string, onHistory: (entry: BatchHistoryEntry) => Promise<void>, onApplyHistory: (entry: BatchHistoryEntry) => Promise<void>): Promise<{ tasks: ConfigurationBatchTask[]; repetitions: number; settings: ConfigurationBatchSettings; scope: string } | undefined> {
   const dialog = document.createElement('dialog'); dialog.className = 'arranger-batch-dialog arranger-batch-scope';
   dialog.setAttribute('aria-label', '计算范围选择');
   const difficulties = [...new Set([0, 1, 2, 3, ...tasks.map((task) => task.difficulty ?? 0)])].sort((a, b) => a - b);
@@ -35,7 +35,7 @@ export function chooseConfigurationBatchScope(host: HTMLElement, tasks: Configur
   const history = document.createElement('section'); history.className = 'arranger-batch-history-column';
   const fields = [...dialog.children].filter((child) => child.tagName === 'FIELDSET' || child === simulationSettings.element);
   config.append(...fields); columns.append(config, history); dialog.insertBefore(columns, query('[data-summary]'));
-  history.innerHTML = '<h4>历史记录</h4><small>自动保存在当前浏览器。选择记录可查看结果、导出 CSV；刷新中断的任务保留已完成结果。</small><p data-history-status role="status"></p><div data-history-list></div>';
+  history.innerHTML = '<h4>历史记录</h4><small>自动保存在当前浏览器。可将历史结果应用到当前列表，也可查看结果、导出 CSV；刷新中断的任务保留已完成结果。</small><p data-history-status role="status"></p><div data-history-list></div>';
   const historyStatus = query('[data-history-status]');
   const historyList = query('[data-history-list]');
   const renderHistory = async () => {
@@ -49,6 +49,7 @@ export function chooseConfigurationBatchScope(host: HTMLElement, tasks: Configur
         const info = document.createElement('p');
         info.textContent = `${entry.scope}\n每版本 ${entry.repetitions} 次；结果 ${entry.saved}/${entry.total} 个版本；${entry.status}\n${describeBatchSettings(entry.settings)}\n棋盘 ${Math.round(entry.geometry.boardWidth)}×${Math.round(entry.geometry.boardHeight)}；视窗 ${entry.geometry.viewportWidth}×${entry.geometry.viewportHeight}；像素比 ${entry.geometry.pixelRatio}\n关卡库：${entry.libraryId}`;
         const actions = document.createElement('div'); actions.className = 'arranger-group-actions';
+        const apply = document.createElement('button'); apply.type = 'button'; apply.textContent = '应用到当前列表'; apply.disabled = entry.saved === 0;
         const view = document.createElement('button'); view.type = 'button'; view.textContent = '查看结果';
         const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = '删除';
         view.addEventListener('click', async () => {
@@ -56,12 +57,20 @@ export function chooseConfigurationBatchScope(host: HTMLElement, tasks: Configur
           try { await onHistory(entry); } catch (error) { historyStatus.textContent = `读取失败：${String(error)}`; }
           finally { view.disabled = false; }
         });
+        apply.addEventListener('click', async () => {
+          apply.disabled = true;
+          try {
+            await onApplyHistory(entry);
+            query<HTMLButtonElement>('[data-cancel]').click();
+          } catch (error) { historyStatus.textContent = `应用失败：${error instanceof Error ? error.message : String(error)}`; }
+          finally { apply.disabled = entry.saved === 0; }
+        });
         remove.addEventListener('click', async () => {
           remove.disabled = true;
           try { await deleteBatchHistory(entry.id); await renderHistory(); }
           catch (error) { historyStatus.textContent = `删除失败：${String(error)}`; remove.disabled = false; }
         });
-        actions.append(view, remove); card.append(title, info, actions); historyList.append(card);
+        actions.append(apply, view, remove); card.append(title, info, actions); historyList.append(card);
       }
     } catch (error) { historyStatus.textContent = `历史读取失败：${String(error)}`; }
   };

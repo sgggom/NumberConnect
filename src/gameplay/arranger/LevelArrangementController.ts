@@ -40,6 +40,7 @@ import { ConfigurationBatchPanel } from './ConfigurationBatchPanel';
 import { createConfigurationBatchTasks } from './configurationBatchTasks';
 import { chooseConfigurationBatchScope, BATCH_CONFIGURATION_LABELS } from './ConfigurationBatchScopePanel';
 import { METRIC_COLUMNS, summarizeConfigurationRun, type ConfigurationMetrics } from './configurationBatchMetrics';
+import { loadBatchHistoryResults } from './configurationBatchHistory';
 
 const PAGE_SIZE = 100;
 interface LibraryParameterGroup {
@@ -519,6 +520,21 @@ export class LevelArrangementController {
       const selection = await chooseConfigurationBatchScope(this.host, allTasks, this.arrangementMode, async (entry) => {
         this.batchPanel ??= new ConfigurationBatchPanel(this.host);
         await this.batchPanel.showHistory(entry);
+      }, async (entry) => {
+        const results = await loadBatchHistoryResults(entry.id);
+        if (this.libraryId !== libraryId) throw new Error('关卡库已切换，请重新打开计算配置。');
+        const matched = results.filter((result) => result.metrics && this.libraryById.has(result.id));
+        if (!matched.length) throw new Error('此历史没有可应用到当前关卡库的有效结果。');
+        const applied = new Set<string>();
+        for (const result of matched) {
+          applied.add(result.id);
+          this.simulationResults.set(`${libraryId}:${result.id}`, {
+            metrics: result.metrics, status: result.status,
+            source: `历史 ${new Date(entry.createdAt).toLocaleString()} · ${BATCH_CONFIGURATION_LABELS[result.configuration as ArrangementMode] ?? entry.name} · 第${result.groupId}关 · 棋盘${result.stage} · 难度${result.difficulty ?? 0} · ${result.repetitions ?? entry.repetitions}次平均`,
+          });
+        }
+        this.renderLibraryParameters();
+        this.query('#arranger-file-status').textContent = `已应用历史结果：${applied.size} 个关卡，列表和关卡库中的“模拟跑关结果”已更新${results.length > matched.length ? `；跳过 ${results.length - matched.length} 条无统计或未匹配结果` : ''}。`;
       });
       if (!selection?.tasks.length) return;
       const { tasks, repetitions, settings } = selection;
