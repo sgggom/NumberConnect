@@ -254,5 +254,9 @@
 .arranger-batch-settings-grid label { display: grid; gap: 6px; margin: 0; }
 .arranger-batch-settings-grid input, .arranger-batch-settings-grid select { min-width: 0; width: 100%; border: 1px solid #7192b4; border-radius: 5px; padding: 8px; background: #102033; color: #fff; }
 .arranger-batch-settings > button { border: 1px solid #7192b4; border-radius: 5px; background: #29445f; color: #fff; padding: 8px 12px; cursor: pointer; }
+.arranger-excel-settings { width: min(1000px, 94vw); overflow: auto; }
+.arranger-excel-settings .arranger-batch-settings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.arranger-excel-settings fieldset { min-width: 0; border: 1px solid #526479; border-radius: 8px; padding: 14px; }
+.arranger-excel-settings > .arranger-group-actions { position: sticky; bottom: -20px; padding: 12px 0; background: #172538; }
 .arranger-batch-scope > .arranger-group-actions { flex-shrink: 0; background: #172538; padding: 12px 0 0; }
 @media (max-width: 480px) { .arranger-batch-settings-grid { grid-template-columns: 1fr; } }

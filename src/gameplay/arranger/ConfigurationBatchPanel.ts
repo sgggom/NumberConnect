@@ -153,7 +153,7 @@ export class ConfigurationBatchPanel {
   }
 
   private values(result: Result): Array<string | number> {
-    return [BATCH_CONFIGURATION_LABELS[result.configuration as keyof typeof BATCH_CONFIGURATION_LABELS] ?? '', result.groupId, result.stage, result.configuredId, result.id, result.difficulty ?? 0, result.repetitions ?? '', result.completedRuns ?? '', ...METRIC_COLUMNS.map(([key]) => result.metrics ? Number(result.metrics[key].toFixed(2)) : ''), result.status];
+    return [BATCH_CONFIGURATION_LABELS[result.configuration as keyof typeof BATCH_CONFIGURATION_LABELS] ?? result.configuration ?? '', result.groupId, result.stage, result.configuredId, result.id, result.difficulty ?? 0, result.repetitions ?? '', result.completedRuns ?? '', ...METRIC_COLUMNS.map(([key]) => result.metrics ? Number(result.metrics[key].toFixed(2)) : ''), result.status];
   }
   private append(result: Result): void {
     const index = this.results.findIndex((existing) => existing.order > result.order);

@@ -24,6 +24,16 @@ beforeEach(() => {
 });
 
 describe('disk-backed arrangement library', () => {
+  it('imports a calculation-only library without replacing the active library or draft', async () => {
+    await commitArrangementLibrary(manifest('active'));
+    await writeArrangementBatch('excel', levels(), createArrangementIndexBuilder());
+    await commitArrangementLibrary(manifest('excel'), false);
+    expect((await loadActiveArrangementLibrary())?.id).toBe('active');
+    expect(await loadArrangementIndices('excel')).toHaveLength(2);
+    await deleteArrangementLibrary('excel');
+    expect((await loadActiveArrangementLibrary())?.id).toBe('active');
+    expect(await loadArrangementIndices('excel')).toHaveLength(0);
+  });
   it('upgrades old indices with the number of connections without keeping grids in memory', async () => {
     const input = levels();
     delete input[0].pathMetrics.connectionCount;

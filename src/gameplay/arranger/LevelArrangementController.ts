@@ -28,7 +28,7 @@ import {
 } from './arrangementLibraryCache';
 import type { ArrangementLibraryLevel } from './levelArrangement';
 import {
-  DATABASE_BATCH_SIZE, importArrangementLibrary, loadActiveArrangementLibrary,
+  DATABASE_BATCH_SIZE, deleteArrangementLibrary, importArrangementLibrary, loadActiveArrangementLibrary,
   loadArrangementIndices, loadArrangementDetails, loadArrangementDraft, saveArrangementDraft,
   type ArrangementLibraryManifest,
 } from './arrangementDatabase';
@@ -41,6 +41,8 @@ import { createConfigurationBatchTasks } from './configurationBatchTasks';
 import { chooseConfigurationBatchScope, BATCH_CONFIGURATION_LABELS } from './ConfigurationBatchScopePanel';
 import { METRIC_COLUMNS, summarizeConfigurationRun, type ConfigurationMetrics } from './configurationBatchMetrics';
 import { loadBatchHistoryResults } from './configurationBatchHistory';
+import { chooseExcelBatchSettings } from './ExcelBatchSettingsPanel';
+import { createExcelBatchTasks } from './excelBatchTasks';
 
 const PAGE_SIZE = 100;
 interface LibraryParameterGroup {
@@ -149,6 +151,8 @@ export class LevelArrangementController {
     });
     this.query('#arranger-copy-groups').addEventListener('click', () => void this.copyGroups());
     this.query('#arranger-copy-level-data').addEventListener('click', () => void this.exportLevelData());
+    this.query('#arranger-excel-calculate').addEventListener('click', () => this.query<HTMLInputElement>('#arranger-excel-calculate-file').click());
+    this.query('#arranger-excel-calculate-file').addEventListener('change', () => void this.calculateExcel());
     this.query('#arranger-batch-calculate').addEventListener('click', () => void this.calculateCurrentConfiguration());
     this.query<HTMLInputElement>('#arranger-search').addEventListener('input', () => {
       this.page = 0;
@@ -509,11 +513,47 @@ export class LevelArrangementController {
     }
   }
 
-  private async calculateCurrentConfiguration(): Promise<void> {
-    if (this.batchCalculating || !this.libraryId) return;
-    const libraryId = this.libraryId;
+  private async calculateExcel(): Promise<void> {
+    const input = this.query<HTMLInputElement>('#arranger-excel-calculate-file');
+    const file = input.files?.[0]; input.value = '';
+    if (!file || this.batchCalculating) return;
     this.batchCalculating = true;
-    this.query<HTMLButtonElement>('#arranger-batch-calculate').disabled = true;
+    this.renderGroups();
+    const status = this.query('#arranger-file-status');
+    let temporaryLibrary: string | undefined;
+    try {
+      const manifest = await importArrangementLibrary(file, (message) => { status.textContent = message; }, false);
+      temporaryLibrary = manifest.id;
+      const levels = await loadArrangementIndices(manifest.id);
+      if (!levels.length) throw new Error('Excel 中没有可计算的关卡，请提供关卡ID和关卡数据两列。');
+      const selection = await chooseExcelBatchSettings(this.host, file.name, levels.length, manifest.skippedRows);
+      if (!selection) { status.textContent = '已取消 Excel 计算。'; return; }
+      const indices = new Map(levels.map((level) => [level.id, level]));
+      const tasks = createExcelBatchTasks(levels, file.name);
+      const board = this.playtest?.prepareBatchCalculation()
+        ?? (this.query('#arranger-preview').querySelector('svg') ?? this.query('#arranger-preview')).getBoundingClientRect();
+      if (!board.width || !board.height) throw new Error('棋盘预览区域不可见，请扩大窗口后重试。');
+      this.batchPanel ??= new ConfigurationBatchPanel(this.host);
+      await this.batchPanel.run(`Excel：${file.name}`, tasks, board, async (id) => {
+        const [detail] = await loadArrangementDetails(manifest.id, [id]);
+        return this.decodeLevel({ ...indices.get(id)!, ...detail });
+      }, undefined, selection.repetitions, selection.settings, {
+        libraryId: manifest.id, scope: `Excel：${file.name} · 全部 ${levels.length} 个版本 · 全部难度 · 原表行号见配置关号${manifest.skippedRows ? ` · 跳过${manifest.skippedRows}行无效数据` : ''}`,
+      });
+      status.textContent = `Excel 计算已结束：${file.name}。结果可在“计算配置”的历史记录中查看或应用。`;
+    } catch (error) {
+      status.textContent = `Excel 计算失败：${error instanceof Error ? error.message : String(error)}`;
+    } finally {
+      if (temporaryLibrary) await deleteArrangementLibrary(temporaryLibrary).catch(() => undefined);
+      this.batchCalculating = false; this.renderGroups();
+    }
+  }
+
+  private async calculateCurrentConfiguration(): Promise<void> {
+    if (this.batchCalculating) return;
+    const libraryId = this.libraryId ?? '';
+    this.batchCalculating = true;
+    this.renderGroups();
     try {
       const allTasks = Object.entries(this.arrangementConfigurations).flatMap(([configuration, value]) =>
         createConfigurationBatchTasks(value.groups, this.library).map((task) => ({ ...task, configuration })));
@@ -564,7 +604,7 @@ export class LevelArrangementController {
       this.query('#arranger-file-status').textContent = `批量计算失败：${error instanceof Error ? error.message : String(error)}`;
     } finally {
       this.batchCalculating = false;
-      this.query<HTMLButtonElement>('#arranger-batch-calculate').disabled = !Object.values(this.arrangementConfigurations).some((config) => config.groups.some((group) => group.levelIds.length));
+      this.renderGroups();
     }
   }
 
@@ -865,7 +905,8 @@ export class LevelArrangementController {
     this.query<HTMLButtonElement>('#arranger-add-group').disabled = hasEmptyGroup;
     this.query<HTMLButtonElement>('#arranger-copy-groups').disabled = hasEmptyGroup;
     this.query<HTMLButtonElement>('#arranger-copy-level-data').disabled = this.exporting || !hasAnyConfiguredLevel;
-    this.query<HTMLButtonElement>('#arranger-batch-calculate').disabled = this.batchCalculating || !hasAnyConfiguredLevel;
+    this.query<HTMLButtonElement>('#arranger-batch-calculate').disabled = this.batchCalculating;
+    this.query<HTMLButtonElement>('#arranger-excel-calculate').disabled = this.batchCalculating;
   }
 
   private renderLibrary(): void {

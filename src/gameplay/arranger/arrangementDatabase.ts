@@ -81,10 +81,10 @@ export async function writeArrangementBatch(
 }
 
 // Publish only after every batch succeeds. A failed import cannot replace the working library.
-export async function commitArrangementLibrary(manifest: ArrangementLibraryManifest): Promise<void> {
+export async function commitArrangementLibrary(manifest: ArrangementLibraryManifest, activate = true): Promise<void> {
   await transaction(['libraries', 'settings'], 'readwrite', (tx) => {
     tx.objectStore('libraries').put(manifest, manifest.id);
-    tx.objectStore('settings').put(manifest, 'active');
+    if (activate) tx.objectStore('settings').put(manifest, 'active');
   });
 }
 
@@ -153,7 +153,7 @@ export const saveArrangementDraft = (id: string, draft: ArrangementDraft): Promi
 export const loadArrangementDraft = (id: string): Promise<ArrangementDraft | undefined> =>
   transaction(['drafts'], 'readonly', (tx) => tx.objectStore('drafts').get(id));
 
-export async function importArrangementLibrary(file: File, onProgress?: (message: string) => void): Promise<ArrangementLibraryManifest> {
+export async function importArrangementLibrary(file: File, onProgress?: (message: string) => void, activate = true): Promise<ArrangementLibraryManifest> {
   if (typeof Worker === 'undefined') throw new Error('当前环境不支持后台导入，请使用现代浏览器。');
   const id = crypto.randomUUID();
   const worker = new Worker(new URL('./arrangementLibrary.worker.ts', import.meta.url), { type: 'module' });
@@ -166,7 +166,7 @@ export async function importArrangementLibrary(file: File, onProgress?: (message
       };
       worker.onerror = (event) => reject(new Error(event.message || '关卡库导入线程异常退出。'));
       worker.onmessageerror = () => reject(new Error('关卡库导入消息读取失败。'));
-      worker.postMessage({ file, libraryId: id });
+      worker.postMessage({ file, libraryId: id, activate });
     });
   } catch (error) {
     worker.terminate();

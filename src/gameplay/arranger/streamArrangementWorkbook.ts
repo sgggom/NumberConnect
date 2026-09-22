@@ -108,6 +108,7 @@ export const readArrangementWorkbookStream = async (
   buffer: ArrayBuffer,
   onProgress?: (message: string) => void,
   onBatch?: (levels: ArrangementLibraryLevel[]) => Promise<void>,
+  minimalColumns = false,
 ): Promise<ArrangementLibraryParseResult> => {
   const archive = new Uint8Array(buffer);
   onProgress?.('正在读取共享文本…');
@@ -153,7 +154,7 @@ export const readArrangementWorkbookStream = async (
     } else if (name === 'row' && currentRow) {
       processedRows += 1;
       if (!libraryParser) libraryParser = createArrangementLibraryRowParser(currentRow,
-        onBatch ? (level) => { pending.push(level); } : undefined);
+        onBatch ? (level) => { pending.push(level); } : undefined, minimalColumns);
       else libraryParser.addRow(currentRow, currentRowNumber);
       if (processedRows % 5000 === 0) onProgress?.(`已整理 ${processedRows - 1} 行关卡数据…`);
       currentRow = undefined;
