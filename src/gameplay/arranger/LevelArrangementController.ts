@@ -1338,7 +1338,10 @@ export class LevelArrangementController {
             source: '当前棋盘模拟',
           });
           this.renderLibraryParameters();
-        });
+        }, (metrics) => {
+          this.simulationResults.set(`${libraryId}:${levelId}`, { metrics, status: '已通关', source: '当前棋盘手动试玩' });
+          this.renderLibraryParameters();
+        }, levelId);
         this.playtestLevelId = entry.id;
       }
       return;
