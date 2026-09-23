@@ -1,3 +1,4 @@
+import { matchesLibraryFilters, type LibraryFilterRule } from './libraryFilters';
 import type { ArrangementLibraryIndex, ArrangementLibraryLevel, ArrangementLevelGroup } from './levelArrangement';
 
 const DATABASE = 'number-connect-arrangement-v2';
@@ -9,6 +10,8 @@ export interface ArrangementLibraryManifest {
   name: string;
   count: number;
   parameterHeaders: string[];
+  sourceHeaders?: string[];
+  sourceLibraryId?: string;
   skippedRows: number;
 }
 
@@ -59,7 +62,7 @@ export function createArrangementIndexBuilder(): (level: ArrangementLibraryLevel
     if (!key) { key = `${prefix}${map.size}`; map.set(value, key); }
     return key;
   };
-  return ({ levelData: _grid, parameterValues: _parameters, ...index }) => ({
+  return ({ levelData: _grid, parameterValues: _parameters, sourceValues: _source, ...index }) => ({
     ...index,
     boardKey: intern(boards, index.boardKey, 'b'),
     pathKey: intern(paths, index.pathKey, 'p'),
@@ -74,7 +77,7 @@ export async function writeArrangementBatch(
     await transaction(['indices', 'details'], 'readwrite', (tx) => {
       for (const level of batch) {
         tx.objectStore('indices').put(buildIndex(level), [libraryId, level.id]);
-        tx.objectStore('details').put({ levelData: level.levelData, parameterValues: level.parameterValues }, [libraryId, level.id]);
+        tx.objectStore('details').put({ levelData: level.levelData, parameterValues: level.parameterValues, sourceValues: level.sourceValues }, [libraryId, level.id]);
       }
     });
   }
@@ -135,7 +138,7 @@ export async function loadArrangementIndices(id: string): Promise<ArrangementLib
   return levels.sort((a, b) => a.sourceRow - b.sourceRow);
 }
 
-type Detail = Pick<ArrangementLibraryLevel, 'levelData' | 'parameterValues'>;
+type Detail = Pick<ArrangementLibraryLevel, 'levelData' | 'parameterValues' | 'sourceValues'>;
 export async function loadArrangementDetails(id: string, levelIds: readonly string[]): Promise<Detail[]> {
   if (levelIds.length > DATABASE_BATCH_SIZE) throw new Error('读取关卡数据超过单批限制。');
   let requests: IDBRequest<Detail | undefined>[] = [];
@@ -173,4 +176,63 @@ export async function importArrangementLibrary(file: File, onProgress?: (message
     await deleteArrangementLibrary(id).catch(() => undefined);
     throw error;
   } finally { worker.terminate(); }
+}
+
+/** Scan bounded disk batches; keep only matching IDs in memory. */
+export async function loadArrangementFilterMatches(id: string, rules: LibraryFilterRule[], legacyValues?: (id: string, detail: Detail) => string[]): Promise<Set<string>> {
+  const matches = new Set<string>();
+  let lastId: string | undefined;
+  while (true) {
+    const range = lastId === undefined ? libraryRange(id) : IDBKeyRange.bound([id, lastId], [id, []], true);
+    let keys: IDBRequest<IDBValidKey[]>;
+    const rows = await transaction<Detail[]>(['details'], 'readonly', (tx) => {
+      keys = tx.objectStore('details').getAllKeys(range, DATABASE_BATCH_SIZE);
+      return tx.objectStore('details').getAll(range, DATABASE_BATCH_SIZE);
+    });
+    rows.forEach((row, i) => {
+      const levelId = (keys!.result[i] as string[])[1];
+      if (matchesLibraryFilters(row.sourceValues ?? legacyValues?.(levelId, row) ?? row.parameterValues, rules)) matches.add(levelId);
+    });
+    if (rows.length < DATABASE_BATCH_SIZE) break;
+    lastId = (keys!.result.at(-1) as string[])[1];
+  }
+  return matches;
+}
+
+export const loadArrangementLibrary = (id: string): Promise<ArrangementLibraryManifest | undefined> =>
+  transaction(['libraries'], 'readonly', (tx) => tx.objectStore('libraries').get(id));
+
+/** Always recalculate a cut from its original library, including previously excluded paths. */
+export async function loadArrangementRootLibrary(manifest: ArrangementLibraryManifest): Promise<ArrangementLibraryManifest> {
+  const visited = new Set<string>();
+  while (manifest.sourceLibraryId) {
+    if (visited.has(manifest.id)) throw new Error('原库关联异常，请重新读取 Excel。');
+    visited.add(manifest.id);
+    const source = await loadArrangementLibrary(manifest.sourceLibraryId);
+    if (!source) throw new Error('原库不存在，请重新读取 Excel。');
+    manifest = source;
+  }
+  return manifest;
+}
+
+export async function createTrimmedArrangementLibrary(source: ArrangementLibraryManifest,
+  levels: readonly ArrangementLibraryIndex[], onProgress?: (completed: number) => void): Promise<ArrangementLibraryManifest> {
+  if (!levels.length) throw new Error('没有符合条件的路径，原库保持不变。');
+  const id = crypto.randomUUID();
+  const manifest: ArrangementLibraryManifest = { ...source, id, sourceLibraryId: source.id,
+    name: `${source.name} · 错误趋势裁切库`, count: levels.length, skippedRows: 0 };
+  const buildIndex = createArrangementIndexBuilder();
+  try {
+    for (let offset = 0; offset < levels.length; offset += DATABASE_BATCH_SIZE) {
+      const batch = levels.slice(offset, offset + DATABASE_BATCH_SIZE);
+      const details = await loadArrangementDetails(source.id, batch.map((level) => level.id));
+      await writeArrangementBatch(id, batch.map((level, i) => ({ ...level, ...details[i] })), buildIndex);
+      onProgress?.(offset + batch.length);
+    }
+    await commitArrangementLibrary(manifest);
+    return manifest;
+  } catch (error) {
+    await deleteArrangementLibrary(id).catch(() => undefined);
+    throw error;
+  }
 }

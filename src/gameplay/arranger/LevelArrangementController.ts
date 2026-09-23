@@ -1,3 +1,8 @@
+import { createTrimmedArrangementLibrary, loadArrangementLibrary, loadArrangementRootLibrary, commitArrangementLibrary } from './arrangementDatabase';
+import { legacyLibraryFilterHeaders, legacyLibraryFilterValues } from './legacyLibraryFilters';
+import { chooseLibraryFilters } from './LibraryFilterPanel';
+import { increasingErrorTrendLevelIds, type LibraryFilterRule } from './libraryFilters';
+import { loadArrangementFilterMatches } from './arrangementDatabase';
 import { decodeCompactLevelData } from '../../game/levelDataFormat';
 import type { LevelData } from '../../game/types';
 import {
@@ -82,7 +87,14 @@ export interface LevelArrangementControllerOptions {
 export class LevelArrangementController {
   private library: ArrangementLibraryIndex[] = [];
   private libraryById = new Map<string, ArrangementLibraryIndex>();
+  private sourceLibraryId?: string;
+  private sourceLibrary: ArrangementLibraryIndex[] = [];
   private libraryParameterHeaders: string[] = [];
+  private filterHeaders: string[] = [];
+  private filterRules: LibraryFilterRule[] = [];
+  private currentLibraryManifest?: ArrangementLibraryManifest;
+  private trimmingLibrary = false;
+  private legacyFilterHeaders = false;
   private families: ArrangementBoardFamily[] = [];
   private arrangementMode: ArrangementMode = 'main';
   private arrangementConfigurations: Record<ArrangementMode, ArrangementConfiguration> = {
@@ -136,6 +148,8 @@ export class LevelArrangementController {
       this.options.onBack();
     });
     this.query('#arranger-open-file').addEventListener('click', () => this.fileInput.click());
+    this.query('#arranger-trim-library').addEventListener('click', () => void this.trimLibrary());
+    this.query('#arranger-restore-source').addEventListener('click', () => void this.restoreSourceLibrary());
     this.fileInput.addEventListener('change', () => void this.readSelectedFile());
     this.query('#arranger-add-group').addEventListener('click', () => this.addGroup());
     this.query('#arranger-config-switcher').addEventListener('click', (event) => this.switchArrangementMode(event));
@@ -154,6 +168,7 @@ export class LevelArrangementController {
     this.query('#arranger-excel-calculate').addEventListener('click', () => this.query<HTMLInputElement>('#arranger-excel-calculate-file').click());
     this.query('#arranger-excel-calculate-file').addEventListener('change', () => void this.calculateExcel());
     this.query('#arranger-batch-calculate').addEventListener('click', () => void this.calculateCurrentConfiguration());
+    this.query('#arranger-filter').addEventListener('click', () => void this.configureLibraryFilters());
     this.query<HTMLInputElement>('#arranger-search').addEventListener('input', () => {
       this.page = 0;
       clearTimeout(this.searchTimer);
@@ -263,12 +278,25 @@ export class LevelArrangementController {
   private async applyStoredLibrary(manifest: ArrangementLibraryManifest, restoreDraft: boolean): Promise<void> {
     const levels = await loadArrangementIndices(manifest.id);
     if (levels.length !== manifest.count) throw new Error('关卡库数据不完整，请重新导入。');
+    const source = await loadArrangementRootLibrary(manifest);
+    const sourceLevels = source.id === manifest.id ? levels : await loadArrangementIndices(source.id);
+    if (sourceLevels.length !== source.count) throw new Error('原库数据不完整，请重新导入。');
     const draft = restoreDraft ? await loadArrangementDraft(manifest.id) : undefined;
     this.saveDraft();
     this.restoringDraft = true;
     try {
       this.stopPlaytest();
       this.libraryId = manifest.id;
+      this.sourceLibraryId = source.id;
+      this.sourceLibrary = sourceLevels;
+      this.filterHeaders = manifest.sourceHeaders ?? legacyLibraryFilterHeaders(manifest.parameterHeaders);
+      this.legacyFilterHeaders = !manifest.sourceHeaders;
+      this.filterRules = [];
+      this.currentLibraryManifest = manifest;
+      this.query<HTMLButtonElement>('#arranger-trim-library').disabled = false;
+      this.query<HTMLButtonElement>('#arranger-restore-source').hidden = !manifest.sourceLibraryId;
+      this.query<HTMLButtonElement>('#arranger-filter').disabled = false;
+      this.query('#arranger-filter').textContent = '筛选';
       this.previewEntry = undefined;
       this.applyLibrary(levels, manifest.parameterHeaders, manifest.skippedRows, `已${restoreDraft ? '恢复' : '导入'} ${manifest.name}`);
       if (draft) {
@@ -299,7 +327,7 @@ export class LevelArrangementController {
     prefix: string,
   ): void {
     this.library = levels;
-    this.libraryById = new Map(levels.map((level) => [level.id, level]));
+    this.libraryById = new Map(this.sourceLibrary.map((level) => [level.id, level]));
     this.libraryParameterHeaders = parameterHeaders;
     this.families = arrangementBoardFamilies(this.library);
     this.arrangementMode = 'main';
@@ -390,6 +418,8 @@ export class LevelArrangementController {
       <b data-stage-number>阶段 ${index}</b>
       <input data-stage-formations type="text" placeholder="例如 44,[n1~n20],[n30~n40],55" aria-label="阶段 ${index} 阵型范围">
       <input data-stage-difficulties type="text" placeholder="例如 1-5,8" aria-label="阶段 ${index} 难度范围">
+      <input data-stage-min-errors type="number" min="0" step="any" placeholder="不限" aria-label="阶段 ${index} 最小错误次数">
+      <input data-stage-max-errors type="number" min="0" step="any" placeholder="不限" aria-label="阶段 ${index} 最大错误次数">
     `;
     row.querySelector<HTMLInputElement>('[data-stage-formations]')!.value = resolvedFormationRange;
     row.querySelector<HTMLInputElement>('[data-stage-difficulties]')!.value = resolvedDifficultyRange;
@@ -432,7 +462,7 @@ export class LevelArrangementController {
         .filter((levelId) => !this.libraryById.has(levelId)))];
       if (unknownLevelIds.length > 0) {
         const preview = unknownLevelIds.slice(0, 5).join('、');
-        throw new Error(`当前关卡库中找不到：${preview}${unknownLevelIds.length > 5 ? ` 等 ${unknownLevelIds.length} 条` : ''}。`);
+        throw new Error(`原关卡库中找不到：${preview}${unknownLevelIds.length > 5 ? ` 等 ${unknownLevelIds.length} 条` : ''}。`);
       }
       this.groups = groups;
       this.selectedGroupId = groups[0].id;
@@ -440,7 +470,7 @@ export class LevelArrangementController {
       this.syncSelectedPoolFromCurrentGroups();
       this.renderGroups();
       this.renderLibrary();
-      this.query('#arranger-file-status').textContent = `已从剪贴板读取 ${groups.length} 关排布`;
+      this.query('#arranger-file-status').textContent = `已从剪贴板读取 ${groups.length} 关排布，关卡数据使用原库`;
       this.closeAutoArrangementDialog();
     } catch (error) {
       status.textContent = error instanceof Error ? error.message : '读取剪贴板排布失败。';
@@ -468,6 +498,10 @@ export class LevelArrangementController {
         return {
           formationIds: parseFormationIdRange(row.querySelector<HTMLInputElement>('[data-stage-formations]')?.value ?? ''),
           difficultyIds: parseDifficultyIdRange(row.querySelector<HTMLInputElement>('[data-stage-difficulties]')?.value ?? ''),
+          minErrors: row.querySelector<HTMLInputElement>('[data-stage-min-errors]')?.value.trim()
+            ? Number(row.querySelector<HTMLInputElement>('[data-stage-min-errors]')!.value) : undefined,
+          maxErrors: row.querySelector<HTMLInputElement>('[data-stage-max-errors]')?.value.trim()
+            ? Number(row.querySelector<HTMLInputElement>('[data-stage-max-errors]')!.value) : undefined,
         };
       });
       const groups = await generateAutoArrangementAsync(this.families, {
@@ -556,11 +590,12 @@ export class LevelArrangementController {
   private async calculateCurrentConfiguration(): Promise<void> {
     if (this.batchCalculating) return;
     const libraryId = this.libraryId ?? '';
+    const sourceLibraryId = this.sourceLibraryId ?? libraryId;
     this.batchCalculating = true;
     this.renderGroups();
     try {
       const allTasks = Object.entries(this.arrangementConfigurations).flatMap(([configuration, value]) =>
-        createConfigurationBatchTasks(value.groups, this.library).map((task) => ({ ...task, configuration })));
+        createConfigurationBatchTasks(value.groups, this.sourceLibrary).map((task) => ({ ...task, configuration })));
       const selection = await chooseConfigurationBatchScope(this.host, allTasks, this.arrangementMode, async (entry) => {
         this.batchPanel ??= new ConfigurationBatchPanel(this.host);
         await this.batchPanel.showHistory(entry);
@@ -612,7 +647,7 @@ export class LevelArrangementController {
       await this.batchPanel.run(modeLabel, tasks, board, async (id) => {
         const index = this.libraryById.get(id);
         if (!index) throw new Error(`关卡库中找不到 ${id}`);
-        const [detail] = await loadArrangementDetails(libraryId, [id]);
+        const [detail] = await loadArrangementDetails(sourceLibraryId, [id]);
         if (!detail) throw new Error(`缺少 ${id} 的关卡数据`);
         return this.decodeLevel({ ...index, ...detail });
       }, (result) => {
@@ -620,7 +655,7 @@ export class LevelArrangementController {
           metrics: result.metrics, status: result.status,
           source: `${BATCH_CONFIGURATION_LABELS[result.configuration as ArrangementMode]} · 第${result.groupId}关 · 棋盘${result.stage} · 难度${result.difficulty ?? 0} · ${result.repetitions ?? 0}次平均`,
         });
-      }, repetitions, settings, { libraryId, scope: selection.scope });
+      }, repetitions, settings, { libraryId: sourceLibraryId, scope: selection.scope });
       this.renderLibraryParameters();
     } catch (error) {
       this.query('#arranger-file-status').textContent = `批量计算失败：${error instanceof Error ? error.message : String(error)}`;
@@ -641,11 +676,12 @@ export class LevelArrangementController {
     this.exporting = true;
     button.disabled = true;
     try {
-      const selected = selectArrangementExportLevels(configurations.flat(), this.library);
+      const selected = selectArrangementExportLevels(configurations.flat(), this.sourceLibrary);
+      const sourceLibraryId = this.sourceLibraryId ?? libraryId;
       const parts: BlobPart[] = ['{'];
       for (let offset = 0; offset < selected.length; offset += DATABASE_BATCH_SIZE) {
         const batch = selected.slice(offset, offset + DATABASE_BATCH_SIZE);
-        const details = await loadArrangementDetails(libraryId, batch.map((level) => level.id));
+        const details = await loadArrangementDetails(sourceLibraryId, batch.map((level) => level.id));
         const text = batch.map((level, index) => `${JSON.stringify(level.id)}:${JSON.stringify(details[index].levelData)}`).join(',');
         parts.push(new Blob([offset ? ',' : '', text]));
         this.query('#arranger-file-status').textContent = `正在导出 ${Math.min(offset + batch.length, selected.length)} / ${selected.length} 条关卡…`;
@@ -718,7 +754,10 @@ export class LevelArrangementController {
 
   private navigateToLibraryLevel(levelId: string): void {
     const location = findArrangementLevelLocation(this.families, levelId);
-    if (!location) return;
+    if (!location) {
+      if (this.libraryById.has(levelId)) this.previewLevelId = levelId;
+      return;
+    }
     const search = this.query<HTMLInputElement>('#arranger-search');
     search.value = '';
     this.page = Math.floor(location.boardIndex / PAGE_SIZE);
@@ -852,6 +891,78 @@ export class LevelArrangementController {
     const pageCount = Math.max(1, Math.ceil(this.filteredLibrary().length / PAGE_SIZE));
     this.page = Math.max(0, Math.min(pageCount - 1, this.page + offset));
     this.renderLibrary();
+  }
+
+  private async trimLibrary(): Promise<void> {
+    const source = this.currentLibraryManifest;
+    if (!source || this.trimmingLibrary || this.batchCalculating) return;
+    this.trimmingLibrary = true;
+    const button = this.query<HTMLButtonElement>('#arranger-trim-library');
+    const open = this.query<HTMLButtonElement>('#arranger-open-file');
+    button.disabled = open.disabled = true;
+    this.query<HTMLButtonElement>('#arranger-restore-source').disabled = true;
+    const status = this.query('#arranger-file-status');
+    try {
+      const original = await loadArrangementRootLibrary(source);
+      const originalLevels = await loadArrangementIndices(original.id);
+      const ids = increasingErrorTrendLevelIds(originalLevels);
+      const levels = originalLevels.filter((level) => ids.has(level.id));
+      const result = await createTrimmedArrangementLibrary(original, levels, (count) => {
+        status.textContent = `正在生成裁切库：${count}/${levels.length} 条关卡…`;
+      });
+      await this.applyStoredLibrary(result, false);
+      this.query<HTMLInputElement>('#arranger-search').value = '';
+      this.renderLibrary();
+      status.textContent = `已生成 ${result.name}：${result.count}/${original.count} 条关卡、${this.families.length} 个阵型。仅比较 BQ 错误次数：难度 1 < 难度 5 < 难度 10。原库已保留，可点击“返回原库”。`;
+    } catch (error) { status.textContent = `生成裁切库失败：${error instanceof Error ? error.message : String(error)}`; }
+    finally {
+      this.trimmingLibrary = false; button.disabled = open.disabled = false;
+      this.query<HTMLButtonElement>('#arranger-restore-source').disabled = false;
+    }
+  }
+
+  private async restoreSourceLibrary(): Promise<void> {
+    const sourceId = this.currentLibraryManifest?.sourceLibraryId;
+    if (!sourceId || this.trimmingLibrary || this.batchCalculating) return;
+    try {
+      const source = await loadArrangementLibrary(sourceId);
+      if (!source) throw new Error('原库不存在，请重新读取 Excel。');
+      await this.applyStoredLibrary(source, true);
+      await commitArrangementLibrary(source);
+    } catch (error) { this.query('#arranger-file-status').textContent = `返回原库失败：${String(error)}`; }
+  }
+
+  private async configureLibraryFilters(): Promise<void> {
+    const libraryId = this.libraryId;
+    if (!libraryId) return;
+    const button = this.query<HTMLButtonElement>('#arranger-filter');
+    button.disabled = true;
+    try {
+      const selection = await chooseLibraryFilters(this.host, this.filterHeaders, this.filterRules, this.legacyFilterHeaders);
+      if (!selection || this.libraryId !== libraryId) return;
+      const { rules } = selection;
+      button.textContent = '正在筛选…';
+      const matches = rules.length ? await loadArrangementFilterMatches(libraryId, rules, (id, detail) => {
+        const level = this.libraryById.get(id);
+        return level ? legacyLibraryFilterValues(this.filterHeaders, this.libraryParameterHeaders, level, detail) : [];
+      }) : undefined;
+      if (this.libraryId !== libraryId) return;
+      const levels = matches ? this.library.filter((level) => matches.has(level.id)) : this.library;
+      this.filterRules = rules;
+      this.families = arrangementBoardFamilies(levels);
+      this.selectedLibraryLevelIds.clear();
+      this.activeBoardIndex = this.activePathIndex = this.activeDifficultyIndex = undefined;
+      this.libraryParameterTarget = undefined;
+      this.page = 0;
+      this.renderLibrary();
+      this.query('#arranger-file-status').textContent = `筛选结果：${levels.length} / ${this.library.length} 条关卡，${rules.length} 个条件。`;
+    } catch (error) {
+      this.query('#arranger-file-status').textContent = `筛选失败：${error instanceof Error ? error.message : String(error)}`;
+    } finally {
+      button.disabled = !this.libraryId;
+      const count = this.filterRules.length;
+      button.textContent = count ? `筛选（${count}）` : '筛选';
+    }
   }
 
   private filteredLibrary(): ArrangementBoardFamily[] {
@@ -1208,7 +1319,10 @@ export class LevelArrangementController {
       ];
     }
     const resultLevel = variant ?? difficulty?.representative ?? path?.representative ?? board.representative;
-    const simulation = this.simulationResults.get(`${this.libraryId}:${resultLevel.id}`);
+    const imported = resultLevel.importedSimulation;
+    const simulation = this.simulationResults.get(`${this.libraryId}:${resultLevel.id}`) ?? (imported ? {
+      ...imported, source: `Excel 导入（原表第 ${resultLevel.sourceRow} 行）${imported.repetitions !== undefined ? ` · 模拟 ${imported.repetitions} 次` : ''}${imported.completedRuns !== undefined ? ` · 通关 ${imported.completedRuns} 次` : ''}`,
+    } : undefined);
     groups.unshift({ title: '模拟跑关结果', items: [
       { label: 'id', value: resultLevel.id },
       { label: '状态', value: simulation?.status ?? '尚未计算' },
@@ -1302,11 +1416,11 @@ export class LevelArrangementController {
     if (entry?.id !== index.id) {
       preview.textContent = '正在读取棋盘…';
       try {
-        const [detail] = await loadArrangementDetails(this.libraryId, [index.id]);
+        const [detail] = await loadArrangementDetails(this.sourceLibraryId ?? this.libraryId, [index.id]);
         if (request !== this.previewRequest) return;
         entry = { ...index, ...detail };
         const tier = index.difficultyId ?? index.difficulty;
-        const siblings = this.library.filter((candidate) =>
+        const siblings = this.sourceLibrary.filter((candidate) =>
           candidate.id !== index.id && candidate.boardKey === index.boardKey
           && candidate.pathKey === index.pathKey && candidate.formationId === index.formationId
           && candidate.pathId === index.pathId
@@ -1314,7 +1428,7 @@ export class LevelArrangementController {
         const variants = [entry];
         for (let offset = 0; offset < siblings.length; offset += DATABASE_BATCH_SIZE) {
           const batch = siblings.slice(offset, offset + DATABASE_BATCH_SIZE);
-          const details = await loadArrangementDetails(this.libraryId, batch.map((candidate) => candidate.id));
+          const details = await loadArrangementDetails(this.sourceLibraryId ?? this.libraryId, batch.map((candidate) => candidate.id));
           if (request !== this.previewRequest) return;
           variants.push(...batch.map((candidate, i) => ({ ...candidate, ...details[i] })));
         }
