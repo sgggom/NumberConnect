@@ -1,3 +1,6 @@
+import { ManualPlaytestStatistics } from './manualPlaytestStatistics';
+import { METRIC_COLUMNS, type ConfigurationMetrics } from './configurationBatchMetrics';
+import type { SimulationFrame } from './occlusionSimulation';
 import { ConnectionProgress } from '../../game/connectionProgress';
 import { PathCompletionSolver } from '../../game/pathCompletionSolver';
 import { findPathCompletionInWorker } from '../../game/pathCompletionWorker';
@@ -22,6 +25,9 @@ const svgElement = <K extends keyof SVGElementTagNameMap>(name: K, attributes: R
 export class ArrangementPlaytest {
   private connection!: ConnectionProgress;
   private errors = 0;
+  private manualStatistics: ManualPlaytestStatistics;
+  private releasedSinceMove = true;
+  private readonly completionDialog = document.createElement('dialog');
   private busy = false;
   private disposed = false;
   private pointer?: number;
@@ -55,7 +61,12 @@ export class ArrangementPlaytest {
   private weightCursor?: { x: number; y: number };
   private samplingWeights = false;
 
-  constructor(host: HTMLElement, private readonly level: LevelData, onSimulationResult?: (run: OcclusionRun) => void) {
+  constructor(host: HTMLElement, private readonly level: LevelData, onSimulationResult?: (run: OcclusionRun) => void,
+    private readonly onManualResult?: (metrics: ConfigurationMetrics) => void,
+    private readonly displayLevelId = String(level.levelId)) {
+    this.manualStatistics = new ManualPlaytestStatistics(level);
+    this.completionDialog.className = 'arranger-batch-dialog arranger-manual-result';
+    this.completionDialog.setAttribute('aria-label', '手动试玩完成统计');
     this.board.setAttribute('viewBox', `0 0 ${level.columns} ${level.rows}`);
     this.reset();
     const wrapper = document.createElement('div');
@@ -70,6 +81,8 @@ export class ArrangementPlaytest {
     this.undo.addEventListener('click', () => {
       if (this.busy) return;
       this.connection.undoLastStep();
+      this.manualStatistics.undo(this.connection.progress);
+      this.releasedSinceMove = true;
       this.rejectedPositions.clear();
       this.message = '已撤销，可继续连线。';
       this.paint();
@@ -259,6 +272,7 @@ export class ArrangementPlaytest {
     const release = (event: PointerEvent) => {
       if (event.pointerId !== this.pointer) return;
       this.pointer = undefined;
+      this.releasedSinceMove = true;
       this.updateContactLabel();
       this.lastHit = undefined;
     };
@@ -306,12 +320,13 @@ export class ArrangementPlaytest {
     stage.className = 'arranger-playtest-stage';
     stage.append(this.board, this.status, actions);
     wrapper.append(sidebar, stage);
-    host.replaceChildren(wrapper);
+    host.replaceChildren(wrapper, this.completionDialog);
     this.paint();
   }
 
   public dispose(): void {
     this.disposed = true;
+    this.completionDialog.close(); this.completionDialog.remove();
     this.weightCursor = undefined;
     this.listeners.abort();
     this.simulationPanel?.dispose();
@@ -362,7 +377,7 @@ export class ArrangementPlaytest {
   }
 
   private moveFinger(event: Pick<PointerEvent, 'clientX' | 'clientY' | 'pointerType'>): void {
-    if (this.replay || this.simulationRunning) return;
+    if (this.replay || this.simulationRunning || this.completionDialog.open) return;
     const bounds = this.board.getBoundingClientRect();
     const inside = event.clientX >= bounds.left && event.clientX <= bounds.right
       && event.clientY >= bounds.top && event.clientY <= bounds.bottom;
@@ -422,14 +437,14 @@ export class ArrangementPlaytest {
   }
 
   private async updatePointerWeights(): Promise<void> {
-    if (this.samplingWeights || !this.weightCursor || this.replay || this.simulationRunning || this.disposed) return;
+    if (this.samplingWeights || !this.weightCursor || this.replay || this.simulationRunning || this.disposed || this.completionDialog.open) return;
     this.samplingWeights = true;
     const cursor = this.weightCursor;
     const geometry = this.simulationGeometry();
     const sampler = new HandOcclusionSampler(geometry);
     try {
       const occlusion = await sampler.observeAt(this.fingerToggle.value as HandMode, cursor);
-      if (this.disposed || this.replay || this.simulationRunning || this.weightCursor !== cursor) return;
+      if (this.disposed || this.replay || this.simulationRunning || this.completionDialog.open || this.weightCursor !== cursor) return;
       const pitch = geometry.radius / .38;
       const cells = geometry.centers.map((point) => ({ x: Math.round((point.x - cursor.x) / pitch), y: Math.round((point.y - cursor.y) / pitch) }));
       const known = new Map<number, number>();
@@ -465,6 +480,9 @@ export class ArrangementPlaytest {
   }
 
   private reset(): void {
+    this.manualStatistics.reset();
+    this.releasedSinceMove = true;
+    this.completionDialog.close();
     this.rejectedPositions.clear();
     const hidden = new Set((this.level.hiddenCells ?? []).map(cellKey));
     const visible = this.level.solutionPath.flatMap((cell, index) =>
@@ -501,6 +519,8 @@ export class ArrangementPlaytest {
     this.message = '正在判断连线…';
     this.paint();
     try {
+      const before = current === undefined ? undefined : await this.captureManualFrame(current, index);
+      if (this.disposed) return;
       const action = current === undefined ? this.connection.begin(index) : await this.connection.extendAsync(index,
         (request) => findPathCompletionInWorker(this.level.solutionPath, this.level.boardShape, request));
       if (this.disposed) return;
@@ -512,6 +532,13 @@ export class ArrangementPlaytest {
         if (this.connection.activeIndex !== current) this.rejectedPositions.clear();
         this.message = this.connection.complete ? '试玩通关！' : '继续点击或拖动相邻数字球。';
       }
+      if (before && (action.type === 'advanced' || action.type === 'wrong')) {
+        this.manualStatistics.add({ ...before, outcome: action.type === 'wrong' ? 'error' : 'connected',
+          after: { labels: this.manualLabels(), edges: this.connection.connectedNodePairs(), errors: this.errors,
+            progress: this.connection.progress, complete: this.connection.complete } });
+      }
+      if (action.type === 'started') this.releasedSinceMove = false;
+      if (this.connection.complete) this.showManualCompletion();
     } catch {
       this.message = '连线验证失败，请重试。';
       this.lastHit = undefined;
@@ -523,6 +550,59 @@ export class ArrangementPlaytest {
         void this.updatePointerWeights();
       }
     }
+  }
+
+  private manualLabels(): Array<number | null> {
+    return this.level.solutionPath.map((_, index) => this.connection.isVisible(index) ? this.connection.displayNumber(index) : null);
+  }
+
+  private async captureManualFrame(current: number, attempted: number): Promise<Omit<SimulationFrame, 'outcome' | 'after'>> {
+    const labels = this.manualLabels(), edges = this.connection.connectedNodePairs();
+    const progress = this.connection.progress, errors = this.errors;
+    const observed = this.releasedSinceMove || this.pointer === undefined;
+    this.releasedSinceMove = false;
+    const nextNumber = this.connection.displayNumber(current) + 1;
+    const correctNext = this.connection.completionSnapshot().solutionOrder[nextNumber - 1];
+    // Use the same current-cell pose as automatic runs, with the live hand type,
+    // size and side. Hiding the hand image does not disable its occlusion.
+    const sampler = new HandOcclusionSampler(this.simulationGeometry());
+    try {
+      const occlusion = await sampler.observe(this.fingerToggle.value as HandMode, current);
+      const hasUnblockedCandidate = this.level.solutionPath.some((cell, index) => index !== current
+        && !this.connection.isNodeConnected(index) && !this.rejectedPositions.has(index)
+        && areNeighborCells(this.level.solutionPath[current], cell, this.level.boardShape)
+        && !occlusion[index].numberBlocked && (labels[index] === null || labels[index] === nextNumber));
+      return { step: edges.length + errors + 1, current, correctNext, attempted, labels, edges, occlusion,
+        progress, errors, candidates: [], neighborhood: [], knownNumbers: [], reason: '手动试玩',
+        observation: { observed, forced: observed && !hasUnblockedCandidate, probability: observed ? 1 : 0 } };
+    } finally { sampler.dispose(); }
+  }
+
+  private showManualCompletion(): void {
+    const metrics = this.manualStatistics.finish(this.errors);
+    this.onManualResult?.(metrics);
+    const title = document.createElement('h3'); title.textContent = '手动试玩完成统计';
+    const info = document.createElement('p'); info.textContent = `关卡 ${this.displayLevelId} · 已通关 · 本次手动操作统计`;
+    const help = document.createElement('p');
+    help.textContent = '使用自动跑关的统计口径，记录本轮实际操作；卡点为松手观察时已无未遮挡可选位置的局面。撤销的路径不计入局面和连接统计，错误次数保留。';
+    const values = document.createElement('dl'); values.className = 'arranger-manual-metrics';
+    METRIC_COLUMNS.forEach(([key, label]) => {
+      const name = document.createElement('dt'); name.textContent = label;
+      const value = document.createElement('dd'); value.textContent = String(metrics[key]);
+      values.append(name, value);
+    });
+    const actions = document.createElement('div'); actions.className = 'arranger-group-actions';
+    const close = document.createElement('button'); close.type = 'button'; close.textContent = '关闭';
+    close.addEventListener('click', () => this.completionDialog.close());
+    const replay = document.createElement('button'); replay.type = 'button'; replay.textContent = '重新试玩';
+    replay.addEventListener('click', () => { this.reset(); this.paint(); });
+    actions.append(close, replay);
+    this.completionDialog.replaceChildren(title, info, help, values, actions);
+    if (this.pointer !== undefined && this.board.hasPointerCapture(this.pointer)) this.board.releasePointerCapture(this.pointer);
+    this.pointer = undefined;
+    this.weightCursor = undefined; this.finger.hidden = this.cursorMarker.hidden = this.choiceOverlay.hidden = true;
+    this.thumbHand.hide();
+    this.completionDialog.showModal();
   }
 
   private paint(): void {

@@ -261,3 +261,8 @@
 .arranger-excel-settings > .arranger-group-actions { position: sticky; bottom: -20px; padding: 12px 0; background: #172538; }
 .arranger-batch-scope > .arranger-group-actions { flex-shrink: 0; background: #172538; padding: 12px 0 0; }
 @media (max-width: 480px) { .arranger-batch-settings-grid { grid-template-columns: 1fr; } }
+
+.arranger-manual-result { width: min(560px, 92vw); overflow-y: auto; }
+.arranger-manual-metrics { display: grid; grid-template-columns: 1fr auto; gap: 10px 24px; margin: 20px 0; }
+.arranger-manual-metrics dt, .arranger-manual-metrics dd { margin: 0; padding-bottom: 6px; border-bottom: 1px solid #3b5067; }
+.arranger-manual-metrics dd { color: #a5ebd3; font-weight: 700; font-variant-numeric: tabular-nums; }
