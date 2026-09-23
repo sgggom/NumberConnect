@@ -9,6 +9,8 @@ import type {
 export interface AutoArrangementStage {
   formationIds: (number | string)[];
   difficultyIds: number[];
+  minErrors?: number;
+  maxErrors?: number;
 }
 
 export interface AutoArrangementConfig {
@@ -36,9 +38,10 @@ export const DEFAULT_AUTO_ARRANGEMENT_FORM = {
   crossingComplexityPreference: 'small' as const,
   laterHiddenNeighborPreference: 'small' as const,
   stages: [
-    { formationRange: '[n1~n50]', difficultyRange: '3,4,5' },
-    { formationRange: '56,57,58,59,66,67,68,77', difficultyRange: '4,5,6' },
-    { formationRange: '69,610,78,79,710,711', difficultyRange: '4,5,6' },  ],
+    { formationRange: '[n1~n90]', difficultyRange: '10' },
+    { formationRange: '[n91~n158],56,57,58,59,66,67,77', difficultyRange: '10' },
+    { formationRange: '68,69,78,79,710', difficultyRange: '10' },
+  ],
 } as const;
 
 const parseNumericIdRange = (value: string, label: string): number[] => {
@@ -121,7 +124,16 @@ function* generateArrangementSteps(
   const lastUsedLevel = new Map<string, number>();
   const lastUsedShape = new Map<string, number>();
   const groups: ArrangementLevelGroup[] = [];
+  const errorGrowthSlopes = new Map<ArrangementPathFamily, number | undefined>();
+  for (const family of families) {
+    for (const path of family.paths) errorGrowthSlopes.set(path, pathErrorGrowthSlope(path));
+  }
   const stagePools = stages.map((stage, stageIndex) => {
+    const { minErrors, maxErrors } = stage;
+    if ([minErrors, maxErrors].some((value) => value !== undefined && (!Number.isFinite(value) || value < 0))
+      || minErrors !== undefined && maxErrors !== undefined && minErrors > maxErrors) {
+      throw new Error(`阶段 ${stageIndex + 1} 错误次数范围无效：请输入非负数，且最小值不能大于最大值。`);
+    }
     const selections = stage.formationIds.map((id) => ({ id, families: familiesFor(id) }));
     const missingIds = selections.filter((selection) => selection.families.length === 0).map(({ id }) => id);
     if (missingIds.length > 0) throw new Error(`阶段 ${stageIndex + 1} 找不到阵型：${missingIds.join('、')}。`);
@@ -140,15 +152,22 @@ function* generateArrangementSteps(
       path.difficulties.flatMap((difficulty) => {
         const difficultyId = difficulty.representative.difficultyId ?? difficulty.difficulty;
         if (difficultyId === undefined || !stage.difficultyIds.includes(difficultyId)) return [];
-        return difficulty.variants.map((level) => ({
+        return difficulty.variants.filter((level) => {
+          if (minErrors === undefined && maxErrors === undefined) return true;
+          const errors = level.importedSimulation?.metrics.errors;
+          return errors !== undefined && Number.isFinite(errors) && errors >= 0
+            && (minErrors === undefined || errors >= minErrors)
+            && (maxErrors === undefined || errors <= maxErrors);
+        }).map((level) => ({
           level,
+          errorGrowthSlope: errorGrowthSlopes.get(path),
           pathKey: `${level.formationId ?? family.representative.formationId}:${path.key}`,
           shapeKey: namedShapeKey(level.formationId ?? family.representative.formationId),
           selectionGroup: grouped ? String(selection.id) : undefined,
         }));
       })
     ))));
-    if (candidates.length === 0) throw new Error(`阶段 ${stageIndex + 1} 没有可用关卡。`);
+    if (candidates.length === 0) throw new Error(`阶段 ${stageIndex + 1} 没有满足阵型、难度及错误次数范围的可用关卡。`);
     return candidates;
   });
 
@@ -180,6 +199,7 @@ function* generateArrangementSteps(
         usedLevelIds,
         config,
         random,
+        stageIndex === 2,
       );
       if (!selection) {
         throw new Error(`第 ${levelNumber} 关的阶段 ${stageIndex + 1} 无法满足路径间隔 ${config.pathRepeatInterval}${shapeInterval > 0 ? `、相同造型间隔 ${shapeInterval}（仅带 n 的造型）` : ''}，请扩大阵型范围或减小间隔。`);
@@ -221,8 +241,24 @@ const namedShapeKey = (formationId: number | string | undefined): string | undef
   typeof formationId === 'string' && /n/i.test(formationId) ? formationId : undefined
 );
 
+/** Least-squares slope over the path's BQ errors at difficulties 1, 5 and 10. */
+export function pathErrorGrowthSlope(path: ArrangementPathFamily): number | undefined {
+  const points = [1, 5, 10].map((id) => {
+    const levels = path.difficulties.flatMap((difficulty) => difficulty.variants)
+      .filter((level) => (level.difficultyId ?? level.difficulty) === id);
+    const errors = levels.map((level) => level.importedSimulation?.metrics.errors);
+    if (!errors.length || errors.some((value) => value === undefined || !Number.isFinite(value) || value < 0)) return undefined;
+    return { x: id, y: errors.reduce<number>((sum, value) => sum + value!, 0) / errors.length };
+  });
+  if (points.some((point) => point === undefined)) return undefined;
+  const meanX = 16 / 3;
+  const meanY = points.reduce((sum, point) => sum + point!.y, 0) / 3;
+  return points.reduce((sum, point) => sum + (point!.x - meanX) * (point!.y - meanY), 0)
+    / points.reduce((sum, point) => sum + (point!.x - meanX) ** 2, 0);
+}
+
 const findAvailableLevel = (
-  candidates: ReadonlyArray<{ level: ArrangementPathFamily['difficulties'][number]['variants'][number]; pathKey: string; shapeKey?: string; selectionGroup?: string }>,
+  candidates: ReadonlyArray<{ level: ArrangementPathFamily['difficulties'][number]['variants'][number]; pathKey: string; shapeKey?: string; selectionGroup?: string; errorGrowthSlope?: number }>,
   poolSizes: readonly number[],
   levelNumber: number,
   interval: number,
@@ -232,6 +268,7 @@ const findAvailableLevel = (
   usedLevelIds: ReadonlySet<string>,
   preferences: Pick<AutoArrangementConfig, 'laterHiddenNeighborPreference' | 'crossingComplexityPreference' | 'straightPreference' | 'occlusionPreference'>,
   random: () => number,
+  preferErrorGrowth: boolean,
 ): (typeof candidates)[number] | undefined => {
   let available = candidates.filter((candidate) => {
     if (usedLevelIds.has(candidate.level.id)) return false;
@@ -242,6 +279,16 @@ const findAvailableLevel = (
   });
   if (available.length === 0) return undefined;
   available = preferEarlyBoardSize(available, poolSizes, levelNumber, random);
+  if (preferErrorGrowth) {
+    let bestSlope = -Infinity;
+    for (const candidate of available) {
+      if (candidate.errorGrowthSlope !== undefined) bestSlope = Math.max(bestSlope, candidate.errorGrowthSlope);
+    }
+    if (Number.isFinite(bestSlope)) {
+      available = available.filter((candidate) => candidate.errorGrowthSlope !== undefined
+        && Math.abs(candidate.errorGrowthSlope - bestSlope) < 1e-9);
+    }
+  }
   if (available[0].selectionGroup !== undefined) {
     const groups = [...new Set(available.map((candidate) => candidate.selectionGroup))];
     const group = groups[Math.floor(random() * groups.length) % groups.length];

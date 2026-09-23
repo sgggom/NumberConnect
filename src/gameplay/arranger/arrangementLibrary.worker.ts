@@ -22,7 +22,7 @@ self.onmessage = async (event: MessageEvent<ArrangementLibraryWorkerRequest>): P
       count += levels.length;
     } : undefined, event.data.activate === false);
     if (file && libraryId) {
-      const manifest = { id: libraryId, name: file.name, count, parameterHeaders: result.parameterHeaders, skippedRows: result.skippedRows };
+      const manifest = { id: libraryId, name: file.name, count, parameterHeaders: result.parameterHeaders, sourceHeaders: result.sourceHeaders, skippedRows: result.skippedRows };
       await commitArrangementLibrary(manifest, event.data.activate ?? true);
       self.postMessage({ type: 'complete', manifest });
     } else self.postMessage({ type: 'complete', result });

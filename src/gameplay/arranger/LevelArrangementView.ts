@@ -12,6 +12,8 @@ export const mountLevelArrangementView = (host: HTMLElement): void => {
       <div class="arranger-file-actions">
         <span id="arranger-file-status">尚未读取关卡库</span>
         <button id="arranger-open-file" class="button button--primary button--small" type="button">读取跑关结果.xlsx</button>
+        <button id="arranger-trim-library" class="button button--secondary button--small" type="button" disabled title="按 BQ 错误次数筛选：仅比较难度 1、5、10，要求错误次数 1 < 5 < 10；从原库重新计算">生成裁切库（错误趋势）</button>
+        <button id="arranger-restore-source" class="button button--secondary button--small" type="button" hidden>返回原库</button>
         <input id="arranger-file-input" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
       </div>
     </header>
@@ -37,6 +39,7 @@ export const mountLevelArrangementView = (host: HTMLElement): void => {
         <header><div><small>棋盘 ＞ 路径 ＞ 难度</small><h3 id="arranger-library-title">棋盘阵型</h3></div><strong id="arranger-library-count">0 个棋盘</strong></header>
         <div class="arranger-library-toolbar">
           <input id="arranger-search" type="search" placeholder="搜索 level_编号、原关卡名或配置ID" aria-label="搜索关卡库" disabled>
+          <button id="arranger-filter" class="button button--secondary button--small" type="button" disabled>筛选</button>
           <button id="arranger-add-selected" class="button button--primary button--small" type="button" disabled>加入当前关卡</button>
         </div>
         <div class="arranger-library-content">
@@ -95,7 +98,8 @@ export const mountLevelArrangementView = (host: HTMLElement): void => {
           <p class="arranger-auto-preference-help">前期大小递进：各阶段独立使用自己的范围，按有效数字格数分档。第 1～5 关优先最小档；6～10 关从偏小档随机选；11～20 关放宽至中等档；21 关起取消大小偏好。间隔限制导致无合适尺寸时，选最近的可用档；选定尺寸后仍按综合评分选关卡。</p>
           <p id="arranger-auto-shape-gap-help" class="arranger-auto-preference-help">造型间隔按关数计算，0 表示不限制。例如设为 3，n1 在第 1 关出现后最早可在第 4 关再次出现；同一造型的不同路径、难度及阶段共用间隔，非 n 造型不受此项限制。</p>
           <header><div><strong>棋盘阶段配置</strong><small>阶段数量随每关棋盘数量自动变化；支持 1-20,25 和造型区间混搭，如 44,[n1~n20],[n30~n40],55；每个造型区间算一个候选项，从中选一个棋盘</small></div></header>
-          <div class="arranger-auto-stage-head"><span>棋盘阶段</span><span>可选阵型 ID 范围</span><span>难度范围</span></div>
+          <div class="arranger-auto-stage-head"><span>棋盘阶段</span><span>可选阵型 ID 范围</span><span>难度范围</span><span>错误最小值（BQ）</span><span>错误最大值（BQ）</span></div>
+          <p class="arranger-auto-preference-help">阶段 3 优先选择难度 1、5、10 的 BQ 错误次数线性斜率 k 最大的路径；满足范围和重复间隔后，先按前期数字数量档位筛选，再比较 k，同 k 再按原有偏好选择；第 21 关起取消数字数量偏好。缺少三档数据的路径仅在没有可计算 k 的候选时使用。错误次数范围包含边界，支持小数；留空不限。设置范围后，缺少 BQ 错误次数的关卡不参与该阶段排布。</p>
           <div id="arranger-auto-stage-list" class="arranger-auto-stage-list"></div>
         </section>
         <p id="arranger-auto-status" class="arranger-auto-status" aria-live="polite"></p>

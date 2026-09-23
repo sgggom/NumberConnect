@@ -1,3 +1,4 @@
+import { createImportedSimulationParser, type ImportedSimulationResult } from './importedSimulationResults';
 import { decodeCompactLevelData, type CompactLevelData } from '../../game/levelDataFormat';
 import { calculateEditorLevelMetrics } from '../editor/levelMetrics';
 
@@ -18,12 +19,14 @@ export interface ArrangementLibraryLevel {
   difficultyMetrics: ArrangementDifficultyMetrics;
   rows: number;
   columns: number;
+  importedSimulation?: ImportedSimulationResult;
+  sourceValues?: string[];
   parameterValues: string[];
   levelData: CompactLevelData;
 }
 
 // Only these searchable/sortable fields stay in the page; grids live in IndexedDB.
-export type ArrangementLibraryIndex = Omit<ArrangementLibraryLevel, 'levelData' | 'parameterValues'>;
+export type ArrangementLibraryIndex = Omit<ArrangementLibraryLevel, 'levelData' | 'parameterValues' | 'sourceValues'>;
 
 export interface ArrangementPathMetrics {
   connectionCount?: number;
@@ -93,6 +96,7 @@ export interface ArrangementLevelLocation {
 export interface ArrangementLibraryParseResult {
   levels: ArrangementLibraryLevel[];
   parameterHeaders: string[];
+  sourceHeaders?: string[];
   skippedRows: number;
 }
 
@@ -239,8 +243,10 @@ export const createArrangementLibraryRowParser = (
     if (!headers.includes(header)) throw new Error(`跑关结果缺少“${header}”列。`);
   });
   const indexOf = (header: string): number => headers.indexOf(header);
+  const simulationParser = createImportedSimulationParser(headerRow);
   const parameterColumns = headers.flatMap((header, columnIndex) => (
     !header
+    || simulationParser.columns.has(columnIndex)
     || header === '关卡JSON'
     || header === '路径JSON'
     || header === '连续向下数量'
@@ -408,6 +414,8 @@ export const createArrangementLibraryRowParser = (
         },
         rows: levelGrid.length,
         columns: levelGrid[0].length,
+        importedSimulation: simulationParser.parse(row, sourceName, structuredId.difficultyId ?? numericCell(row[indexOf('目标难度')])),
+        sourceValues: Array.from(headerRow, (_, i) => String(row[i] ?? '')),
         parameterValues,
         levelData: { data: levelGrid },
       };
@@ -424,7 +432,7 @@ export const createArrangementLibraryRowParser = (
     addRow,
     finish: () => {
       if (levelCount === 0) throw new Error('没有读取到有效的关卡JSON。');
-      return { levels, parameterHeaders, skippedRows };
+      return { levels, parameterHeaders, sourceHeaders: Array.from(headerRow, (value) => String(value ?? '').trim()), skippedRows };
     },
   };
 };

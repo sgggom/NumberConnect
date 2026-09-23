@@ -55,3 +55,29 @@ describe('early board size progression', () => {
     expect(new Set(groups.flatMap((group) => group.levelIds)).size).toBe(42);
   });
 });
+
+it('keeps early stage-three size bands ahead of slope ranking and releases them at level 21', () => {
+  const levels: ArrangementLibraryIndex[] = [];
+  for (const formation of [1, 2, 3, 4]) {
+    for (let path = 1; path <= 25; path++) {
+      for (const difficulty of [1, 5, 10]) {
+        const level = entry(formation, formation === 4 ? 40 : 10, path);
+        level.id = `level_${formation}_${path}_${difficulty}`;
+        level.difficulty = level.difficultyId = difficulty;
+        level.importedSimulation = { metrics: { errors: difficulty * (formation === 4 ? 10 : 1) }, status: '' };
+        levels.push(level);
+      }
+    }
+  }
+  const byId = new Map(levels.map((level) => [level.id, level]));
+  const groups = generateAutoArrangement(arrangementBoardFamilies(levels), {
+    levelCount: 21, boardsPerLevel: 3, pathRepeatInterval: 0, occlusionPreference: 'random',
+    stages: [
+      { formationIds: [1], difficultyIds: [10] },
+      { formationIds: [2], difficultyIds: [10] },
+      { formationIds: [3, 4], difficultyIds: [10] },
+    ], randomSource: () => 0,
+  });
+  expect(groups.slice(0, 5).map((group) => byId.get(group.levelIds[2])!.formationId)).toEqual([3, 3, 3, 3, 3]);
+  expect(byId.get(groups[20].levelIds[2])!.formationId).toBe(4);
+});

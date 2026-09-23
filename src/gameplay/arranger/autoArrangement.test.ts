@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ArrangementBoardFamily, ArrangementLibraryLevel } from './levelArrangement';
 import {
   DEFAULT_AUTO_ARRANGEMENT_FORM,
+  pathErrorGrowthSlope,
   generateAutoArrangement,
   parseDifficultyIdRange,
   parseFormationIdRange,
@@ -225,9 +226,55 @@ describe('automatic level arrangement', () => {
       straightPreference: 'small',
       crossingComplexityPreference: 'small',
       stages: [
-        { formationRange: '[n1~n50]', difficultyRange: '3,4,5' },
-        { formationRange: '56,57,58,59,66,67,68,77', difficultyRange: '4,5,6' },
-        { formationRange: '69,610,78,79,710,711', difficultyRange: '4,5,6' },      ],
+        { formationRange: '[n1~n90]', difficultyRange: '10' },
+        { formationRange: '[n91~n158],56,57,58,59,66,67,77', difficultyRange: '10' },
+        { formationRange: '68,69,78,79,710', difficultyRange: '10' },
+      ],
     });
   });
+});
+
+it('filters BQ errors independently per stage, inclusively, excluding missing results only when bounded', () => {
+  const source = family(1, [1, 2]);
+  source.paths[0].difficulties[0].variants[0].importedSimulation = { metrics: { errors: 0.5 }, status: '' };
+  source.paths[1].difficulties[0].variants[0].importedSimulation = { metrics: { errors: 2.5 }, status: '' };
+  const config = { levelCount: 1, boardsPerLevel: 2, pathRepeatInterval: 0, occlusionPreference: 'random' as const,
+    stages: [
+      { formationIds: [1], difficultyIds: [1, 2], minErrors: 0.5, maxErrors: 0.5 },
+      { formationIds: [1], difficultyIds: [1, 2], minErrors: 2.5 },
+    ], randomSource: () => 0 };
+  expect(generateAutoArrangement([source], config)[0].levelIds).toEqual(['level_1_1_1', 'level_1_2_1']);
+  const single = { ...config, boardsPerLevel: 1 };
+  expect(() => generateAutoArrangement([source], { ...single, stages: [{ formationIds: [1], difficultyIds: [2], maxErrors: 3 }] })).toThrow('错误次数范围');
+  expect(generateAutoArrangement([source], { ...single, stages: [{ formationIds: [1], difficultyIds: [2] }] })).toHaveLength(1);
+  for (const bounds of [{ minErrors: 3, maxErrors: 2 }, { minErrors: -1 }, { maxErrors: NaN }]) {
+    expect(() => generateAutoArrangement([source], { ...single, stages: [{ formationIds: [1], difficultyIds: [1], ...bounds }] })).toThrow('范围无效');
+  }
+});
+
+it('prioritizes the largest 1/5/10 error slope only in stage three, respecting bounds and cooldowns', () => {
+  const source = family(3, [1, 2]);
+  for (const [index, path] of source.paths.entries()) {
+    path.difficulties = [1, 5, 10].map((difficulty) => {
+      const level = entry(3, index + 1, difficulty);
+      level.importedSimulation = { metrics: { errors: difficulty * (index + 1) }, status: '' };
+      return { difficulty, representative: level, variants: [level] };
+    });
+  }
+  expect(pathErrorGrowthSlope(source.paths[0])).toBeCloseTo(1);
+  expect(pathErrorGrowthSlope(source.paths[1])).toBeCloseTo(2);
+  expect(pathErrorGrowthSlope(family(4, [1]).paths[0])).toBeUndefined();
+  const config = { levelCount: 2, boardsPerLevel: 3, pathRepeatInterval: 2, occlusionPreference: 'random' as const,
+    stages: [
+      { formationIds: [1], difficultyIds: [1] },
+      { formationIds: [2], difficultyIds: [1] },
+      { formationIds: [3], difficultyIds: [10] },
+    ], randomSource: () => 0 };
+  const sources = [family(1, [1, 2]), family(2, [1, 2]), source];
+  const result = generateAutoArrangement(sources, config);
+  expect(result.map((group) => group.levelIds[2])).toEqual(['level_3_2_10', 'level_3_1_10']);
+  expect(generateAutoArrangement(sources, { ...config, levelCount: 1,
+    stages: [...config.stages.slice(0, 2), { ...config.stages[2], maxErrors: 15 }],
+  })[0].levelIds[2]).toBe('level_3_1_10');
+  expect(generateAutoArrangement([source], { ...config, levelCount: 1, boardsPerLevel: 1, stages: [config.stages[2]] })[0].levelIds[0]).toBe('level_3_1_10');
 });
